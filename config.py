@@ -1,5 +1,6 @@
 """
 Configuración de la base de datos y variables de entorno
+Soporte para múltiples entornos: local y Railway
 """
 import os
 from dotenv import load_dotenv
@@ -7,10 +8,22 @@ from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
-# Cargar variables de entorno desde el archivo .env
-load_dotenv()
+# Determinar el entorno y cargar el archivo .env correspondiente
+ENV = os.getenv("ENVIRONMENT", "local")
+
+if ENV == "railway":
+    load_dotenv(".env.railway")
+elif ENV == "local":
+    load_dotenv(".env.local")
+else:
+    # Fallback al .env original
+    load_dotenv()
 
 # Variables de configuración de la base de datos
+# Configuración para Railway (usa DATABASE_URL directamente)
+DATABASE_URL_RAILWAY = os.getenv("DATABASE_URL")
+
+# Configuración para local (construye URL a partir de componentes)
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = os.getenv("DB_PORT", "5432")
 DB_NAME = os.getenv("DB_NAME", "dev")
@@ -23,8 +36,22 @@ CONNECTION_TIMEOUT = int(os.getenv("CONNECTION_TIMEOUT", "30"))
 POOL_SIZE = int(os.getenv("POOL_SIZE", "5"))
 MAX_OVERFLOW = int(os.getenv("MAX_OVERFLOW", "10"))
 
-# URL de conexión a PostgreSQL
-DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+# Determinar la URL de conexión según el entorno
+if ENV == "railway":
+    # En Railway, DATABASE_URL viene como variable de entorno
+    DATABASE_URL_RAILWAY = os.getenv("DATABASE_URL")
+    if DATABASE_URL_RAILWAY:
+        DATABASE_URL = DATABASE_URL_RAILWAY
+        print(f"🚀 Conectando a Railway: {DATABASE_URL_RAILWAY[:50]}...")
+    else:
+        print("❌ DATABASE_URL no encontrada en variables de entorno de Railway")
+        raise ValueError("DATABASE_URL requerida para entorno Railway")
+else:
+    # URL de conexión a PostgreSQL local
+    DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+    print(f"🏠 Conectando a BD local: {DATABASE_URL}")
+
+print(f"🌍 Entorno actual: {ENV.upper()}")
 
 # Configuración del motor de SQLAlchemy
 engine = create_engine(
