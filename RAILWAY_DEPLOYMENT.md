@@ -1,6 +1,7 @@
 # 🚂 Despliegue en Railway - Guía Completa
 
 ## 📋 **PRE-REQUISITOS:**
+
 - [ ] Cuenta en GitHub (tu código ya está ahí)
 - [ ] Cuenta en [Railway.app](https://railway.app) (gratis)
 - [ ] Proyecto Firebase activo (`dev-test-e778d`)
@@ -8,6 +9,7 @@
 ## 🚀 **PASOS PARA DESPLEGAR:**
 
 ### 1. **Subir código a GitHub** (si no lo has hecho)
+
 ```bash
 git add .
 git commit -m "Preparado para Railway deployment"
@@ -15,6 +17,7 @@ git push origin master
 ```
 
 ### 2. **Conectar con Railway**
+
 1. Ve a [railway.app](https://railway.app)
 2. Haz clic en **"Start a New Project"**
 3. Selecciona **"Deploy from GitHub repo"**
@@ -23,6 +26,7 @@ git push origin master
 6. Railway detectará automáticamente el `Dockerfile`
 
 ### 3. **Configurar Variables de Entorno**
+
 En Railway Dashboard, ve a **"Variables"** y agrega:
 
 ```env
@@ -35,6 +39,7 @@ FIRESTORE_TIMEOUT=30
 ```
 
 ### 4. **Verificar Despliegue**
+
 - Railway te dará una URL como: `https://tu-app.up.railway.app`
 - Prueba los endpoints:
   - `GET /` - Información básica
@@ -44,6 +49,7 @@ FIRESTORE_TIMEOUT=30
 ## ⚙️ **CONFIGURACIÓN AUTOMÁTICA:**
 
 Railway detecta automáticamente:
+
 - ✅ `Dockerfile` para el build
 - ✅ `railway.json` para configuración
 - ✅ Puerto desde variable `$PORT`
@@ -52,6 +58,7 @@ Railway detecta automáticamente:
 ## 🔧 **COMANDOS ÚTILES:**
 
 ### Logs en tiempo real:
+
 ```bash
 # Instalar Railway CLI (opcional)
 npm install -g @railway/cli
@@ -60,13 +67,14 @@ railway logs
 ```
 
 ### Redeploy manual:
+
 ```bash
 railway up
 ```
 
 ## 🌐 **DOMINIO PERSONALIZADO (Opcional):**
 
-1. En Railway Dashboard → **"Settings"** 
+1. En Railway Dashboard → **"Settings"**
 2. **"Domains"** → **"Custom Domain"**
 3. Agrega tu dominio: `api.tudominio.com`
 4. Configura DNS según las instrucciones
@@ -74,6 +82,7 @@ railway up
 ## 📊 **MONITOREO:**
 
 ### Métricas disponibles en Railway:
+
 - CPU Usage
 - Memory Usage
 - Network Traffic
@@ -81,29 +90,43 @@ railway up
 - Error Rates
 
 ### Endpoints para monitorear:
+
 - `GET /health` - Estado general
 - `GET /firebase/status` - Conexión Firebase
 - `GET /firebase/collections/summary` - Estadísticas DB
 
 ## 💰 **COSTO:**
+
 - **Plan Starter:** $5/mes (500 horas de ejecución)
 - **Plan Pro:** $20/mes (sin límites + más recursos)
 
 ## 🚨 **TROUBLESHOOTING:**
 
 ### Error: "Firebase not initialized"
+
 - Verificar `FIREBASE_PROJECT_ID` en variables
 - Verificar que el proyecto existe en Firebase Console
 
+### Error: "Invalid value for '--port': '$PORT' is not a valid integer"
+
+- **Solución:** El Dockerfile usa `start.sh` que maneja correctamente `$PORT`
+- Railway asigna `$PORT` automáticamente
+- El script usa puerto 8000 por defecto si `$PORT` no está disponible
+
 ### Error: "Port binding failed"
+
 - Railway asigna `$PORT` automáticamente
 - No hardcodear puerto 8000
+- Verificar que el script `start.sh` tenga permisos de ejecución
 
 ### Error: Build fails
-- Verificar `requirements.txt` 
+
+- Verificar `requirements.txt`
 - Check logs en Railway Dashboard
+- Verificar que `start.sh` esté incluido en el build
 
 ## ✅ **CHECKLIST FINAL:**
+
 - [ ] Variables de entorno configuradas
 - [ ] Health check responde OK
 - [ ] Endpoints principales funcionan
@@ -115,6 +138,7 @@ railway up
 Tu API estará disponible en: `https://tu-app.up.railway.app`
 
 **Próximos pasos:**
+
 1. Configurar dominio personalizado
 2. Monitorear logs y métricas
 3. Configurar alertas de rendimiento
