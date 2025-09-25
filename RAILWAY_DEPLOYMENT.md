@@ -107,23 +107,36 @@ railway up
 - Verificar `FIREBASE_PROJECT_ID` en variables
 - Verificar que el proyecto existe en Firebase Console
 
+### Error: "Application failed to respond"
+
+- **Causa:** La aplicación no inicia correctamente
+- **Solución 1:** Verificar variables de entorno en Railway Dashboard
+- **Solución 2:** Revisar logs de Railway para errores específicos
+- **Solución 3:** Hacer redeploy después de configurar variables
+
 ### Error: "Invalid value for '--port': '$PORT' is not a valid integer"
 
-- **Solución:** El Dockerfile usa `start.sh` que maneja correctamente `$PORT`
+- **Solución:** Dockerfile simplificado maneja automáticamente `$PORT`
 - Railway asigna `$PORT` automáticamente
-- El script usa puerto 8000 por defecto si `$PORT` no está disponible
+- Usa puerto 8000 por defecto si `$PORT` no está disponible
 
 ### Error: "Port binding failed"
 
 - Railway asigna `$PORT` automáticamente
 - No hardcodear puerto 8000
-- Verificar que el script `start.sh` tenga permisos de ejecución
+- Verificar que la aplicación escuche en `0.0.0.0`
+
+### Error: "Firebase not initialized"
+
+- Verificar `FIREBASE_PROJECT_ID` y `GOOGLE_CLOUD_PROJECT` en Railway
+- Ambas variables deben tener el mismo valor: `dev-test-e778d`
+- Verificar que el proyecto Firebase exista y esté activo
 
 ### Error: Build fails
 
 - Verificar `requirements.txt`
-- Check logs en Railway Dashboard
-- Verificar que `start.sh` esté incluido en el build
+- Revisar logs de build en Railway Dashboard
+- Asegurar que todas las dependencias sean compatibles
 
 ## ✅ **CHECKLIST FINAL:**
 
