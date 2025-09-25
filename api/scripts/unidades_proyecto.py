@@ -8,7 +8,7 @@ from datetime import datetime
 from google.cloud import firestore
 from google.api_core import exceptions as gcp_exceptions
 
-from database.config import get_firestore_client
+from database.firebase_config import FirebaseManager
 
 
 async def get_all_unidades_proyecto() -> Dict[str, Any]:
@@ -19,7 +19,8 @@ async def get_all_unidades_proyecto() -> Dict[str, Any]:
         Dict con la información de todas las unidades de proyecto
     """
     try:
-        db = get_firestore_client()
+        firebase_manager = FirebaseManager()
+        db = firebase_manager.get_firestore_client()
         if db is None:
             return {
                 "success": False,
@@ -175,7 +176,8 @@ async def validate_unidades_proyecto_collection() -> Dict[str, Any]:
         Dict con información de validación
     """
     try:
-        db = get_firestore_client()
+        firebase_manager = FirebaseManager()
+        db = firebase_manager.get_firestore_client()
         if db is None:
             return {
                 "valid": False,
@@ -255,7 +257,8 @@ async def filter_unidades_proyecto(
         Dict con los resultados filtrados y estadísticas
     """
     try:
-        db = get_firestore_client()
+        firebase_manager = FirebaseManager()
+        db = firebase_manager.get_firestore_client()
         if db is None:
             return {
                 "success": False,
