@@ -13,19 +13,32 @@ from typing import Dict, Any, Optional, Union
 import uvicorn
 from datetime import datetime
 
-from database.config import initialize_firebase, setup_firebase, PROJECT_ID
-from api.scripts import (
-    # Firebase operations
-    get_collections_info,
-    test_firebase_connection,
-    get_collections_summary,
-    # Unidades proyecto operations  
-    get_all_unidades_proyecto,
-    get_unidades_proyecto_summary,
-    validate_unidades_proyecto_collection,
-    filter_unidades_proyecto,
-    get_dashboard_summary
-)
+# Importar Firebase de forma segura
+try:
+    from database.config import initialize_firebase, setup_firebase, PROJECT_ID
+    FIREBASE_AVAILABLE = True
+except Exception as e:
+    print(f"⚠️  Firebase import failed: {e}")
+    FIREBASE_AVAILABLE = False
+    PROJECT_ID = "firebase-unavailable"
+# Importar scripts de forma segura
+try:
+    from api.scripts import (
+        # Firebase operations
+        get_collections_info,
+        test_firebase_connection,
+        get_collections_summary,
+        # Unidades proyecto operations  
+        get_all_unidades_proyecto,
+        get_unidades_proyecto_summary,
+        validate_unidades_proyecto_collection,
+        filter_unidades_proyecto,
+        get_dashboard_summary
+    )
+    SCRIPTS_AVAILABLE = True
+except Exception as e:
+    print(f"⚠️  Scripts import failed: {e}")
+    SCRIPTS_AVAILABLE = False
 
 # Configurar el lifespan de la aplicación
 @asynccontextmanager
@@ -37,15 +50,18 @@ async def lifespan(app: FastAPI):
     print(f"🌍 Environment: {os.getenv('ENVIRONMENT', 'development')}")
     print(f"🔧 Firebase Project: {PROJECT_ID}")
     
-    # Intentar inicializar Firebase pero no fallar si no funciona
-    try:
-        if initialize_firebase():
-            print("✅ Firebase inicializado correctamente")
-        else:
-            print("⚠️  Advertencia: Firebase no disponible - API funcionará en modo limitado")
-    except Exception as e:
-        print(f"⚠️  Warning: Firebase initialization failed: {e}")
-        print("🔧 API will start but Firebase endpoints may not work")
+    # Intentar inicializar Firebase solo si está disponible
+    if FIREBASE_AVAILABLE:
+        try:
+            if initialize_firebase():
+                print("✅ Firebase inicializado correctamente")
+            else:
+                print("⚠️  Advertencia: Firebase no disponible - API funcionará en modo limitado")
+        except Exception as e:
+            print(f"⚠️  Warning: Firebase initialization failed: {e}")
+            print("🔧 API will start but Firebase endpoints may not work")
+    else:
+        print("⚠️  Firebase not available - API running in limited mode")
     
     yield
     
@@ -118,16 +134,23 @@ async def health_check():
         }
         
         # Intentar Firebase solo si está disponible
-        try:
-            firebase_status = await test_firebase_connection()
-            basic_response["services"]["firebase"] = firebase_status
-            if not firebase_status["connected"]:
+        if FIREBASE_AVAILABLE and SCRIPTS_AVAILABLE:
+            try:
+                firebase_status = await test_firebase_connection()
+                basic_response["services"]["firebase"] = firebase_status
+                if not firebase_status["connected"]:
+                    basic_response["status"] = "degraded"
+            except Exception as firebase_error:
+                print(f"⚠️  Firebase check failed: {firebase_error}")
+                basic_response["services"]["firebase"] = {
+                    "connected": False, 
+                    "error": str(firebase_error)[:100]
+                }
                 basic_response["status"] = "degraded"
-        except Exception as firebase_error:
-            print(f"⚠️  Firebase check failed: {firebase_error}")
+        else:
             basic_response["services"]["firebase"] = {
                 "connected": False, 
-                "error": str(firebase_error)[:100]
+                "error": "Firebase or scripts not available"
             }
             basic_response["status"] = "degraded"
         
@@ -152,6 +175,8 @@ async def health_check():
 @app.get("/firebase/status", tags=["Firebase"])
 async def firebase_status():
     """Verificar estado de la conexión con Firebase"""
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
     try:
         connection_result = await test_firebase_connection()
         
@@ -179,6 +204,8 @@ async def get_firebase_collections():
     - Última fecha de actualización
     - Estado de cada colección
     """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
     try:
         collections_data = await get_collections_info()
         
@@ -201,6 +228,8 @@ async def get_firebase_collections():
 @app.get("/firebase/collections/summary", tags=["Firebase"])
 async def get_firebase_collections_summary():
     """Obtener resumen estadístico de las colecciones"""
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
     try:
         summary_data = await get_collections_summary()
         
@@ -227,6 +256,8 @@ async def get_unidades_proyecto():
     - Metadatos de cada documento (fechas de creación y actualización)
     - Conteo total de unidades
     """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
     try:
         result = await get_all_unidades_proyecto()
         
@@ -258,6 +289,8 @@ async def get_unidades_proyecto_resumen():
     - Número de proyectos únicos
     - Campos comunes en los documentos
     """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
     try:
         result = await get_unidades_proyecto_summary()
         
@@ -288,6 +321,8 @@ async def validate_unidades_proyecto():
     - Estructura de campos del primer documento
     - Información sobre la existencia de la colección
     """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
     try:
         result = await validate_unidades_proyecto_collection()
         
@@ -348,6 +383,8 @@ async def filter_unidades_proyecto_endpoint(
     - Análisis de datos en tiempo real
     - Filtros cascada (combo boxes dependientes)
     """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
     try:
         result = await filter_unidades_proyecto(
             bpin=bpin,
@@ -409,6 +446,8 @@ async def get_dashboard_summary_endpoint():
     - KPIs ejecutivos
     - Análisis de tendencias
     """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
     try:
         result = await get_dashboard_summary()
         

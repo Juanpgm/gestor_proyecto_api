@@ -1,20 +1,18 @@
-# Arquitectura funcional optimizada
+# ============================================
+# 🔥 GESTOR DE PROYECTOS API - FIREBASE ÚNICO
+# ============================================
 
 # Framework web
 fastapi==0.116.2
 uvicorn==0.35.0
 
-# Base de datos
-sqlalchemy==2.0.43
-psycopg2-binary==2.9.10
+# Firebase - Única plataforma de base de datos
+firebase-admin==6.5.0
+google-cloud-firestore==2.19.0
 
-# Configuración y validación
+# Configuración
 python-dotenv==1.1.1
+
+# Validación de datos
 pydantic==2.11.9
 email-validator==2.3.0
-
-# Autenticación y seguridad
-bcrypt==4.3.0
-PyJWT==2.10.1
-python-multipart==0.0.20
-dnspython==2.8.0

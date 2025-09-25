@@ -1,13 +1,8 @@
 """
-API Module - Modelos de datos para gestión municipal
-Arquitectura refactorizada con programación funcional
+API Package
+Contiene todos los módulos de la API
 """
 
-from .models import *
+from . import scripts
 
-__all__ = [
-    'Base', 'UnidadProyecto', 'DatosCaracteristicosProyecto', 
-    'EjecucionPresupuestal', 'MovimientoPresupuestal', 
-    'ProcesoContratacionDacp', 'OrdenCompraDacp', 'PaaDacp', 
-    'EmpPaaDacp', 'Usuario', 'Rol', 'TokenSeguridad'
-]
+__all__ = ["scripts"]
