@@ -15,12 +15,18 @@ from datetime import datetime
 
 # Importar Firebase de forma segura
 try:
-    from database.config import initialize_firebase, setup_firebase, PROJECT_ID
-    FIREBASE_AVAILABLE = True
+    from database.config_safe import initialize_firebase, setup_firebase, PROJECT_ID, FIREBASE_AVAILABLE
+    print("Firebase config imported successfully")
 except Exception as e:
-    print(f"⚠️  Firebase import failed: {e}")
+    print(f"Warning: Firebase import failed: {e}")
     FIREBASE_AVAILABLE = False
     PROJECT_ID = "firebase-unavailable"
+    
+    # Define dummy functions if import fails
+    def initialize_firebase():
+        return False
+    def setup_firebase():
+        return False
 # Importar scripts de forma segura
 try:
     from api.scripts import (
@@ -37,7 +43,7 @@ try:
     )
     SCRIPTS_AVAILABLE = True
 except Exception as e:
-    print(f"⚠️  Scripts import failed: {e}")
+    print(f"Warning: Scripts import failed: {e}")
     SCRIPTS_AVAILABLE = False
 
 # Configurar el lifespan de la aplicación
@@ -45,28 +51,28 @@ except Exception as e:
 async def lifespan(app: FastAPI):
     """Gestionar el ciclo de vida de la aplicación"""
     # Startup
-    print("🚀 Iniciando API...")
-    print(f"📍 Puerto: {os.getenv('PORT', '8000')}")
-    print(f"🌍 Environment: {os.getenv('ENVIRONMENT', 'development')}")
-    print(f"🔧 Firebase Project: {PROJECT_ID}")
+    print("Starting API...")
+    print(f"Port: {os.getenv('PORT', '8000')}")
+    print(f"Environment: {os.getenv('ENVIRONMENT', 'development')}")
+    print(f"Firebase Project: {PROJECT_ID}")
     
     # Intentar inicializar Firebase solo si está disponible
     if FIREBASE_AVAILABLE:
         try:
             if initialize_firebase():
-                print("✅ Firebase inicializado correctamente")
+                print("Firebase initialized successfully")
             else:
-                print("⚠️  Advertencia: Firebase no disponible - API funcionará en modo limitado")
+                print("Warning: Firebase not available - API will run in limited mode")
         except Exception as e:
-            print(f"⚠️  Warning: Firebase initialization failed: {e}")
-            print("🔧 API will start but Firebase endpoints may not work")
+            print(f"Warning: Firebase initialization failed: {e}")
+            print("API will start but Firebase endpoints may not work")
     else:
-        print("⚠️  Firebase not available - API running in limited mode")
+        print("Firebase not available - API running in limited mode")
     
     yield
     
     # Shutdown
-    print("🛑 Cerrando API...")
+    print("Stopping API...")
 
 # Crear instancia de FastAPI con lifespan
 app = FastAPI(
@@ -141,7 +147,7 @@ async def health_check():
                 if not firebase_status["connected"]:
                     basic_response["status"] = "degraded"
             except Exception as firebase_error:
-                print(f"⚠️  Firebase check failed: {firebase_error}")
+                print(f"Warning: Firebase check failed: {firebase_error}")
                 basic_response["services"]["firebase"] = {
                     "connected": False, 
                     "error": str(firebase_error)[:100]
@@ -157,8 +163,8 @@ async def health_check():
         return basic_response
         
     except Exception as e:
-        print(f"❌ Health check error: {e}")
-        # Returnear response básico incluso si hay errores
+        print(f"Health check error: {e}")
+        # Return basic response even if there are errors
         return {
             "status": "partial",
             "timestamp": datetime.now().isoformat(),
@@ -485,9 +491,9 @@ async def global_exception_handler(request, exc):
 # Ejecutar servidor si se llama directamente
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
-    print(f"🚀 Iniciando servidor en puerto: {port}")
-    print(f"🌍 Environment: {os.getenv('ENVIRONMENT', 'development')}")
-    print(f"🔧 Firebase Project: {PROJECT_ID}")
+    print(f"Starting server on port: {port}")
+    print(f"Environment: {os.getenv('ENVIRONMENT', 'development')}")
+    print(f"Firebase Project: {PROJECT_ID}")
     
     uvicorn.run(
         "main:app", 

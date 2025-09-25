@@ -11,13 +11,27 @@ Implementa programación funcional para configuración segura y escalable.
 """
 
 import os
-import firebase_admin
-from firebase_admin import credentials, firestore
-import gspread
-from google.auth import default
 from typing import Optional, List, Dict, Any, Callable
 from pathlib import Path
 from functools import wraps, lru_cache
+
+# Importaciones de Firebase de forma segura
+try:
+    import firebase_admin
+    from firebase_admin import credentials, firestore
+    FIREBASE_MODULES_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Firebase modules not available: {e}")
+    FIREBASE_MODULES_AVAILABLE = False
+
+# Importaciones de Google Sheets de forma segura  
+try:
+    import gspread
+    from google.auth import default
+    SHEETS_MODULES_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Google Sheets modules not available: {e}")
+    SHEETS_MODULES_AVAILABLE = False
 
 # Cargar variables de entorno desde .env
 try:
