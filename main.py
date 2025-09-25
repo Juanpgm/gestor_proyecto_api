@@ -1,371 +1,429 @@
 """
-API refactorizada con programación funcional para gestión de datos municipales
-Arquitectura optimizada y simplificada con Parameter Input Widgets mejorados
+Gestor de Proyectos API
+API principal para gestión de proyectos con Firebase
+Arquitectura modular con programación funcional optimizada para producción
 """
-from fastapi import FastAPI, Depends, HTTPException
-from fastapi.responses import JSONResponse
-from fastapi.openapi.utils import get_openapi
-from sqlalchemy.orm import Session
-from sqlalchemy import text, inspect
-from typing import Dict, Any, List, Optional
-from functools import lru_cache, reduce
+
 import os
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from typing import Dict, Any, Optional, Union
+import uvicorn
 from datetime import datetime
 
-# Imports locales optimizados
-from config import get_db, engine, test_database_connection
-from api.models import (
-    UnidadProyecto, DatosCaracteristicosProyecto, EjecucionPresupuestal,
-    MovimientoPresupuestal, ProcesoContratacionDacp, OrdenCompraDacp,
-    PaaDacp, EmpPaaDacp, Usuario, Rol, TokenSeguridad
+from database.config import initialize_firebase, setup_firebase, PROJECT_ID
+from api.scripts import (
+    # Firebase operations
+    get_collections_info,
+    test_firebase_connection,
+    get_collections_summary,
+    # Unidades proyecto operations  
+    get_all_unidades_proyecto,
+    get_unidades_proyecto_summary,
+    validate_unidades_proyecto_collection,
+    filter_unidades_proyecto,
+    get_dashboard_summary
 )
-from api.user_router import user_router
-from api.schemas import get_openapi_config, get_swagger_ui_config
 
-# ============================================================================
-# CONFIGURACIÓN FUNCIONAL DE LA APLICACIÓN
-# ============================================================================
-
-@lru_cache(maxsize=1)
-def get_app_config() -> Dict[str, str]:
-    """Configuración de la aplicación con cache"""
-    return {
-        "name": os.getenv("APP_NAME", "API Gestor Municipal"),
-        "version": os.getenv("APP_VERSION", "3.0.0"),
-        "environment": os.getenv("APP_ENV", "development"),
-        "description": "API refactorizada para gestión de datos municipales con programación funcional"
-    }
-
-def create_app() -> FastAPI:
-    """Factory function para crear la aplicación FastAPI con configuración mejorada"""
-    config = get_app_config()
-    openapi_config = get_openapi_config()
-    swagger_config = get_swagger_ui_config()
+# Configurar el lifespan de la aplicación
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Gestionar el ciclo de vida de la aplicación"""
+    # Startup
+    print("🚀 Iniciando API...")
     
-    app = FastAPI(
-        title=openapi_config["title"],
-        description=openapi_config["description"],
-        version=openapi_config["version"],
-        contact=openapi_config["contact"],
-        license_info=openapi_config["license"],
-        docs_url="/docs",
-        redoc_url="/redoc",
-        **swagger_config
-    )
+    if not initialize_firebase():
+        print("⚠️  Advertencia: Firebase no se inicializó correctamente")
+    else:
+        print("✅ Firebase inicializado correctamente")
     
-    # Personalizar OpenAPI schema
-    def custom_openapi():
-        if app.openapi_schema:
-            return app.openapi_schema
-        
-        openapi_schema = get_openapi(
-            title=openapi_config["title"],
-            version=openapi_config["version"],
-            description=openapi_config["description"],
-            routes=app.routes,
-            tags=openapi_config["tags"]
-        )
-        
-        # Personalizar esquemas para mejor UX
-        openapi_schema["info"]["x-logo"] = {
-            "url": "https://fastapi.tiangolo.com/img/logo-margin/logo-teal.png"
-        }
-        
-        # Mejorar seguridad en la documentación
-        openapi_schema["components"]["securitySchemes"] = {
-            "BearerAuth": {
-                "type": "http",
-                "scheme": "bearer",
-                "bearerFormat": "JWT",
-                "description": (
-                    "Introduce tu token JWT obtenido del login:\n\n"
-                    "1. Haz login en `/users/login`\n"
-                    "2. Copia el `access_token` de la respuesta\n"
-                    "3. Pega aquí: `Bearer tu_token_aqui`\n\n"
-                    "Ejemplo: `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...`"
-                )
-            }
-        }
-        
-        app.openapi_schema = openapi_schema
-        return app.openapi_schema
+    yield
     
-    app.openapi = custom_openapi
-    return app
+    # Shutdown (si necesitas limpiar recursos)
+    print("🛑 Cerrando API...")
 
-# Instancia de la aplicación
-app = create_app()
+# Crear instancia de FastAPI con lifespan
+app = FastAPI(
+    title="Gestor de Proyectos API",
+    description="API para gestión de proyectos con Firebase/Firestore",
+    version="1.0.0",
+    lifespan=lifespan
+)
 
-# ============================================================================
-# INCLUIR ROUTERS
-# ============================================================================
-
-# Router de gestión de usuarios
-app.include_router(user_router)
-
-# ============================================================================
-# FUNCIONES UTILITARIAS FUNCIONALES
-# ============================================================================
-
-def safe_execute_query(db: Session, query: str) -> Optional[Any]:
-    """Ejecutar query de forma segura"""
-    try:
-        return db.execute(text(query)).scalar()
-    except Exception:
-        return None
-
-def get_table_count(db: Session, table_name: str) -> int:
-    """Obtener conteo de registros de una tabla"""
-    count = safe_execute_query(db, f"SELECT COUNT(*) FROM {table_name}")
-    return count or 0
-
-def get_table_stats(db: Session, table_name: str, numeric_columns: List[str]) -> Dict[str, Any]:
-    """Obtener estadísticas básicas de una tabla"""
-    stats = {"count": get_table_count(db, table_name)}
-    
-    for column in numeric_columns:
-        try:
-            # Obtener estadísticas numéricas
-            avg_val = safe_execute_query(db, f"SELECT AVG({column}) FROM {table_name} WHERE {column} IS NOT NULL")
-            min_val = safe_execute_query(db, f"SELECT MIN({column}) FROM {table_name} WHERE {column} IS NOT NULL")
-            max_val = safe_execute_query(db, f"SELECT MAX({column}) FROM {table_name} WHERE {column} IS NOT NULL")
-            
-            if avg_val is not None:
-                stats[f"{column}_avg"] = float(avg_val)
-                stats[f"{column}_min"] = float(min_val) if min_val else None
-                stats[f"{column}_max"] = float(max_val) if max_val else None
-        except Exception:
-            continue
-    
-    return stats
+# Configurar CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # ============================================================================
-# CONFIGURACIÓN DE TABLAS Y MODELOS
-# ============================================================================
-
-@lru_cache(maxsize=1)
-def get_tables_config() -> Dict[str, Dict[str, Any]]:
-    """Configuración de tablas y sus columnas numéricas para estadísticas"""
-    return {
-        "unidad_proyecto": {
-            "model": UnidadProyecto,
-            "numeric_columns": ["presupuesto_base", "avance_obra", "usuarios", "latitude", "longitude"],
-            "description": "Unidades de proyecto - Equipamientos de infraestructura municipal"
-        },
-        "datos_caracteristicos_proyecto": {
-            "model": DatosCaracteristicosProyecto,
-            "numeric_columns": ["bpin", "anio"],
-            "description": "Datos característicos y descriptivos de proyectos municipales"
-        },
-        "ejecucion_presupuestal": {
-            "model": EjecucionPresupuestal,
-            "numeric_columns": ["ejecucion", "pagos", "ppto_disponible", "saldos_cdp", "total_acumul_obligac", "total_acumulado_cdp", "total_acumulado_rpc"],
-            "description": "Ejecución presupuestal mensual de proyectos"
-        },
-        "movimiento_presupuestal": {
-            "model": MovimientoPresupuestal,
-            "numeric_columns": ["adiciones", "aplazamiento", "contracreditos", "creditos", "desaplazamiento", "ppto_inicial", "ppto_modificado", "reducciones"],
-            "description": "Movimientos y modificaciones presupuestales"
-        },
-        "proceso_contratacion_dacp": {
-            "model": ProcesoContratacionDacp,
-            "numeric_columns": ["valor_proceso", "valor_contrato", "valor_contrato_ejecutado_sap"],
-            "description": "Procesos de contratación DACP (SECOP II y otros)"
-        },
-        "orden_compra_dacp": {
-            "model": OrdenCompraDacp,
-            "numeric_columns": ["valor_proceso", "valor_contrato", "valor_contrato_ejecutado_sap"],
-            "description": "Órdenes de compra DACP (TVEC y otros)"
-        },
-        "paa_dacp": {
-            "model": PaaDacp,
-            "numeric_columns": ["valor_actividad", "valor_disponible", "valor_apropiado", "valor_total_estimado", "valor_vigencia_actual", "inversion_real_estimado"],
-            "description": "Plan Anual de Adquisiciones DACP"
-        },
-        "emp_paa_dacp": {
-            "model": EmpPaaDacp,
-            "numeric_columns": ["valor_actividad", "valor_disponible", "valor_apropiado", "valor_total_estimado", "valor_vigencia_actual", "inversion_real_estimado"],
-            "description": "Plan Anual de Adquisiciones DACP - Empréstito"
-        },
-        "usuarios": {
-            "model": Usuario,
-            "numeric_columns": ["rol"],
-            "description": "Usuarios del sistema de gestión municipal"
-        },
-        "roles": {
-            "model": Rol,
-            "numeric_columns": ["nivel"],
-            "description": "Roles y niveles de acceso del sistema"
-        },
-        "tokens_seguridad": {
-            "model": TokenSeguridad,
-            "numeric_columns": [],
-            "description": "Tokens de seguridad para autenticación"
-        }
-    }
-
-# ============================================================================
-# FUNCIONES PRINCIPALES DEL NEGOCIO
-# ============================================================================
-
-def calculate_summary_statistics(db: Session) -> Dict[str, Any]:
-    """Calcular estadísticas resumen de todas las tablas"""
-    tables_config = get_tables_config()
-    
-    # Función auxiliar para procesar una tabla
-    def process_table(acc: Dict, item: tuple) -> Dict:
-        table_name, config = item
-        try:
-            stats = get_table_stats(db, table_name, config["numeric_columns"])
-            acc[table_name] = {
-                "description": config["description"],
-                "statistics": stats
-            }
-        except Exception as e:
-            acc[table_name] = {
-                "description": config["description"],
-                "error": str(e),
-                "statistics": {"count": 0}
-            }
-        return acc
-    
-    # Usar reduce para procesar todas las tablas de forma funcional
-    return reduce(process_table, tables_config.items(), {})
-
-def get_database_overview() -> Dict[str, Any]:
-    """Obtener resumen general de la base de datos"""
-    config = get_app_config()
-    
-    return {
-        "api_info": {
-            "name": config["name"],
-            "version": config["version"],
-            "environment": config["environment"],
-            "timestamp": datetime.now().isoformat()
-        },
-        "database_info": {
-            "connected": test_database_connection(),
-            "total_tables": len(get_tables_config()),
-            "available_tables": list(get_tables_config().keys())
-        }
-    }
-
-# ============================================================================
-# ENDPOINTS DE LA API
+# ENDPOINTS GENERALES
 # ============================================================================
 
 @app.get("/")
-async def root():
-    """Endpoint raíz con información de la API"""
-    config = get_app_config()
-    
+async def read_root():
+    """Endpoint raíz con información básica de la API"""
     return {
-        "message": f"Bienvenido a {config['name']} v{config['version']}",
-        "description": config["description"],
-        "features": [
-            "Programación funcional",
-            "Arquitectura simplificada",
-            "Estadísticas de base de datos",
-            "Conexión optimizada"
-        ],
+        "message": "Gestor de Proyectos API",
+        "version": "1.0.0",
+        "timestamp": datetime.now().isoformat(),
+        "firebase_project": PROJECT_ID,
+        "status": "running",
+        "documentation": "/docs",
         "endpoints": {
-            "docs": "/docs",
-            "redoc": "/redoc",
-            "database_summary": "/database/summary",
-            "health": "/health",
-            "users": "/users",
-            "auth": "/users/login"
+            "general": ["/", "/health"],
+            "firebase": ["/firebase/status", "/firebase/collections", "/firebase/collections/summary"],
+            "unidades_proyecto": [
+                "/unidades-proyecto", 
+                "/unidades-proyecto/summary", 
+                "/unidades-proyecto/validate",
+                "/unidades-proyecto/filter",
+                "/unidades-proyecto/dashboard-summary"
+            ]
         }
     }
 
-@app.get("/health")
+@app.get("/health", tags=["General"])
 async def health_check():
-    """Verificar estado de la API y base de datos"""
-    config = get_app_config()
-    is_connected = test_database_connection()
-    
-    return {
-        "status": "healthy" if is_connected else "unhealthy",
-        "service": config["name"],
-        "version": config["version"],
-        "database": "connected" if is_connected else "disconnected",
-        "timestamp": datetime.now().isoformat()
-    }
-
-@app.get("/database/summary")
-async def get_database_summary(db: Session = Depends(get_db)):
-    """
-    Endpoint principal: Resumen completo de todas las tablas con estadísticas
-    
-    Returns:
-        - Información general de la base de datos
-        - Conteo de registros por tabla
-        - Estadísticas básicas de columnas numéricas
-        - Descripción de cada tabla
-    """
+    """Verificar estado de salud de la API y sus servicios"""
     try:
-        # Obtener resumen general
-        overview = get_database_overview()
-        
-        # Calcular estadísticas de todas las tablas
-        tables_stats = calculate_summary_statistics(db)
-        
-        # Calcular totales generales
-        total_records = sum(
-            table_data["statistics"].get("count", 0) 
-            for table_data in tables_stats.values()
-        )
+        firebase_status = await test_firebase_connection()
         
         return {
-            "database_overview": overview,
-            "total_records": total_records,
-            "tables": tables_stats,
-            "summary": {
-                "tables_analyzed": len(tables_stats),
-                "tables_with_data": len([
-                    t for t in tables_stats.values() 
-                    if t["statistics"].get("count", 0) > 0
-                ]),
-                "total_records_all_tables": total_records
+            "status": "healthy" if firebase_status["connected"] else "degraded",
+            "timestamp": datetime.now().isoformat(),
+            "services": {
+                "api": "running",
+                "firebase": firebase_status
+            },
+            "port": os.getenv("PORT", "8000"),
+            "environment": os.getenv("ENVIRONMENT", "development")
+        }
+    except Exception as e:
+        print(f"❌ Health check error: {e}")
+        return {
+            "status": "error",
+            "timestamp": datetime.now().isoformat(),
+            "error": str(e),
+            "services": {
+                "api": "running",
+                "firebase": {"connected": False, "error": str(e)}
             }
+        }
+
+# ============================================================================
+# ENDPOINTS DE FIREBASE
+# ============================================================================
+
+@app.get("/firebase/status", tags=["Firebase"])
+async def firebase_status():
+    """Verificar estado de la conexión con Firebase"""
+    try:
+        connection_result = await test_firebase_connection()
+        
+        if not connection_result["connected"]:
+            raise HTTPException(
+                status_code=503, 
+                detail=f"Firebase no disponible: {connection_result.get('error', 'Error desconocido')}"
+            )
+        
+        return connection_result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error verificando Firebase: {str(e)}")
+
+@app.get("/firebase/collections", tags=["Firebase"])
+async def get_firebase_collections():
+    """
+    Obtener información completa de todas las colecciones de Firestore
+    
+    Retorna:
+    - Número de documentos por colección
+    - Tamaño estimado de cada colección  
+    - Última fecha de actualización
+    - Estado de cada colección
+    """
+    try:
+        collections_data = await get_collections_info()
+        
+        if not collections_data["success"]:
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Error obteniendo información de colecciones: {collections_data.get('error', 'Error desconocido')}"
+            )
+        
+        return collections_data
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error interno del servidor: {str(e)}"
+        )
+
+@app.get("/firebase/collections/summary", tags=["Firebase"])
+async def get_firebase_collections_summary():
+    """Obtener resumen estadístico de las colecciones"""
+    try:
+        summary_data = await get_collections_summary()
+        
+        if not summary_data["success"]:
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Error obteniendo resumen: {summary_data.get('error', 'Error desconocido')}"
+            )
+        
+        return summary_data
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error obteniendo resumen: {str(e)}")
+
+@app.get("/unidades-proyecto", tags=["Unidades de Proyecto"])
+async def get_unidades_proyecto():
+    """
+    Obtener todas las unidades de proyecto de la colección 'unidades_proyecto'
+    
+    Retorna:
+    - Lista completa de unidades de proyecto
+    - Metadatos de cada documento (fechas de creación y actualización)
+    - Conteo total de unidades
+    """
+    try:
+        result = await get_all_unidades_proyecto()
+        
+        if not result["success"]:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error obteniendo unidades de proyecto: {result.get('error', 'Error desconocido')}"
+            )
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno del servidor: {str(e)}"
+        )
+
+
+@app.get("/unidades-proyecto/summary", tags=["Unidades de Proyecto"])
+async def get_unidades_proyecto_resumen():
+    """
+    Obtener resumen estadístico de las unidades de proyecto
+    
+    Retorna:
+    - Total de unidades
+    - Distribución por estado
+    - Número de proyectos únicos
+    - Campos comunes en los documentos
+    """
+    try:
+        result = await get_unidades_proyecto_summary()
+        
+        if not result["success"]:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error generando resumen: {result.get('error', 'Error desconocido')}"
+            )
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error obteniendo resumen: {str(e)}"
+        )
+
+
+@app.get("/unidades-proyecto/validate", tags=["Unidades de Proyecto"])
+async def validate_unidades_proyecto():
+    """
+    Validar la existencia y estructura de la colección unidades_proyecto
+    
+    Retorna:
+    - Estado de validación de la colección
+    - Estructura de campos del primer documento
+    - Información sobre la existencia de la colección
+    """
+    try:
+        result = await validate_unidades_proyecto_collection()
+        
+        if not result["valid"]:
+            return {
+                "valid": False,
+                "message": "La colección de unidades de proyecto tiene problemas",
+                "details": result,
+                "timestamp": datetime.now().isoformat()
+            }
+        
+        return {
+            "valid": True,
+            "message": "La colección de unidades de proyecto está disponible y válida",
+            "details": result,
+            "timestamp": datetime.now().isoformat()
         }
         
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Error generando resumen de base de datos: {str(e)}"
+            detail=f"Error validando colección: {str(e)}"
+        )
+
+
+@app.get("/unidades-proyecto/filter", tags=["Unidades de Proyecto"])
+async def filter_unidades_proyecto_endpoint(
+    bpin: Optional[str] = Query(None, description="Filtrar por BPIN"),
+    referencia_proceso: Optional[str] = Query(None, description="Filtrar por referencia del proceso"),
+    referencia_contrato: Optional[str] = Query(None, description="Filtrar por referencia del contrato"),
+    estado: Optional[str] = Query(None, description="Filtrar por estado"),
+    upid: Optional[str] = Query(None, description="Filtrar por ID de unidad de proyecto"),
+    barrio_vereda: Optional[str] = Query(None, description="Filtrar por barrio o vereda"),
+    comuna_corregimiento: Optional[str] = Query(None, description="Filtrar por comuna o corregimiento"),
+    nombre_up: Optional[str] = Query(None, description="Buscar por nombre de UP (búsqueda parcial)"),
+    fuente_financiacion: Optional[str] = Query(None, description="Filtrar por fuente de financiación"),
+    ano: Optional[Union[int, str]] = Query(None, description="Filtrar por año"),
+    limit: Optional[int] = Query(None, ge=1, le=1000, description="Límite de resultados (máximo 1000)"),
+    include_metadata: bool = Query(False, description="Incluir metadatos de los documentos")
+):
+    """
+    Filtrar unidades de proyecto por múltiples criterios - Optimizado para Dashboards
+    
+    Este endpoint está diseñado para ser extremadamente eficiente en dashboards,
+    permitiendo combinar múltiples filtros y obtener resultados rápidos.
+    
+    Características:
+    - Filtros combinables (AND lógico)
+    - Búsqueda parcial en nombre de UP
+    - Límite configurable de resultados
+    - Solo datos reales de la DB (sin metadatos por defecto)
+    - Incluye coordenadas geográficas (latitude, longitude, geometry)
+    - Información de filtros aplicados en la respuesta
+    
+    Casos de uso:
+    - Dashboards interactivos
+    - Reportes dinámicos
+    - Análisis de datos en tiempo real
+    - Filtros cascada (combo boxes dependientes)
+    """
+    try:
+        result = await filter_unidades_proyecto(
+            bpin=bpin,
+            referencia_proceso=referencia_proceso,
+            referencia_contrato=referencia_contrato,
+            estado=estado,
+            upid=upid,
+            barrio_vereda=barrio_vereda,
+            comuna_corregimiento=comuna_corregimiento,
+            nombre_up=nombre_up,
+            fuente_financiacion=fuente_financiacion,
+            ano=ano,
+            limit=limit,
+            include_metadata=include_metadata
+        )
+        
+        if not result["success"]:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error filtrando unidades: {result.get('error', 'Error desconocido')}"
+            )
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno del servidor: {str(e)}"
+        )
+
+
+
+@app.get("/unidades-proyecto/dashboard-summary", tags=["Unidades de Proyecto"])
+async def get_dashboard_summary_endpoint():
+    """
+    Obtener resumen ejecutivo optimizado para dashboards
+    
+    Proporciona métricas clave y distribuciones estadísticas 
+    ideales para visualizaciones de dashboard:
+    
+    Métricas incluidas:
+    - Total de unidades de proyecto
+    - Número de BPINs únicos
+    - Número de procesos únicos
+    - Número de contratos únicos
+    
+    Distribuciones incluidas:
+    - Por estado
+    - Por año
+    - Por fuente de financiación  
+    - Por comuna/corregimiento
+    - Por barrio/vereda
+    
+    Casos de uso:
+    - Página principal de dashboard
+    - Gráficos de barras y tortas
+    - KPIs ejecutivos
+    - Análisis de tendencias
+    """
+    try:
+        result = await get_dashboard_summary()
+        
+        if not result["success"]:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error generando resumen: {result.get('error', 'Error desconocido')}"
+            )
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error obteniendo resumen de dashboard: {str(e)}"
         )
 
 # ============================================================================
-# MANEJO DE ERRORES
+# MANEJADORES DE ERRORES
 # ============================================================================
-
-@app.exception_handler(HTTPException)
-async def http_exception_handler(request, exc):
-    """Manejo centralizado de excepciones HTTP"""
+@app.exception_handler(Exception)
+async def global_exception_handler(request, exc):
+    """Manejador global de errores"""
     return JSONResponse(
-        status_code=exc.status_code,
+        status_code=500,
         content={
-            "error": True,
-            "message": exc.detail,
-            "status_code": exc.status_code,
+            "error": "Error interno del servidor",
+            "detail": str(exc),
             "timestamp": datetime.now().isoformat()
         }
     )
 
-# ============================================================================
-# PUNTO DE ENTRADA
-# ============================================================================
-
+# Ejecutar servidor si se llama directamente
 if __name__ == "__main__":
-    import uvicorn
-    config = get_app_config()
+    port = int(os.getenv("PORT", 8000))
+    print(f"🚀 Iniciando servidor en puerto: {port}")
+    print(f"🌍 Environment: {os.getenv('ENVIRONMENT', 'development')}")
+    print(f"🔧 Firebase Project: {PROJECT_ID}")
     
-    # Ejecutar con string import para habilitar reload
     uvicorn.run(
-        "main:app",
-        host="0.0.0.0",
-        port=8001,
-        log_level="info",
-        reload=True if config["environment"] == "development" else False
+        "main:app", 
+        host="0.0.0.0", 
+        port=port, 
+        reload=False  # Cambiar a False para producción
     )
