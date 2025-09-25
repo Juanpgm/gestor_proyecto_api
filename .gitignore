@@ -193,5 +193,24 @@ htmlcov/
 config_local.py
 settings_local.py
 
-# Context files with sensitive information
-context/
+# Security - Service Account Keys and Sensitive Files
+railway-service-account-key.json
+*-service-account-key.json
+*.pem
+*.p12
+.env.railway*
+.env.production*
+.env.secrets*
+
+# Firebase and Google Cloud credentials
+firebase-adminsdk-*.json
+gcp-service-account-*.json
+google-credentials-*.json
+
+# Temporary files with sensitive data
+extract_railway_vars.py
+setup_railway_firebase.py
+railway_troubleshooter.py
+railway_monitor.py
+railway_test.py
+quick_test.py
