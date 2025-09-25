@@ -25,9 +25,5 @@ COPY . .
 # Exponer puerto
 EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-    CMD curl -f http://localhost:${PORT:-8000}/health || exit 1
-
-# Comando de inicio - Railway asigna $PORT automáticamente
-CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}
+# Comando de inicio con logging detallado
+CMD ["sh", "-c", "echo '🚀 Starting Railway deployment' && echo 'Port: ${PORT:-8000}' && echo 'Environment: ${ENVIRONMENT:-development}' && uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --log-level info --access-log"]

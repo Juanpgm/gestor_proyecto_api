@@ -33,15 +33,23 @@ async def lifespan(app: FastAPI):
     """Gestionar el ciclo de vida de la aplicación"""
     # Startup
     print("🚀 Iniciando API...")
+    print(f"📍 Puerto: {os.getenv('PORT', '8000')}")
+    print(f"🌍 Environment: {os.getenv('ENVIRONMENT', 'development')}")
+    print(f"🔧 Firebase Project: {PROJECT_ID}")
     
-    if not initialize_firebase():
-        print("⚠️  Advertencia: Firebase no se inicializó correctamente")
-    else:
-        print("✅ Firebase inicializado correctamente")
+    # Intentar inicializar Firebase pero no fallar si no funciona
+    try:
+        if initialize_firebase():
+            print("✅ Firebase inicializado correctamente")
+        else:
+            print("⚠️  Advertencia: Firebase no disponible - API funcionará en modo limitado")
+    except Exception as e:
+        print(f"⚠️  Warning: Firebase initialization failed: {e}")
+        print("🔧 API will start but Firebase endpoints may not work")
     
     yield
     
-    # Shutdown (si necesitas limpiar recursos)
+    # Shutdown
     print("🛑 Cerrando API...")
 
 # Crear instancia de FastAPI con lifespan
@@ -88,31 +96,52 @@ async def read_root():
         }
     }
 
+@app.get("/ping", tags=["General"])
+async def ping():
+    """Health check super simple para Railway"""
+    return {"status": "ok", "timestamp": datetime.now().isoformat()}
+
 @app.get("/health", tags=["General"])
 async def health_check():
-    """Verificar estado de salud de la API y sus servicios"""
+    """Verificar estado de salud de la API - Health check básico para Railway"""
     try:
-        firebase_status = await test_firebase_connection()
-        
-        return {
-            "status": "healthy" if firebase_status["connected"] else "degraded",
+        # Health check básico sin Firebase para Railway
+        basic_response = {
+            "status": "healthy",
             "timestamp": datetime.now().isoformat(),
             "services": {
-                "api": "running",
-                "firebase": firebase_status
+                "api": "running"
             },
             "port": os.getenv("PORT", "8000"),
-            "environment": os.getenv("ENVIRONMENT", "development")
+            "environment": os.getenv("ENVIRONMENT", "development"),
+            "project_id": PROJECT_ID
         }
+        
+        # Intentar Firebase solo si está disponible
+        try:
+            firebase_status = await test_firebase_connection()
+            basic_response["services"]["firebase"] = firebase_status
+            if not firebase_status["connected"]:
+                basic_response["status"] = "degraded"
+        except Exception as firebase_error:
+            print(f"⚠️  Firebase check failed: {firebase_error}")
+            basic_response["services"]["firebase"] = {
+                "connected": False, 
+                "error": str(firebase_error)[:100]
+            }
+            basic_response["status"] = "degraded"
+        
+        return basic_response
+        
     except Exception as e:
         print(f"❌ Health check error: {e}")
+        # Returnear response básico incluso si hay errores
         return {
-            "status": "error",
+            "status": "partial",
             "timestamp": datetime.now().isoformat(),
-            "error": str(e),
+            "error": str(e)[:100],
             "services": {
-                "api": "running",
-                "firebase": {"connected": False, "error": str(e)}
+                "api": "running"
             }
         }
 
