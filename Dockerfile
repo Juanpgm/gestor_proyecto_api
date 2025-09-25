@@ -22,8 +22,8 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copy application code
 COPY . .
 
-# Expose port
-EXPOSE 8000
+# Expose port (Railway will set PORT env var dynamically)
+EXPOSE $PORT
 
-# Start command with detailed logging
-CMD ["sh", "-c", "echo 'Starting Railway deployment' && echo 'Port: ${PORT:-8000}' && echo 'Environment: ${ENVIRONMENT:-development}' && uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --log-level info --access-log"]
+# Start command - Let Railway set the port
+CMD ["sh", "-c", "echo 'Starting Railway deployment' && echo 'Port: ${PORT:-8000}' && echo 'Environment: ${ENVIRONMENT:-development}' && exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --log-level info --access-log"]
