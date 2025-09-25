@@ -28,20 +28,22 @@ from typing import Dict, Any, Optional, Union
 import uvicorn
 from datetime import datetime
 
-# Importar Firebase de forma segura
+# Importar Firebase con configuración automática
 try:
-    from database.config_safe import initialize_firebase, setup_firebase, PROJECT_ID, FIREBASE_AVAILABLE
-    print("Firebase config imported successfully")
+    from database.firebase_config import FirebaseManager, PROJECT_ID, FIREBASE_AVAILABLE
+    print("Firebase auto-config loaded successfully")
 except Exception as e:
     print(f"Warning: Firebase import failed: {e}")
     FIREBASE_AVAILABLE = False
-    PROJECT_ID = "firebase-unavailable"
+    PROJECT_ID = "your-project-id"
     
-    # Define dummy functions if import fails
-    def initialize_firebase():
-        return False
-    def setup_firebase():
-        return False
+    class FirebaseManager:
+        @staticmethod
+        def is_available(): return False
+        @staticmethod 
+        def setup(): return False
+        @staticmethod
+        def test_connection(): return {'connected': False, 'message': 'Not available'}
 # Importar scripts de forma segura
 try:
     from api.scripts import (

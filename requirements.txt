@@ -4,11 +4,13 @@
 
 # Framework web
 fastapi==0.116.2
-uvicorn==0.35.0
+uvicorn[standard]==0.32.0
 
-# Firebase - Única plataforma de base de datos
+# Firebase Admin SDK con todas las dependencias
 firebase-admin==6.5.0
 google-cloud-firestore==2.19.0
+google-auth==2.35.0
+google-api-python-client==2.183.0
 
 # Configuración
 python-dotenv==1.1.1
