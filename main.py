@@ -2,6 +2,7 @@
 Gestor de Proyectos API
 API principal para gestión de proyectos con Firebase
 Arquitectura modular con programación funcional optimizada para producción
+Deployment: 2025-09-25T12:20:00
 """
 
 import os
