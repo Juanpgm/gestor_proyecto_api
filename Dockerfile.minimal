@@ -1,0 +1,21 @@
+# Dockerfile mínimo para testing Railway
+FROM python:3.12-slim
+
+# Variables de entorno
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# Directorio de trabajo
+WORKDIR /app
+
+# Instalar solo lo esencial
+RUN pip install --no-cache-dir fastapi uvicorn
+
+# Copiar solo el archivo de test
+COPY main_test.py .
+
+# Exponer puerto
+EXPOSE 8000
+
+# Comando súper simple
+CMD ["sh", "-c", "echo '🚀 Railway test starting on port ${PORT:-8000}' && python -c \"import uvicorn, os; port=int(os.getenv('PORT', 8000)); print(f'Starting on {port}'); uvicorn.run('main_test:app', host='0.0.0.0', port=port)\""]
