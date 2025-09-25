@@ -137,6 +137,7 @@ railway up
    - `'charmap' codec can't encode`: **SOLUCIONADO** - encoding UTF-8 corregido
 
 5. **Mensajes Normales de Startup:**
+
    ```
    Warning: Firebase admin SDK not available
    Firebase config imported successfully
@@ -144,9 +145,26 @@ railway up
    Starting API...
    Firebase not available - API running in limited mode
    ```
+
    Estos mensajes son **NORMALES** y **NO indican errores** - la app funciona correctamente.
 
-### Error: "Firebase not initialized"
+6. **PROBLEMA CRÍTICO RESUELTO - Encoding en Dockerfile:**
+
+   - **Problema**: Caracteres no-ASCII (tildes, emojis) en Dockerfile causan errores de encoding
+   - **Síntomas**: "UnicodeEncodeError", "'charmap' codec can't encode", deployment crashes
+   - **Solución**: **APLICADA** - Dockerfile limpio con solo caracteres ASCII
+   - **Estado**: ✅ **SOLUCIONADO** en última versión
+
+7. **Herramientas de Diagnóstico:**
+
+   ````bash
+   # Diagnóstico completo de Railway
+   python railway_debug.py
+
+   # Test de endpoints localmente
+   python test_railway.py
+   ```### Error: "Firebase not initialized"
+   ````
 
 - Verificar `FIREBASE_PROJECT_ID` en variables
 - Verificar que el proyecto existe en Firebase Console

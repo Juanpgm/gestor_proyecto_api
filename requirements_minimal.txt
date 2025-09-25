@@ -1,0 +1,3 @@
+# Minimal requirements for testing
+fastapi==0.116.2
+uvicorn[standard]==0.32.0

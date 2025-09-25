@@ -1,0 +1,13 @@
+# Minimal Dockerfile for testing - NO Firebase
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY requirements_minimal.txt .
+RUN pip install --no-cache-dir -r requirements_minimal.txt
+
+COPY main_minimal.py ./main.py
+
+EXPOSE 8000
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
