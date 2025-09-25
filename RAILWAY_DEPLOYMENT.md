@@ -128,10 +128,23 @@ railway up
    - Si estos fallan, el problema es de startup de la aplicación
 
 4. **Errores Comunes en Logs:**
+
    - `ModuleNotFoundError`: Problema con requirements.txt
    - `Port binding error`: Problema con configuración de puerto
-   - `Firebase import failed`: Normal, pero debe continuar arrancando
-   - `Scripts import failed`: Normal, pero debe continuar arrancando
+   - `Firebase import failed`: Normal, debe continuar arrancando
+   - `Scripts import failed`: Normal, debe continuar arrancando
+   - `UnicodeEncodeError`: **SOLUCIONADO** - emojis removidos de mensajes
+   - `'charmap' codec can't encode`: **SOLUCIONADO** - encoding UTF-8 corregido
+
+5. **Mensajes Normales de Startup:**
+   ```
+   Warning: Firebase admin SDK not available
+   Firebase config imported successfully
+   Warning: Scripts import failed
+   Starting API...
+   Firebase not available - API running in limited mode
+   ```
+   Estos mensajes son **NORMALES** y **NO indican errores** - la app funciona correctamente.
 
 ### Error: "Firebase not initialized"
 
