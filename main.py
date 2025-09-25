@@ -1,6 +1,20 @@
 """
-Gestor de Proyectos API
-API principal para gestión de proyectos con Firebase
+Gestor de P# Importar Firebase con configuración automática
+try:
+    from database.firebase_config import FirebaseManager, PROJECT_ID, FIREBASE_AVAILABLE
+    print("Firebase auto-config loaded successfully")
+except Exception as e:
+    print(f"Warning: Firebase import failed: {e}")
+    FIREBASE_AVAILABLE = False
+    PROJECT_ID = "your-project-id"
+    
+    class FirebaseManager:
+        @staticmethod
+        def is_available(): return False
+        @staticmethod 
+        def setup(): return False
+        @staticmethod
+        def test_connection(): return {'connected': False, 'message': 'Not available'}API principal para gestión de proyectos con Firebase
 Arquitectura modular con programación funcional optimizada para producción
 Deployment: 2025-09-25T12:20:00
 """
@@ -57,16 +71,12 @@ async def lifespan(app: FastAPI):
     print(f"Environment: {os.getenv('ENVIRONMENT', 'development')}")
     print(f"Firebase Project: {PROJECT_ID}")
     
-    # Intentar inicializar Firebase solo si está disponible
+    # Inicializar Firebase automáticamente
     if FIREBASE_AVAILABLE:
-        try:
-            if initialize_firebase():
-                print("Firebase initialized successfully")
-            else:
-                print("Warning: Firebase not available - API will run in limited mode")
-        except Exception as e:
-            print(f"Warning: Firebase initialization failed: {e}")
-            print("API will start but Firebase endpoints may not work")
+        if FirebaseManager.setup():
+            print("Firebase initialized successfully")
+        else:
+            print("Warning: Firebase initialization failed - API will run in limited mode")
     else:
         print("Firebase not available - API running in limited mode")
     
@@ -140,24 +150,18 @@ async def health_check():
             "project_id": PROJECT_ID
         }
         
-        # Intentar Firebase solo si está disponible
-        if FIREBASE_AVAILABLE and SCRIPTS_AVAILABLE:
-            try:
-                firebase_status = await test_firebase_connection()
-                basic_response["services"]["firebase"] = firebase_status
-                if not firebase_status["connected"]:
-                    basic_response["status"] = "degraded"
-            except Exception as firebase_error:
-                print(f"Warning: Firebase check failed: {firebase_error}")
-                basic_response["services"]["firebase"] = {
-                    "connected": False, 
-                    "error": str(firebase_error)[:100]
-                }
+        # Verificar Firebase usando configuración funcional
+        if FIREBASE_AVAILABLE:
+            firebase_status = FirebaseManager.test_connection()
+            basic_response["services"]["firebase"] = firebase_status
+            basic_response["services"]["scripts"] = {"available": SCRIPTS_AVAILABLE}
+            
+            if not firebase_status["connected"]:
                 basic_response["status"] = "degraded"
         else:
             basic_response["services"]["firebase"] = {
-                "connected": False, 
-                "error": "Firebase or scripts not available"
+                "available": False, 
+                "message": "Firebase SDK not available"
             }
             basic_response["status"] = "degraded"
         
