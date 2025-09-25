@@ -102,17 +102,41 @@ railway up
 
 ## 🚨 **TROUBLESHOOTING:**
 
+### Error: "Application failed to respond" o Error 500 genérico
+
+**NUEVOS PASOS DE DIAGNÓSTICO (Actualizado):**
+
+1. **Revisar Logs de Railway:**
+
+   - Ve a Railway Dashboard → Tu proyecto → "Deployments"
+   - Haz clic en el deployment actual → "View Logs"
+   - Busca errores específicos en el startup
+
+2. **Verificar Variables de Entorno:**
+
+   ```env
+   FIREBASE_PROJECT_ID=dev-test-e778d
+   GOOGLE_CLOUD_PROJECT=dev-test-e778d
+   PORT=8000
+   ENVIRONMENT=production
+   ```
+
+3. **Probar Endpoints Básicos:**
+
+   - `https://tu-app.up.railway.app/ping` (debería funcionar siempre)
+   - `https://tu-app.up.railway.app/health` (health check básico)
+   - Si estos fallan, el problema es de startup de la aplicación
+
+4. **Errores Comunes en Logs:**
+   - `ModuleNotFoundError`: Problema con requirements.txt
+   - `Port binding error`: Problema con configuración de puerto
+   - `Firebase import failed`: Normal, pero debe continuar arrancando
+   - `Scripts import failed`: Normal, pero debe continuar arrancando
+
 ### Error: "Firebase not initialized"
 
 - Verificar `FIREBASE_PROJECT_ID` en variables
 - Verificar que el proyecto existe en Firebase Console
-
-### Error: "Application failed to respond"
-
-- **Causa:** La aplicación no inicia correctamente
-- **Solución 1:** Verificar variables de entorno en Railway Dashboard
-- **Solución 2:** Revisar logs de Railway para errores específicos
-- **Solución 3:** Hacer redeploy después de configurar variables
 
 ### Error: "Invalid value for '--port': '$PORT' is not a valid integer"
 
