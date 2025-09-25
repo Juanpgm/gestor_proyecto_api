@@ -178,6 +178,11 @@ class FirebaseManager:
         return get_firestore_client()
     
     @staticmethod
+    def get_firestore_client():
+        """Alias for get_client() for backwards compatibility"""
+        return get_firestore_client()
+    
+    @staticmethod
     def test_connection() -> Dict[str, Any]:
         """Test connection and return status"""
         success, message = test_firebase_connection()
