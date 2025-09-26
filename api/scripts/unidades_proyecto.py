@@ -233,6 +233,8 @@ async def filter_unidades_proyecto(
     nombre_up: Optional[str] = None,
     fuente_financiacion: Optional[str] = None,
     ano: Optional[Union[int, str]] = None,
+    tipo_intervencion: Optional[str] = None,
+    nombre_centro_gestor: Optional[str] = None,
     limit: Optional[int] = None,
     include_metadata: bool = False
 ) -> Dict[str, Any]:
@@ -250,6 +252,8 @@ async def filter_unidades_proyecto(
         nombre_up: Filtro por nombre de UP (búsqueda parcial)
         fuente_financiacion: Filtro por fuente de financiación
         ano: Filtro por año
+        tipo_intervencion: Filtro por tipo de intervención
+        nombre_centro_gestor: Filtro por nombre del centro gestor
         limit: Límite de resultados
         include_metadata: Si incluir metadatos de documentos
     
@@ -310,6 +314,14 @@ async def filter_unidades_proyecto(
         if ano:
             query = query.where('properties.ano', '==', str(ano))  # Los años están como string
             filters_applied['ano'] = str(ano)
+            
+        if tipo_intervencion:
+            query = query.where('properties.tipo_intervencion', '==', tipo_intervencion)
+            filters_applied['tipo_intervencion'] = tipo_intervencion
+            
+        if nombre_centro_gestor:
+            query = query.where('properties.nombre_centro_gestor', '==', nombre_centro_gestor)
+            filters_applied['nombre_centro_gestor'] = nombre_centro_gestor
         
         # Aplicar límite si se especifica
         if limit and limit > 0:

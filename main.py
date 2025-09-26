@@ -373,6 +373,8 @@ async def filter_unidades_proyecto_endpoint(
     nombre_up: Optional[str] = Query(None, description="Buscar por nombre de UP (búsqueda parcial)"),
     fuente_financiacion: Optional[str] = Query(None, description="Filtrar por fuente de financiación"),
     ano: Optional[Union[int, str]] = Query(None, description="Filtrar por año"),
+    tipo_intervencion: Optional[str] = Query(None, description="Filtrar por tipo de intervención"),
+    nombre_centro_gestor: Optional[str] = Query(None, description="Filtrar por nombre del centro gestor"),
     limit: Optional[int] = Query(None, ge=1, le=1000, description="Límite de resultados (máximo 1000)"),
     include_metadata: bool = Query(False, description="Incluir metadatos de los documentos")
 ):
@@ -410,6 +412,8 @@ async def filter_unidades_proyecto_endpoint(
             nombre_up=nombre_up,
             fuente_financiacion=fuente_financiacion,
             ano=ano,
+            tipo_intervencion=tipo_intervencion,
+            nombre_centro_gestor=nombre_centro_gestor,
             limit=limit,
             include_metadata=include_metadata
         )
