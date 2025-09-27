@@ -201,9 +201,27 @@ def map_dict(mapper: Callable[[Any], Any], dictionary: Dict[str, Any]) -> Dict[s
     return {k: mapper(v) for k, v in dictionary.items()}
 
 def group_by(key_func: Callable[[Any], Any], iterable: List[Any]) -> Dict[Any, List[Any]]:
-    """Agrupar elementos por función de clave"""
-    sorted_data = sorted(iterable, key=key_func)
-    return {k: list(g) for k, g in groupby(sorted_data, key_func)}
+    """Agrupar elementos por función de clave, manejando valores None de forma segura"""
+    def safe_key_func(item):
+        try:
+            result = key_func(item)
+            return result if result is not None else 'sin_datos'
+        except (KeyError, TypeError, AttributeError):
+            return 'sin_datos'
+    
+    # Ordenar de forma segura manejando None values
+    try:
+        sorted_data = sorted(iterable, key=safe_key_func)
+        return {k: list(g) for k, g in groupby(sorted_data, safe_key_func)}
+    except TypeError:
+        # Si aún hay problemas con la comparación, usar agrupación manual
+        result = {}
+        for item in iterable:
+            key = safe_key_func(item)
+            if key not in result:
+                result[key] = []
+            result[key].append(item)
+        return result
 
 def safe_get(dictionary: Dict, path: str, default: Any = None) -> Any:
     """Obtener valor anidado de forma segura"""
@@ -279,16 +297,27 @@ def calculate_statistics(unidades: List[Dict[str, Any]]) -> Dict[str, Any]:
             "contadores_unicos": {}
         }
     
-    # Funciones puras para extraer datos
+    # Funciones puras para extraer datos de forma segura
     def extract_property(key: str):
         return lambda u: safe_get(u, f'properties.{key}', 'sin_datos')
     
     def count_unique(extractor: Callable):
-        return len(set(filter(None, map(extractor, unidades))))
+        try:
+            values = [extractor(u) for u in unidades]
+            # Filtrar None y valores vacíos, pero mantener 'sin_datos'
+            valid_values = [v for v in values if v is not None and v != '']
+            return len(set(valid_values))
+        except Exception:
+            return 0
     
     def distribution(extractor: Callable):
-        values = map(extractor, unidades)
-        return group_by(lambda x: x, list(values))
+        try:
+            values = [extractor(u) for u in unidades]
+            # Convertir None a 'sin_datos' para agrupación consistente
+            safe_values = [v if v is not None else 'sin_datos' for v in values]
+            return group_by(lambda x: x, safe_values)
+        except Exception:
+            return {'sin_datos': unidades}
     
     # Calcular distribuciones
     distribuciones = {
@@ -482,30 +511,53 @@ async def get_unidades_proyecto_summary() -> Dict[str, Any]:
         
         unidades = result["data"]
         
-        # Calcular estadísticas usando programación funcional
-        estadisticas = calculate_statistics(unidades)
+        # Calcular estadísticas usando programación funcional con manejo robusto de errores
+        try:
+            estadisticas = calculate_statistics(unidades)
+        except Exception as e:
+            print(f"Error en calculate_statistics: {e}")
+            estadisticas = {
+                "total": len(unidades) if unidades else 0,
+                "distribuciones": {},
+                "contadores_unicos": {}
+            }
         
         # Obtener campos comunes de forma funcional
-        campos_comunes = _get_common_fields_functional(unidades) if unidades else []
+        try:
+            campos_comunes = _get_common_fields_functional(unidades) if unidades else []
+        except Exception as e:
+            print(f"Error en _get_common_fields_functional: {e}")
+            campos_comunes = []
+        
+        # Evaluar calidad de datos
+        try:
+            data_quality = _assess_data_quality(unidades)
+        except Exception as e:
+            print(f"Error en _assess_data_quality: {e}")
+            data_quality = {"completeness": 0, "consistency": 0}
         
         return {
             "success": True,
             "summary": {
                 **estadisticas,
                 "campos_comunes": campos_comunes,
-                "data_quality": _assess_data_quality(unidades)
+                "data_quality": data_quality
             },
             "timestamp": datetime.now().isoformat(),
             "collection": "unidades_proyecto",
             "cached": True,
-            "optimization_applied": "functional_programming"
+            "optimization_applied": "functional_programming_robust"
         }
         
     except Exception as e:
         return {
             "success": False,
             "error": f"Error generando resumen: {str(e)}",
-            "summary": {}
+            "summary": {},
+            "debug_info": {
+                "error_type": type(e).__name__,
+                "error_details": str(e)
+            }
         }
 
 
@@ -544,22 +596,41 @@ def _get_common_fields_functional(unidades: List[Dict]) -> List[str]:
         
         return fields
     
-    # Contar campos de forma funcional
-    all_fields = pipe(
-        unidades,
-        lambda units: map(extract_fields, units),
-        lambda field_lists: [field for fields in field_lists for field in fields],  # Flatten
-        lambda fields: group_by(lambda x: x, fields),  # Group by field name
-        lambda groups: {field: len(occurrences) for field, occurrences in groups.items()}
-    )
-    
-    # Filtrar campos comunes
-    common_fields = [
-        field for field, count in all_fields.items()
-        if count >= threshold
-    ]
-    
-    return sorted(common_fields)
+    # Contar campos de forma funcional y segura
+    try:
+        all_fields = pipe(
+            unidades,
+            lambda units: [extract_fields(u) for u in units],  # Lista de listas de campos
+            lambda field_lists: [field for fields in field_lists for field in fields if field],  # Flatten y filtrar vacíos
+            lambda fields: group_by(lambda x: x, fields),  # Group by field name
+            lambda groups: {field: len(occurrences) for field, occurrences in groups.items() if field}
+        )
+        
+        # Filtrar campos comunes
+        common_fields = [
+            field for field, count in all_fields.items()
+            if count >= threshold and field
+        ]
+        
+        return sorted(common_fields)
+        
+    except Exception as e:
+        print(f"Error en _get_common_fields_functional: {e}")
+        # Fallback manual si hay problemas
+        field_count = {}
+        for unidad in unidades:
+            try:
+                fields = extract_fields(unidad)
+                for field in fields:
+                    if field:  # Solo campos no vacíos
+                        field_count[field] = field_count.get(field, 0) + 1
+            except Exception:
+                continue
+        
+        return sorted([
+            field for field, count in field_count.items()
+            if count >= threshold
+        ])
 
 def _assess_data_quality(unidades: List[Dict]) -> Dict[str, Any]:
     """
@@ -971,17 +1042,22 @@ def _calculate_geographic_stats(unidades: List[Dict[str, Any]]) -> Dict[str, Any
     if not unidades:
         return {}
     
-    # Extraer coordenadas válidas
-    coordenadas = [
-        safe_get(u, 'geometry.coordinates') 
-        for u in unidades 
-        if safe_get(u, 'geometry.coordinates') and len(safe_get(u, 'geometry.coordinates', [])) >= 2
-    ]
+    # Extraer coordenadas válidas (con valores numéricos no None)
+    coordenadas = []
+    for u in unidades:
+        coords = safe_get(u, 'geometry.coordinates')
+        if (coords and 
+            len(coords) >= 2 and 
+            coords[0] is not None and 
+            coords[1] is not None and
+            isinstance(coords[0], (int, float)) and 
+            isinstance(coords[1], (int, float))):
+            coordenadas.append(coords)
     
     if not coordenadas:
         return {"coverage": "sin_datos"}
     
-    # Calcular bounding box
+    # Calcular bounding box con coordenadas válidas
     longitudes = [coord[0] for coord in coordenadas]
     latitudes = [coord[1] for coord in coordenadas]
     
