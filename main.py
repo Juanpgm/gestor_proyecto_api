@@ -527,7 +527,7 @@ async def get_unidades_proyecto_paginadas(
     fuente_financiacion: Optional[str] = Query(None, description="Filtrar por fuente de financiación"),
     tipo_intervencion: Optional[str] = Query(None, description="Filtrar por tipo de intervención"),
     order_by: Optional[str] = Query(None, description="Campo para ordenar"),
-    order_direction: str = Query('asc', regex='^(asc|desc)$', description="Dirección de ordenamiento")
+    order_direction: str = Query('asc', pattern='^(asc|desc)$', description="Dirección de ordenamiento")
 ):
     """
     Obtener unidades de proyecto con paginación avanzada y filtros optimizados
