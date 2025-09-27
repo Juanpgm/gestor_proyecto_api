@@ -21,11 +21,12 @@ Deployment: 2025-09-25T12:20:00
 
 import os
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from typing import Dict, Any, Optional, Union
 import uvicorn
+import asyncio
 from datetime import datetime
 
 # Importar Firebase con configuración automática
@@ -112,6 +113,34 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 🛠️ MIDDLEWARE DE TIMEOUT PARA PREVENIR COLGADAS
+@app.middleware("http")
+async def timeout_middleware(request: Request, call_next):
+    """Middleware para prevenir que las requests se cuelguen"""
+    try:
+        # Timeout de 30 segundos para todas las requests
+        return await asyncio.wait_for(call_next(request), timeout=30.0)
+    except asyncio.TimeoutError:
+        return JSONResponse(
+            status_code=504,
+            content={
+                "error": "Request timeout",
+                "message": "The request took too long to process",
+                "fallback": True,
+                "timestamp": datetime.now().isoformat()
+            }
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": "Internal server error", 
+                "message": "An unexpected error occurred",
+                "fallback": True,
+                "timestamp": datetime.now().isoformat()
+            }
+        )
+
 # ============================================================================
 # ENDPOINTS GENERALES
 # ============================================================================
@@ -141,6 +170,74 @@ async def read_root():
             ]
         }
     }
+
+@app.get("/ping", tags=["General"])
+async def ping():
+    """Health check super simple para Railway (fallback compatibility)"""
+    return {"status": "ok", "timestamp": datetime.now().isoformat()}
+
+@app.get("/unidades-proyecto/demo", tags=["Demo"])
+async def get_demo_data():
+    """
+    🎯 DATOS DE EJEMPLO PARA DESARROLLO
+    Retorna datos de ejemplo cuando Firebase no está disponible
+    """
+    return {
+        "success": True,
+        "data": [
+            {
+                "id": "demo-001",
+                "bpin": "2024000000001",
+                "upid": "UP001",
+                "nombre_proyecto": "Proyecto de Ejemplo 1",
+                "estado": "En ejecución",
+                "ano": "2024",
+                "comuna_corregimiento": "Comuna 1",
+                "fuente_financiacion": "Recursos propios",
+                "tipo_intervencion": "Construcción",
+                "coordenadas": {"lat": 6.2442, "lng": -75.5812}
+            },
+            {
+                "id": "demo-002", 
+                "bpin": "2024000000002",
+                "upid": "UP002",
+                "nombre_proyecto": "Proyecto de Ejemplo 2",
+                "estado": "Terminado",
+                "ano": "2023", 
+                "comuna_corregimiento": "Comuna 2",
+                "fuente_financiacion": "Cofinanciación",
+                "tipo_intervencion": "Mejoramiento",
+                "coordenadas": {"lat": 6.2518, "lng": -75.5636}
+            }
+        ],
+        "count": 2,
+        "demo": True,
+        "message": "Demo data for development"
+    }
+
+@app.get("/debug/firebase", tags=["Debug"])
+async def debug_firebase_connection():
+    """
+    🔧 DIAGNÓSTICO DE CONEXIÓN FIREBASE
+    Ayuda a identificar problemas de conexión
+    """
+    diagnostics = {
+        "firebase_available": FIREBASE_AVAILABLE,
+        "scripts_available": SCRIPTS_AVAILABLE,
+        "project_id": PROJECT_ID if FIREBASE_AVAILABLE else "not-configured",
+        "timestamp": datetime.now().isoformat()
+    }
+    
+    if FIREBASE_AVAILABLE:
+        try:
+            # Test de conexión básico
+            from api.scripts.firebase_operations import test_firebase_connection
+            test_result = await test_firebase_connection()
+            diagnostics["connection_test"] = test_result
+        except Exception as e:
+            diagnostics["connection_error"] = str(e)
+    
+    return diagnostics
 
 @app.get("/health", tags=["General"])
 async def health_check():
@@ -301,8 +398,19 @@ async def get_unidades_proyecto_optimized(
     const { data } = useSWR('/unidades-proyecto?format=frontend&include_charts=true')
     ```
     """
+    # 🛠️ MANEJO GRACEFUL - No bloquear toda la API por Firebase
     if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
+        print(f"⚠️ Warning: Firebase/Scripts unavailable in /unidades-proyecto")
+        return {
+            "success": False,
+            "error": "Firebase temporarily unavailable", 
+            "data": [],
+            "count": 0,
+            "cached": False,
+            "fallback": True,
+            "message": "Service temporarily unavailable. Please try again later.",
+            "endpoint": "/unidades-proyecto"
+        }
     
     try:
         # 🚨 APLICAR LÍMITES DE COSTO AUTOMÁTICAMENTE
@@ -428,8 +536,21 @@ async def get_unidades_proyecto_resumen():
     - Número de proyectos únicos
     - Campos comunes en los documentos
     """
+    # 🛠️ MANEJO GRACEFUL - Retornar summary vacío en lugar de 503
     if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
+        print(f"⚠️ Warning: Firebase/Scripts unavailable in /summary")
+        return {
+            "success": False,
+            "error": "Firebase temporarily unavailable",
+            "total_documentos": 0,
+            "proyectos_unicos": 0,
+            "distribuciones": {},
+            "campos_comunes": [],
+            "cached": False,
+            "fallback": True,
+            "message": "Summary temporarily unavailable",
+            "timestamp": datetime.now().isoformat()
+        }
     try:
         result = await get_unidades_proyecto_summary()
         
@@ -531,8 +652,25 @@ async def search_unidades_proyecto_advanced(
     const { data } = useSWR(`/unidades-proyecto/search?q=${query}&format=frontend`)
     ```
     """
+    # 🛠️ MANEJO GRACEFUL - Retornar búsqueda vacía en lugar de 503
     if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
+        print(f"⚠️ Warning: Firebase/Scripts unavailable in /search")
+        return {
+            "success": False,
+            "error": "Firebase temporarily unavailable",
+            "data": [],
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total_pages": 0,
+                "total_items": 0,
+                "has_next_page": False,
+                "has_previous_page": False
+            },
+            "filters_applied": {},
+            "fallback": True,
+            "message": "Search temporarily unavailable"
+        }
     
     try:
         # 🚨 OPTIMIZACIÓN DE COSTOS: Aplicar límite inteligente
