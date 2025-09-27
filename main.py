@@ -104,13 +104,46 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Configurar CORS
+# Configurar CORS - Optimizado para Vercel + Railway  
+def is_cors_allowed(origin: str) -> bool:
+    """Verificar si el origen está permitido"""
+    allowed_patterns = [
+        "vercel.app",
+        "railway.app", 
+        "localhost",
+        "127.0.0.1"
+    ]
+    return any(pattern in origin for pattern in allowed_patterns)
+
+# Lista específica de orígenes permitidos
+origins = [
+    # 🌐 Producción - Tu dominio específico de Vercel
+    "https://gestor-proyectos-vercel.vercel.app",
+    
+    # 🔧 Desarrollo local - Todas las variantes
+    "http://localhost:3000",
+    "http://localhost:3001", 
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:3001",
+    
+    # � Para debugging desde cualquier subdominio de Vercel
+    # Nota: Agregar manualmente URLs específicas si necesitas más
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=origins,           # ✅ Orígenes específicos
+    allow_credentials=True,          # ✅ Permite cookies/auth  
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],  # ✅ Métodos HTTP necesarios
+    allow_headers=[               # ✅ Headers específicos para NextJS
+        "Authorization",
+        "Content-Type", 
+        "Accept",
+        "Origin", 
+        "X-Requested-With",
+        "Cache-Control",
+        "Pragma"
+    ],
 )
 
 # 🛠️ MIDDLEWARE DE TIMEOUT PARA PREVENIR COLGADAS
@@ -238,6 +271,49 @@ async def debug_firebase_connection():
             diagnostics["connection_error"] = str(e)
     
     return diagnostics
+
+@app.get("/debug/cors", tags=["Debug"])
+async def debug_cors_configuration():
+    """
+    🌐 DIAGNÓSTICO DE CONFIGURACIÓN CORS
+    Muestra la configuración actual de CORS
+    """
+    return {
+        "cors_configuration": {
+            "allowed_origins": origins,
+            "allow_credentials": True,
+            "allowed_methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+            "allowed_headers": [
+                "Authorization", "Content-Type", "Accept", 
+                "Origin", "X-Requested-With", "Cache-Control", "Pragma"
+            ]
+        },
+        "test_instructions": {
+            "frontend_test": "Intenta hacer fetch desde tu NextJS a este endpoint",
+            "browser_test": "Abre DevTools > Network y verifica headers CORS",
+            "curl_test": "curl -H 'Origin: https://gestor-proyectos-vercel.vercel.app' {API_URL}/debug/cors"
+        },
+        "common_solutions": {
+            "if_cors_error": "Agrega tu dominio específico a la lista 'origins'",
+            "if_preflight_fails": "Verifica que OPTIONS esté permitido", 
+            "if_credentials_fail": "Verifica allow_credentials=True"
+        }
+    }
+
+@app.options("/unidades-proyecto", tags=["CORS"])
+async def preflight_unidades_proyecto():
+    """Manejo manual de preflight para el endpoint principal"""
+    return {"message": "CORS preflight OK"}
+
+@app.options("/unidades-proyecto/summary", tags=["CORS"]) 
+async def preflight_summary():
+    """Manejo manual de preflight para summary"""
+    return {"message": "CORS preflight OK"}
+
+@app.options("/unidades-proyecto/search", tags=["CORS"])
+async def preflight_search():
+    """Manejo manual de preflight para search"""
+    return {"message": "CORS preflight OK"}
 
 @app.get("/health", tags=["General"])
 async def health_check():
