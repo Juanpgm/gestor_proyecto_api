@@ -687,7 +687,7 @@ async def validate_unidades_proyecto():
 @app.get("/unidades-proyecto/search", tags=["Unidades de Proyecto"])
 async def search_unidades_proyecto_advanced(
     # Búsqueda y filtros principales
-    q: Optional[str] = Query(None, description="Búsqueda de texto libre (nombre, BPIN, UPID, ubicación)"),
+    q: Optional[str] = Query(None, description="Búsqueda de texto libre (nombre_up, BPIN, UPID, ubicación)"),
     estado: Optional[str] = Query(None, description="Filtrar por estado"),
     ano: Optional[str] = Query(None, description="Filtrar por año"),
     comuna_corregimiento: Optional[str] = Query(None, description="Filtrar por comuna/corregimiento"),
@@ -719,7 +719,7 @@ async def search_unidades_proyecto_advanced(
     ✅ Cache SWR compatible
     
     Búsqueda inteligente:
-    - Busca en nombre, BPIN, UPID, ubicación
+    - Busca en nombre_up, BPIN, UPID, ubicación
     - Coincidencias parciales
     - Case-insensitive
     
@@ -771,7 +771,7 @@ async def search_unidades_proyecto_advanced(
         
         # Aplicar búsqueda de texto libre
         if q:
-            search_fields = ['upid', 'bpin', 'nombre', 'comuna_corregimiento', 'barrio_vereda']
+            search_fields = ['upid', 'bpin', 'nombre_up', 'comuna_corregimiento', 'barrio_vereda']
             normalized = search_unidades(normalized, q, search_fields)
         
         # Aplicar filtros
@@ -956,7 +956,7 @@ async def get_filter_options_endpoint():
             "comunas": add_counts("comuna_corregimiento", filter_options["comunas"]),
             "fuentes_financiacion": add_counts("fuente_financiacion", filter_options["fuentes_financiacion"]),
             "tipos_intervencion": add_counts("tipo_intervencion", filter_options["tipos_intervencion"]),
-            "centros_gestores": add_counts("centro_gestor", filter_options["centros_gestores"])
+            "centros_gestores": add_counts("nombre_centro_gestor", filter_options["centros_gestores"])
         }
         
         response_data = {
@@ -988,6 +988,223 @@ async def get_filter_options_endpoint():
         raise HTTPException(
             status_code=500,
             detail=f"Error obteniendo opciones de filtros: {str(e)}"
+        )
+
+@app.get("/unidades-proyecto/nextjs-export", tags=["Next.js Integration"])
+async def export_for_nextjs(
+    # Opciones de formato para Next.js
+    format: str = Query("nextjs", description="Formato optimizado para Next.js: 'nextjs', 'swr', 'static'"),
+    
+    # Filtros para exportación selectiva
+    estado: Optional[str] = Query(None, description="Filtrar por estado"),
+    ano: Optional[str] = Query(None, description="Filtrar por año"),
+    comuna_corregimiento: Optional[str] = Query(None, description="Filtrar por comuna/corregimiento"),
+    
+    # Opciones específicas para Next.js
+    include_charts: bool = Query(True, description="Incluir datos para charts"),
+    include_filters: bool = Query(True, description="Incluir opciones de filtros"),
+    include_metadata: bool = Query(True, description="Incluir metadata para caché"),
+    optimize_for_swr: bool = Query(True, description="Optimizar para SWR (cache keys, etc.)"),
+    max_records: Optional[int] = Query(1000, ge=1, le=5000, description="Máximo de registros (default: 1000)")
+):
+    """
+    🚀 ENDPOINT ESPECIALIZADO PARA NEXT.JS 🚀
+    
+    Exporta datos completamente optimizados para aplicaciones Next.js
+    con todos los formatos y estructuras necesarias.
+    
+    Características específicas para Next.js:
+    ✅ Formato optimizado para componentes React
+    ✅ Datos preparados para SWR/React Query  
+    ✅ Charts data pre-procesada para bibliotecas como Chart.js
+    ✅ Filtros estructurados para dropdowns
+    ✅ Metadatos para cache invalidation
+    ✅ TypeScript-friendly data structure
+    ✅ Nombres de campos consistentes con BD
+    
+    Formatos disponibles:
+    - 'nextjs': Estructura completa optimizada para componentes React
+    - 'swr': Formato específico para SWR con cache keys
+    - 'static': Para generación estática (getStaticProps)
+    
+    Casos de uso:
+    - Páginas de dashboard con gráficos
+    - Listados con filtros y búsqueda  
+    - Mapas interactivos con markers
+    - Exportación de datos para análisis
+    - Aplicaciones SPA con cache inteligente
+    """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        return {
+            "success": False,
+            "error": "Firebase temporarily unavailable",
+            "data": None,
+            "nextjs_ready": False,
+            "fallback": True
+        }
+    
+    try:
+        # Obtener datos con optimizaciones
+        result = await get_all_unidades_proyecto(
+            include_metadata=False,
+            limit=max_records
+        )
+        
+        if not result["success"]:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error obteniendo datos: {result.get('error', 'Error desconocido')}"
+            )
+        
+        data = result.get("data", [])
+        normalized = normalize_for_frontend(data)
+        
+        # Aplicar filtros si se especifican
+        filters = {}
+        if estado:
+            filters['estado'] = estado
+        if ano:
+            filters['ano'] = ano
+        if comuna_corregimiento:
+            filters['comuna_corregimiento'] = comuna_corregimiento
+        
+        if filters:
+            normalized = apply_filters(normalized, filters)
+        
+        # Preparar respuesta según formato solicitado
+        if format == "swr":
+            # Formato optimizado para SWR
+            response_data = {
+                "success": True,
+                "data": normalized,
+                "swr_config": {
+                    "revalidateOnFocus": False,
+                    "revalidateOnReconnect": True,
+                    "refreshInterval": 300000,  # 5 minutos
+                    "dedupingInterval": 60000   # 1 minuto
+                },
+                "cache_key": f"unidades_proyecto_{len(normalized)}_{datetime.now().strftime('%Y%m%d_%H')}",
+                "total": len(normalized),
+                "timestamp": datetime.now().isoformat()
+            }
+            
+            if include_charts:
+                response_data["charts"] = group_for_charts(normalized)
+            
+            if include_filters:
+                response_data["filter_options"] = get_filter_options(normalized)
+        
+        elif format == "static":
+            # Formato para getStaticProps de Next.js
+            response_data = {
+                "props": {
+                    "unidades": normalized,
+                    "total": len(normalized),
+                    "generated_at": datetime.now().isoformat(),
+                    "charts_data": group_for_charts(normalized) if include_charts else None,
+                    "filter_options": get_filter_options(normalized) if include_filters else None
+                },
+                "revalidate": 3600  # Revalidar cada hora
+            }
+        
+        else:  # format == "nextjs" (default)
+            # Formato completo optimizado para Next.js
+            response_data = {
+                "success": True,
+                "nextjs_ready": True,
+                "data": {
+                    "unidades": normalized,
+                    "summary": {
+                        "total": len(normalized),
+                        "con_coordenadas": len([u for u in normalized if u.get('coordenadas')]),
+                        "estados_unicos": len(set(u.get('estado') for u in normalized if u.get('estado'))),
+                        "anos_disponibles": sorted(list(set(u.get('ano') for u in normalized if u.get('ano')))),
+                        "completeness_avg": sum(u.get('completitud', 0) for u in normalized) / len(normalized) if normalized else 0
+                    }
+                },
+                "ui_components": {
+                    "charts": group_for_charts(normalized) if include_charts else None,
+                    "filters": get_filter_options(normalized) if include_filters else None,
+                    "table_columns": [
+                        {"key": "upid", "label": "UPID", "sortable": True},
+                        {"key": "bpin", "label": "BPIN", "sortable": True},
+                        {"key": "nombre_up", "label": "Nombre UP", "sortable": True},
+                        {"key": "estado", "label": "Estado", "filterable": True},
+                        {"key": "ano", "label": "Año", "filterable": True},
+                        {"key": "comuna_corregimiento", "label": "Comuna/Corregimiento", "filterable": True},
+                        {"key": "fuente_financiacion", "label": "Fuente Financiación", "filterable": True},
+                        {"key": "nombre_centro_gestor", "label": "Centro Gestor", "filterable": True}
+                    ]
+                },
+                "typescript_types": {
+                    "UnidadProyecto": {
+                        "id": "string",
+                        "upid": "string", 
+                        "bpin": "string",
+                        "nombre_up": "string",
+                        "estado": "string",
+                        "ano": "string",
+                        "comuna_corregimiento": "string",
+                        "barrio_vereda": "string",
+                        "coordenadas": "{ latitude: number, longitude: number } | null",
+                        "fuente_financiacion": "string",
+                        "tipo_intervencion": "string",
+                        "nombre_centro_gestor": "string",
+                        "tiene_coordenadas": "boolean",
+                        "completitud": "number"
+                    }
+                },
+                "api_endpoints": {
+                    "base_url": f"{os.getenv('API_URL', 'http://localhost:8000')}",
+                    "endpoints": {
+                        "list": "/unidades-proyecto",
+                        "search": "/unidades-proyecto/search",
+                        "filters": "/unidades-proyecto/filters",
+                        "export": "/unidades-proyecto/nextjs-export"
+                    }
+                }
+            }
+        
+        # Agregar metadata si se solicita
+        if include_metadata:
+            response_data["metadata"] = {
+                "generated_at": datetime.now().isoformat(),
+                "total_records": len(normalized),
+                "filters_applied": filters,
+                "source": "Firebase Firestore",
+                "api_version": "1.0.0",
+                "cache_info": {
+                    "cached": result.get("cached", False),
+                    "ttl": 3600
+                }
+            }
+        
+        # Headers optimizados para Next.js
+        headers = {
+            "Cache-Control": "public, max-age=3600, s-maxage=7200",
+            "Content-Type": "application/json",
+            "X-Total-Records": str(len(normalized)),
+            "X-NextJS-Ready": "true",
+            "X-API-Version": "1.0.0"
+        }
+        
+        if optimize_for_swr:
+            import hashlib
+            etag = hashlib.md5(f"{len(normalized)}_{datetime.now().strftime('%Y%m%d_%H')}".encode()).hexdigest()[:12]
+            headers["ETag"] = etag
+            headers["X-SWR-Cache-Key"] = f"unidades_{etag}"
+        
+        return JSONResponse(
+            content=response_data,
+            headers=headers
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error preparando datos para Next.js: {str(e)}"
         )
 
 @app.get("/unidades-proyecto/export", tags=["Unidades de Proyecto"])

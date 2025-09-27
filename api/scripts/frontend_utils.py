@@ -37,8 +37,8 @@ def normalize_for_frontend(unidades: List[Dict[str, Any]]) -> List[Dict[str, Any
             'upid': safe_get(props, 'upid'),
             'bpin': safe_get(props, 'bpin'),
             
-            # Información básica
-            'nombre': safe_get(props, 'nombre_up', ''),
+            # Información básica (mantener nombres originales de BD)
+            'nombre_up': safe_get(props, 'nombre_up', ''),
             'estado': safe_get(props, 'estado', 'sin_definir'),
             'ano': str(safe_get(props, 'ano', '')),  # Siempre string
             
@@ -52,7 +52,7 @@ def normalize_for_frontend(unidades: List[Dict[str, Any]]) -> List[Dict[str, Any
             # Información financiera y técnica
             'fuente_financiacion': safe_get(props, 'fuente_financiacion', ''),
             'tipo_intervencion': safe_get(props, 'tipo_intervencion', ''),
-            'centro_gestor': safe_get(props, 'nombre_centro_gestor', ''),
+            'nombre_centro_gestor': safe_get(props, 'nombre_centro_gestor', ''),
             
             # Referencias
             'referencia_proceso': safe_get(props, 'referencia_proceso', ''),
@@ -167,7 +167,7 @@ def group_for_charts(unidades: List[Dict[str, Any]]) -> Dict[str, Any]:
             {
                 'id': u.get('id'),
                 'upid': u.get('upid'),
-                'nombre': u.get('nombre', '')[:50],  # Truncar para tooltips
+                'nombre_up': u.get('nombre_up', '')[:50],  # Truncar para tooltips
                 'coordenadas': u.get('coordenadas'),
                 'estado': u.get('estado')
             }
@@ -200,7 +200,7 @@ def get_filter_options(unidades: List[Dict[str, Any]]) -> Dict[str, List[str]]:
         'comunas': get_unique_values('comuna_corregimiento'),
         'fuentes_financiacion': get_unique_values('fuente_financiacion'),
         'tipos_intervencion': get_unique_values('tipo_intervencion'),
-        'centros_gestores': get_unique_values('centro_gestor')
+        'centros_gestores': get_unique_values('nombre_centro_gestor')
     }
 
 # ============================================================================
@@ -230,7 +230,7 @@ def search_unidades(
     
     # Campos por defecto donde buscar
     if fields is None:
-        fields = ['upid', 'bpin', 'nombre', 'comuna_corregimiento', 'barrio_vereda']
+        fields = ['upid', 'bpin', 'nombre_up', 'comuna_corregimiento', 'barrio_vereda']
     
     def matches_query(unidad: Dict[str, Any]) -> bool:
         for field in fields:

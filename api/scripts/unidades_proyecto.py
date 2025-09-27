@@ -954,7 +954,7 @@ async def filter_unidades_proyecto(
         if nombre_up:
             def matches_name(unidad: Dict) -> bool:
                 properties = unidad.get('properties', {})
-                nombre_campo = properties.get('nombre_up', '') or properties.get('nombre', '')
+                nombre_campo = properties.get('nombre_up', '')
                 return nombre_up.lower() in str(nombre_campo).lower()
             
             unidades_raw = list(filter(matches_name, unidades_raw))
