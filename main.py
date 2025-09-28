@@ -431,7 +431,7 @@ async def get_firebase_collections_summary():
 @app.get("/unidades-proyecto", tags=["Unidades de Proyecto"])
 async def get_unidades_proyecto_optimized(
     # Parámetros de datos
-    limit: Optional[int] = Query(None, ge=1, le=500, description="Límite de documentos (máximo 500 para sostenibilidad)"),
+    limit: Optional[int] = Query(None, ge=1, description="Límite opcional de documentos (sin límite = todos los registros)"),
     include_metadata: bool = Query(False, description="Incluir metadatos de documentos"),
     
     # Parámetros de formato para frontend

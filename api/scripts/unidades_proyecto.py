@@ -425,6 +425,8 @@ async def get_all_unidades_proyecto_simple(limit: Optional[int] = None) -> Dict[
     Sin cache ni optimizaciones complejas, para NextJS
     """
     try:
+        print(f"🔍 DEBUG: get_all_unidades_proyecto_simple llamada con limit={limit}")
+        
         db = get_firestore_client()
         if db is None:
             return {
@@ -437,20 +439,30 @@ async def get_all_unidades_proyecto_simple(limit: Optional[int] = None) -> Dict[
         # Obtener la colección
         collection_ref = db.collection('unidades_proyecto')
         
-        # Aplicar límite solo si se especifica
-        if limit:
+        # Aplicar límite solo si se especifica explícitamente
+        if limit is not None and limit > 0:
+            print(f"🔍 DEBUG: Aplicando límite de {limit} documentos")
             query = collection_ref.limit(limit)
         else:
+            print(f"🔍 DEBUG: SIN LÍMITE - obteniendo TODOS los documentos")
             query = collection_ref  # Sin límite = todos los documentos
         
         # Ejecutar consulta
         docs = query.stream()
         data = []
+        doc_count = 0
         
         for doc in docs:
             doc_data = doc.to_dict()
             doc_data['id'] = doc.id
             data.append(doc_data)
+            doc_count += 1
+            
+            # Log cada 100 documentos para mostrar progreso
+            if doc_count % 100 == 0:
+                print(f"🔍 DEBUG: Procesados {doc_count} documentos...")
+        
+        print(f"🔍 DEBUG: TOTAL procesados: {len(data)} documentos")
         
         return {
             "success": True,
@@ -460,6 +472,10 @@ async def get_all_unidades_proyecto_simple(limit: Optional[int] = None) -> Dict[
         }
         
     except Exception as e:
+        print(f"❌ ERROR en get_all_unidades_proyecto_simple: {str(e)}")
+        import traceback
+        print(f"❌ TRACEBACK: {traceback.format_exc()}")
+        
         return {
             "success": False,
             "error": f"Error obteniendo datos: {str(e)}",
