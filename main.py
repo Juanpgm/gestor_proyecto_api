@@ -52,22 +52,12 @@ try:
         get_collections_info,
         test_firebase_connection,
         get_collections_summary,
-        # Unidades proyecto operations (optimizadas)
-        get_all_unidades_proyecto,
+        # Unidades proyecto operations (simplificadas)
+        get_all_unidades_proyecto_simple,
         get_unidades_proyecto_summary,
         validate_unidades_proyecto_collection,
         delete_all_unidades_proyecto,
         delete_unidades_proyecto_by_criteria
-    )
-    # Frontend utilities (nuevas funciones funcionales)
-    from api.scripts.frontend_utils import (
-        normalize_for_frontend,
-        group_for_charts,
-        get_filter_options,
-        search_unidades,
-        apply_filters,
-        prepare_for_export,
-        transform_api_response
     )
     SCRIPTS_AVAILABLE = True
 except Exception as e:
@@ -489,18 +479,8 @@ async def get_unidades_proyecto_optimized(
         }
     
     try:
-        # 🚨 APLICAR LÍMITES DE COSTO AUTOMÁTICAMENTE
-        cost_optimized_limit = limit
-        if limit is None or limit > 500:  # Límite máximo estricto
-            cost_optimized_limit = 50  # Límite conservador por defecto
-            if limit != cost_optimized_limit:
-                print(f"🚨 Cost protection: Limited from {limit} to {cost_optimized_limit} documents")
-        
-        # Obtener datos de Firebase (con caché y optimizaciones de costo)
-        result = await get_all_unidades_proyecto(
-            include_metadata=include_metadata,
-            limit=cost_optimized_limit
-        )
+        # Para NextJS, usar la función simple que obtiene TODOS los documentos por defecto
+        result = await get_all_unidades_proyecto_simple(limit=limit)
         
         if not result["success"]:
             raise HTTPException(
@@ -517,63 +497,32 @@ async def get_unidades_proyecto_optimized(
         if ano:
             filters['ano'] = ano
             
-        # Procesar según formato solicitado
+        # Procesar según formato solicitado - Versión simplificada para NextJS
         if format == "raw":
-            # Formato crudo - aplicar solo filtros básicos
-            if filters or search:
-                normalized = normalize_for_frontend(data)
-                if filters:
-                    normalized = apply_filters(normalized, filters)
-                if search:
-                    normalized = search_unidades(normalized, search)
-                # Convertir de vuelta a formato raw (simplificado)
-                data = [{'id': u['id'], 'properties': {k: v for k, v in u.items() if k not in ['id', 'coordenadas', 'tiene_coordenadas', 'completitud']}} for u in normalized]
-            
             response_data = {
                 "success": True,
                 "data": data,
                 "total": len(data),
-                "format": "raw",
-                "cached": result.get("cached", False)
+                "format": "raw"
             }
             
         elif format == "normalized":
-            # Formato normalizado
-            normalized = normalize_for_frontend(data)
-            
-            if filters:
-                normalized = apply_filters(normalized, filters)
-            if search:
-                normalized = search_unidades(normalized, search)
-            
+            # Formato normalizado - simplificado
             response_data = {
                 "success": True,
-                "data": normalized,
-                "total": len(normalized),
-                "format": "normalized",
-                "cached": result.get("cached", False)
+                "data": data,
+                "total": len(data),
+                "format": "normalized"
             }
             
         else:  # format == "frontend"
-            # Formato completo optimizado para NextJS
-            normalized = normalize_for_frontend(data)
-            
-            if filters:
-                normalized = apply_filters(normalized, filters)
-            if search:
-                normalized = search_unidades(normalized, search)
-            
-            response_data = transform_api_response(
-                normalized, 
-                include_charts=include_charts,
-                include_filters=include_filters
-            )
-            response_data.update({
+            # Formato frontend - simplificado para NextJS
+            response_data = {
                 "success": True,
-                "format": "frontend", 
-                "cached": result.get("cached", False),
-                "optimization_applied": result.get("optimization_applied", "cache")
-            })
+                "data": data,
+                "total": len(data),
+                "format": "frontend"
+            }
         
         # Añadir timestamp para cache
         response_data["timestamp"] = datetime.now().isoformat()

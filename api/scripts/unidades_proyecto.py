@@ -17,7 +17,7 @@ import weakref
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor
 
-from database.firebase_config import FirebaseManager
+from database.firebase_config import get_firestore_client, get_project_config
 
 # ============================================================================
 # SISTEMA DE CACHÉ EN MEMORIA OPTIMIZADO
@@ -410,14 +410,62 @@ def calculate_statistics(unidades: List[Dict[str, Any]]) -> Dict[str, Any]:
 # ============================================================================
 
 
-async def get_firestore_client() -> Optional[firestore.Client]:
+async def get_safe_firestore_client():
     """Obtener cliente de Firestore de forma segura"""
     try:
-        firebase_manager = FirebaseManager()
-        return firebase_manager.get_firestore_client()
+        return get_firestore_client()
     except Exception as e:
         print(f"Error obteniendo cliente Firestore: {e}")
         return None
+
+
+async def get_all_unidades_proyecto_simple(limit: Optional[int] = None) -> Dict[str, Any]:
+    """
+    Función simple para obtener TODOS los documentos de unidades-proyecto
+    Sin cache ni optimizaciones complejas, para NextJS
+    """
+    try:
+        db = get_firestore_client()
+        if db is None:
+            return {
+                "success": False,
+                "error": "No se pudo conectar a Firestore",
+                "data": [],
+                "count": 0
+            }
+        
+        # Obtener la colección
+        collection_ref = db.collection('unidades_proyecto')
+        
+        # Aplicar límite solo si se especifica
+        if limit:
+            query = collection_ref.limit(limit)
+        else:
+            query = collection_ref  # Sin límite = todos los documentos
+        
+        # Ejecutar consulta
+        docs = query.stream()
+        data = []
+        
+        for doc in docs:
+            doc_data = doc.to_dict()
+            doc_data['id'] = doc.id
+            data.append(doc_data)
+        
+        return {
+            "success": True,
+            "data": data,
+            "count": len(data),
+            "message": f"Obtenidos {len(data)} documentos de unidades_proyecto"
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Error obteniendo datos: {str(e)}",
+            "data": [],
+            "count": 0
+        }
 
 async def execute_firestore_query(query_func: Callable, *args, **kwargs) -> Tuple[bool, Any, Optional[str]]:
     """
