@@ -5,8 +5,15 @@ Funciones reutilizables para operaciones comunes de Firestore
 
 from typing import Dict, List, Any, Optional
 from datetime import datetime
-from google.cloud import firestore
-from google.api_core import exceptions as gcp_exceptions
+
+try:
+    from google.cloud import firestore
+    from google.api_core import exceptions as gcp_exceptions
+    GOOGLE_CLOUD_AVAILABLE = True
+except ImportError:
+    GOOGLE_CLOUD_AVAILABLE = False
+    firestore = None
+    gcp_exceptions = None
 
 from database.firebase_config import FirebaseManager
 
@@ -21,6 +28,12 @@ async def get_collections_info() -> Dict[str, Any]:
     Obtener información de todas las colecciones de Firestore
     Versión optimizada y modular
     """
+    if not GOOGLE_CLOUD_AVAILABLE:
+        return {
+            "success": False,
+            "error": "Google Cloud SDK no disponible",
+            "collections": []
+        }
     try:
         firebase_manager = FirebaseManager()
         db = firebase_manager.get_firestore_client()
@@ -53,7 +66,7 @@ async def get_collections_info() -> Dict[str, Any]:
         }
 
 
-async def _get_single_collection_info(collection: firestore.CollectionReference) -> Dict[str, Any]:
+async def _get_single_collection_info(collection) -> Dict[str, Any]:
     """
     Función auxiliar para obtener información de una sola colección
     
