@@ -48,7 +48,7 @@ try:
         get_collections_info,
         test_firebase_connection,
         get_collections_summary,
-        # Unidades proyecto operations (nuevas funciones especializadas)
+        # Unidades proyecto operations
         get_all_unidades_proyecto_simple,
         get_unidades_proyecto_geometry,
         get_unidades_proyecto_attributes,
@@ -56,6 +56,7 @@ try:
         validate_unidades_proyecto_collection,
     )
     SCRIPTS_AVAILABLE = True
+    print("✅ Scripts importados correctamente desde api.scripts")
 except Exception as e:
     print(f"Warning: Scripts import failed: {e}")
     SCRIPTS_AVAILABLE = False
@@ -437,8 +438,19 @@ async def get_attributes_filtered(
         }
     
     try:
-        # Obtener todos los datos de atributos primero
-        result = await get_unidades_proyecto_attributes()
+        # Si hay filtros, obtener todos los datos para filtrar (comportamiento actual)
+        # Si no hay filtros, usar paginación directa
+        has_filters = any([
+            nombre_centro_gestor, tipo_intervencion, estado, upid, nombre_up,
+            comuna_corregimiento, barrio_vereda, direccion, referencia_contrato, referencia_proceso
+        ])
+        
+        if has_filters:
+            # Con filtros: obtener todos y filtrar en memoria (comportamiento actual)
+            result = await get_unidades_proyecto_attributes()
+        else:
+            # Sin filtros: usar paginación directa de Firestore
+            result = await get_unidades_proyecto_attributes(limit=limit, offset=offset)
         
         if not result["success"]:
             raise HTTPException(

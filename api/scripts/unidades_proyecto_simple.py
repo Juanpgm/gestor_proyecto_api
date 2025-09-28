@@ -72,13 +72,13 @@ async def get_all_unidades_proyecto_simple(limit: Optional[int] = None) -> Dict[
         }
 
 
-async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+async def get_unidades_proyecto_geometry() -> Dict[str, Any]:
     """
     Obtener solo los datos de geometría (coordenadas, linestring, etc.) de unidades-proyecto
-    Especializado para NextJS - Datos geoespaciales con filtros opcionales
+    Especializado para NextJS - Datos geoespaciales
     """
     try:
-        print(f"🗺️ DEBUG: Obteniendo datos de GEOMETRÍA... filtros={filters}")
+        print(f"🗺️ DEBUG: Obteniendo datos de GEOMETRÍA...")
         
         db = get_firestore_client()
         if db is None:
@@ -90,9 +90,6 @@ async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = Non
             }
         
         collection_ref = db.collection('unidades_proyecto')
-        
-        # TODO: Implementar filtros server-side para geometrías si es necesario
-        # Por ahora mantenemos la carga completa (es lo recomendado para mapas)
         docs = collection_ref.stream()
         
         geometry_data = []
@@ -160,13 +157,13 @@ async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = Non
         }
 
 
-async def get_unidades_proyecto_attributes(limit: Optional[int] = None, offset: Optional[int] = None) -> Dict[str, Any]:
+async def get_unidades_proyecto_attributes() -> Dict[str, Any]:
     """
     Obtener solo los atributos de tabla (sin geometría) de unidades-proyecto
-    Especializado para NextJS - Tabla de atributos con paginación
+    Especializado para NextJS - Tabla de atributos
     """
     try:
-        print(f"📋 DEBUG: Obteniendo ATRIBUTOS de tabla... limit={limit}, offset={offset}")
+        print(f"📋 DEBUG: Obteniendo ATRIBUTOS de tabla...")
         
         db = get_firestore_client()
         if db is None:
@@ -178,23 +175,7 @@ async def get_unidades_proyecto_attributes(limit: Optional[int] = None, offset: 
             }
         
         collection_ref = db.collection('unidades_proyecto')
-        
-        # Aplicar offset si se especifica
-        query = collection_ref
-        if offset and offset > 0:
-            # Para Firestore, necesitamos usar order_by + start_after o limit/offset simulation
-            query = query.order_by('__name__')  # Ordenar por document ID
-            # Simular offset saltando documentos (no es la forma más eficiente, pero funciona)
-            docs_to_skip = list(query.limit(offset).stream())
-            if docs_to_skip:
-                last_doc = docs_to_skip[-1]
-                query = query.start_after(last_doc)
-        
-        # Aplicar límite si se especifica
-        if limit and limit > 0:
-            query = query.limit(limit)
-        
-        docs = query.stream()
+        docs = collection_ref.stream()
         
         attributes_data = []
         doc_count = 0

@@ -15,8 +15,6 @@ from .unidades_proyecto import (
     get_unidades_proyecto_attributes,
     get_unidades_proyecto_summary,
     validate_unidades_proyecto_collection,
-    delete_all_unidades_proyecto,
-    delete_unidades_proyecto_by_criteria
 )
 
 __all__ = [
@@ -31,6 +29,4 @@ __all__ = [
     "get_unidades_proyecto_attributes",
     "get_unidades_proyecto_summary",
     "validate_unidades_proyecto_collection",
-    "delete_all_unidades_proyecto",
-    "delete_unidades_proyecto_by_criteria"
 ]
