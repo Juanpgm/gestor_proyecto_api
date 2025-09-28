@@ -1,0 +1,76 @@
+name: 🚀 Deploy with Workload Identity Federation
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+env:
+  PROJECT_ID: dev-test-e778d
+  REGION: us-central1
+  SERVICE_NAME: gestor-proyecto-api
+
+jobs:
+  test-and-deploy:
+    name: 🧪 Test & Deploy with WIF
+    runs-on: ubuntu-latest
+
+    # Configure Workload Identity Federation
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔐 Authenticate with Google Cloud (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          # These are the WIF configuration values
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER_ID }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: ⚙️ Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
+
+      - name: 📦 Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 🔥 Test Firebase with WIF
+        run: |
+          # Test that WIF authentication works
+          gcloud auth list
+          echo "Testing Firebase connection with Workload Identity..."
+          python -c "
+          import os
+          os.environ['FIREBASE_PROJECT_ID'] = '${{ env.PROJECT_ID }}'
+          os.environ['GOOGLE_CLOUD_PROJECT'] = '${{ env.PROJECT_ID }}'
+          from database.firebase_config import auto_setup_firebase_if_needed
+          result = auto_setup_firebase_if_needed()
+          print(f'✅ Firebase WIF test: {result}')
+          "
+
+      - name: 🚄 Deploy to Railway
+        if: github.ref == 'refs/heads/master'
+        uses: bervProject/railway-deploy@v1.3.0
+        with:
+          railway_token: ${{ secrets.RAILWAY_TOKEN }}
+          service: ${{ secrets.RAILWAY_SERVICE_ID }}
+
+      - name: ✅ Deployment Success
+        if: github.ref == 'refs/heads/master'
+        run: |
+          echo "🎉 Deployment completed with Workload Identity Federation!"
+          echo "🔗 Check Railway dashboard: https://railway.app/project/${{ secrets.RAILWAY_PROJECT_ID }}"
