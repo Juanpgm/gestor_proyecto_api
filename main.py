@@ -38,12 +38,11 @@ try:
         get_collections_info,
         test_firebase_connection,
         get_collections_summary,
-        # Unidades proyecto operations (nuevas funciones especializadas)
-        get_all_unidades_proyecto_simple,
+        # Unidades proyecto operations (funciones especializadas y optimizadas)
         get_unidades_proyecto_geometry,
         get_unidades_proyecto_attributes,
         get_unidades_proyecto_dashboard,
-        get_unidades_proyecto_summary,
+        get_filter_options,
         validate_unidades_proyecto_collection,
     )
     SCRIPTS_AVAILABLE = True
@@ -160,14 +159,14 @@ async def read_root():
                 "/unidades-proyecto/geometry", 
                 "/unidades-proyecto/attributes",
                 "/unidades-proyecto/dashboard"
-            ],
-            "legacy": ["/unidades-proyecto", "/unidades-proyecto/summary"]
+            ]
         },
         "new_features": {
             "filters": "Todos los endpoints de Unidades de Proyecto ahora soportan filtros avanzados",
             "supported_filters": [
-                "upid", "estado", "tipo_intervencion", "departamento", "municipio",
-                "search", "bbox", "fecha_desde", "fecha_hasta", "limit", "offset"
+                "nombre_centro_gestor", "tipo_intervencion", "estado", "upid", 
+                "comuna_corregimiento", "barrio_vereda", "nombre_up", "direccion",
+                "referencia_contrato", "referencia_proceso", "include_bbox", "limit", "offset"
             ],
             "dashboard": "Nuevo endpoint de dashboard con métricas agregadas y análisis estadístico"
         }
@@ -297,45 +296,52 @@ async def get_firebase_collections_summary():
 
 @app.get("/unidades-proyecto/geometry", tags=["Unidades de Proyecto"])
 async def export_geometry_for_nextjs(
-    # Filtros básicos
-    upid: Optional[str] = Query(None, description="ID específico de unidad de proyecto"),
-    estado: Optional[str] = Query(None, description="Estado del proyecto"),
+    # Filtros server-side optimizados
+    nombre_centro_gestor: Optional[str] = Query(None, description="Centro gestor responsable"),
     tipo_intervencion: Optional[str] = Query(None, description="Tipo de intervención"),
-    departamento: Optional[str] = Query(None, description="Departamento"),
-    municipio: Optional[str] = Query(None, description="Municipio"),
+    estado: Optional[str] = Query(None, description="Estado del proyecto"),
+    upid: Optional[str] = Query(None, description="ID específico de unidad"),
     
-    # Filtros avanzados
-    search: Optional[str] = Query(None, description="Búsqueda de texto en campos principales"),
-    bbox: Optional[str] = Query(None, description="Bounding box como 'min_lng,min_lat,max_lng,max_lat'"),
-    limit: Optional[int] = Query(None, ge=1, le=1000, description="Límite de registros")
+    # Configuración geográfica
+    include_bbox: Optional[bool] = Query(False, description="Calcular y incluir bounding box"),
+    limit: Optional[int] = Query(None, ge=1, le=10000, description="Límite de registros")
 ):
     """
-    🗺️ ENDPOINT DE GEOMETRÍAS CON FILTROS 🗺️
+    ## Datos Geoespaciales
     
-    Obtiene datos de geometría (coordenadas, linestring, etc.) 
-    desde la colección 'unidades-proyecto' de Firestore con filtros avanzados.
+    **Propósito**: Retorna exclusivamente datos geográficos optimizados para renderizado de mapas.
     
-    Características:
-    ✅ Conexión directa a Firestore
-    ✅ Solo datos geoespaciales + upid
-    ✅ Filtros por ubicación, estado, tipo, etc.
-    ✅ Optimizado para mapas y visualizaciones
-    ✅ Formato limpio para frontend
+    ### Optimización de Datos
     
-    Filtros disponibles:
-    - upid: ID específico
-    - estado: estado del proyecto
-    - tipo_intervencion: tipo de intervención
-    - departamento/municipio: ubicación administrativa
-    - search: búsqueda de texto
-    - bbox: área geográfica específica
-    - limit: limitar número de resultados
+    **Campos incluidos**: upid, coordinates, coordenadas, geometry, linestring, polygon, lat, lng, latitude, longitude
+    **Campos excluidos**: Todos los atributos no geográficos para máximo rendimiento
+    **Bounding box**: Disponible bajo demanda con `include_bbox=true`
     
-    Casos de uso:
-    - Mapas interactivos filtrados (Leaflet, MapBox)
-    - Visualizaciones geoespaciales por criterios
-    - Análisis de ubicaciones específicas
-    - Componentes de mapas con búsqueda
+    ### Estrategia de Filtrado
+    
+    **Sin filtros**: Dataset geográfico completo
+    **Con filtros**: Optimización server-side en Firestore + refinamiento client-side
+    
+    **Server-side**: upid, estado, tipo_intervencion, nombre_centro_gestor  
+    **Client-side**: bbox, include_bbox
+    
+    ### Parámetros
+    
+    | Filtro | Descripción |
+    |--------|-------------|
+    | nombre_centro_gestor | Centro gestor responsable |
+    | tipo_intervencion | Tipo de intervención |
+    | estado | Estado del proyecto |
+    | upid | ID específico de unidad |
+    | include_bbox | Incluir bounding box calculado |
+    | limit | Límite de resultados (1-10000) |
+    
+    ### Aplicaciones
+    
+    - Mapas interactivos de alta performance
+    - Capas geográficas para análisis espacial  
+    - Integración con bibliotecas cartográficas
+    - Visualización masiva de geometrías
     """
     if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
         return {
@@ -347,35 +353,21 @@ async def export_geometry_for_nextjs(
         }
     
     try:
-        # Construir filtros
+        # Construir filtros optimizados para geometrías
         filters = {}
         
-        if upid:
-            filters["upid"] = upid
-        if estado:
-            filters["estado"] = estado
+        if nombre_centro_gestor:
+            filters["nombre_centro_gestor"] = nombre_centro_gestor
         if tipo_intervencion:
             filters["tipo_intervencion"] = tipo_intervencion
-        if departamento:
-            filters["departamento"] = departamento
-        if municipio:
-            filters["municipio"] = municipio
-        if search:
-            filters["search"] = search
+        if estado:
+            filters["estado"] = estado
+        if upid:
+            filters["upid"] = upid
         if limit:
             filters["limit"] = limit
-            
-        # Procesar bounding box
-        if bbox:
-            try:
-                bbox_parts = bbox.split(',')
-                if len(bbox_parts) == 4:
-                    filters["bbox"] = [float(x) for x in bbox_parts]
-            except ValueError:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Formato de bbox inválido. Use: 'min_lng,min_lat,max_lng,max_lat'"
-                )
+        if include_bbox:
+            filters["include_bbox"] = include_bbox
         
         result = await get_unidades_proyecto_geometry(filters)
         
@@ -406,49 +398,64 @@ async def export_geometry_for_nextjs(
 
 @app.get("/unidades-proyecto/attributes", tags=["Unidades de Proyecto"])
 async def export_attributes_for_nextjs(
-    # Filtros básicos
-    upid: Optional[str] = Query(None, description="ID específico de unidad de proyecto"),
-    estado: Optional[str] = Query(None, description="Estado del proyecto"),
+    # Filtros básicos originales
+    nombre_centro_gestor: Optional[str] = Query(None, description="Centro gestor responsable"),
     tipo_intervencion: Optional[str] = Query(None, description="Tipo de intervención"),
-    departamento: Optional[str] = Query(None, description="Departamento"),
-    municipio: Optional[str] = Query(None, description="Municipio"),
+    estado: Optional[str] = Query(None, description="Estado del proyecto"),
+    upid: Optional[str] = Query(None, description="ID específico de unidad"),
+    nombre_up: Optional[str] = Query(None, description="Búsqueda parcial en nombre (contiene texto)"),
+    comuna_corregimiento: Optional[str] = Query(None, description="Comuna o corregimiento"),
+    barrio_vereda: Optional[str] = Query(None, description="Barrio o vereda"),
+    direccion: Optional[str] = Query(None, description="Búsqueda parcial en dirección (contiene texto)"),
+    referencia_contrato: Optional[str] = Query(None, description="Referencia del contrato"),
+    referencia_proceso: Optional[str] = Query(None, description="Referencia del proceso"),
     
-    # Filtros avanzados y paginación
-    search: Optional[str] = Query(None, description="Búsqueda de texto en campos principales"),
-    fecha_desde: Optional[str] = Query(None, description="Fecha desde (YYYY-MM-DD)"),
-    fecha_hasta: Optional[str] = Query(None, description="Fecha hasta (YYYY-MM-DD)"),
-    limit: Optional[int] = Query(None, ge=1, le=1000, description="Límite de registros"),
-    offset: Optional[int] = Query(None, ge=0, description="Offset para paginación")
+    # Paginación
+    limit: Optional[int] = Query(None, ge=1, le=1000, description="Máximo de resultados"),
+    offset: Optional[int] = Query(None, ge=0, description="Saltar registros para paginación")
 ):
     """
-    📋 ENDPOINT DE ATRIBUTOS CON FILTROS 📋
+    ## Atributos Tabulares
     
-    Obtiene atributos de tabla (sin geometría) 
-    desde la colección 'unidades-proyecto' de Firestore con filtros avanzados.
+    **Propósito**: Retorna atributos completos de proyectos excluyendo datos geográficos.
     
-    Características:
-    ✅ Conexión directa a Firestore  
-    ✅ Solo atributos de tabla + upid
-    ✅ Filtros por múltiples criterios
-    ✅ Paginación con limit/offset
-    ✅ Excluye datos geoespaciales
-    ✅ Formato optimizado para tablas y dashboards
+    ### Optimización de Datos
     
-    Filtros disponibles:
-    - upid: ID específico
-    - estado: estado del proyecto
-    - tipo_intervencion: tipo de intervención
-    - departamento/municipio: ubicación administrativa
-    - search: búsqueda de texto
-    - fecha_desde/fecha_hasta: rango de fechas
-    - limit/offset: paginación
+    **Campos incluidos**: Todos los atributos del proyecto (nombres, estados, referencias, etc.)
+    **Campos excluidos**: coordinates, geometry, linestring, polygon, lat, lng y similares
+    **Paginación**: Sistema limit/offset para manejo eficiente de grandes volúmenes
     
-    Casos de uso:
-    - Tablas de datos filtradas en React
-    - Dashboards y reportes personalizados
-    - Formularios de edición con búsqueda
-    - Exportación a Excel/CSV filtrada
-    - Componentes de filtrado avanzado
+    ### Estrategia de Filtrado
+    
+    **Sin filtros**: Dataset completo de atributos  
+    **Con filtros**: Optimización server-side + filtros client-side específicos
+    
+    **Server-side**: upid, estado, tipo_intervencion, nombre_centro_gestor  
+    **Client-side**: search, nombre_up, direccion, ubicación geográfica
+    
+    ### Parámetros
+    
+    | Filtro | Descripción |
+    |--------|-------------|
+    | nombre_centro_gestor | Centro gestor responsable |
+    | tipo_intervencion | Tipo de intervención |
+    | estado | Estado del proyecto |
+    | upid | ID específico de unidad |
+    | nombre_up | Búsqueda parcial en nombre |
+    | comuna_corregimiento | Comuna o corregimiento |
+    | barrio_vereda | Barrio o vereda |
+    | direccion | Búsqueda parcial en dirección |
+    | referencia_contrato | Referencia del contrato |
+    | referencia_proceso | Referencia del proceso |
+    | **limit** | Máximo resultados (1-1000) |
+    | **offset** | Registros a omitir |
+    
+    ### Aplicaciones
+    
+    - Grillas de datos y tablas administrativas
+    - Reportes tabulares con filtros múltiples
+    - Exportación a formatos estructurados
+    - Interfaces de búsqueda avanzada
     """
     if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
         return {
@@ -463,22 +470,26 @@ async def export_attributes_for_nextjs(
         # Construir filtros
         filters = {}
         
-        if upid:
-            filters["upid"] = upid
-        if estado:
-            filters["estado"] = estado
+        if nombre_centro_gestor:
+            filters["nombre_centro_gestor"] = nombre_centro_gestor
         if tipo_intervencion:
             filters["tipo_intervencion"] = tipo_intervencion
-        if departamento:
-            filters["departamento"] = departamento
-        if municipio:
-            filters["municipio"] = municipio
-        if search:
-            filters["search"] = search
-        if fecha_desde:
-            filters["fecha_desde"] = fecha_desde
-        if fecha_hasta:
-            filters["fecha_hasta"] = fecha_hasta
+        if estado:
+            filters["estado"] = estado
+        if upid:
+            filters["upid"] = upid
+        if nombre_up:
+            filters["nombre_up"] = nombre_up
+        if comuna_corregimiento:
+            filters["comuna_corregimiento"] = comuna_corregimiento
+        if barrio_vereda:
+            filters["barrio_vereda"] = barrio_vereda
+        if direccion:
+            filters["direccion"] = direccion
+        if referencia_contrato:
+            filters["referencia_contrato"] = referencia_contrato
+        if referencia_proceso:
+            filters["referencia_proceso"] = referencia_proceso
         
         result = await get_unidades_proyecto_attributes(
             filters=filters,
@@ -516,44 +527,51 @@ async def export_attributes_for_nextjs(
 @app.get("/unidades-proyecto/dashboard", tags=["Unidades de Proyecto"])
 async def export_dashboard_for_nextjs(
     # Filtros para dashboard
-    departamento: Optional[str] = Query(None, description="Departamento para análisis"),
-    municipio: Optional[str] = Query(None, description="Municipio para análisis"),
-    estado: Optional[str] = Query(None, description="Estado del proyecto"),
+    nombre_centro_gestor: Optional[str] = Query(None, description="Centro gestor para análisis"),
     tipo_intervencion: Optional[str] = Query(None, description="Tipo de intervención"),
-    fecha_desde: Optional[str] = Query(None, description="Fecha desde (YYYY-MM-DD)"),
-    fecha_hasta: Optional[str] = Query(None, description="Fecha hasta (YYYY-MM-DD)")
+    estado: Optional[str] = Query(None, description="Estado del proyecto"),
+    comuna_corregimiento: Optional[str] = Query(None, description="Comuna o corregimiento para análisis"),
+    barrio_vereda: Optional[str] = Query(None, description="Barrio o vereda para análisis")
 ):
     """
-    📊 ENDPOINT DE DASHBOARD CON FILTROS 📊
+    ## Analytics y Métricas de Negocio
     
-    Obtiene datos agregados y métricas para dashboards 
-    desde la colección 'unidades-proyecto' de Firestore con análisis estadístico.
+    **Propósito**: Genera análisis estadístico avanzado, KPIs y métricas agregadas para dashboards ejecutivos.
     
-    Características:
-    ✅ Métricas agregadas por categorías
-    ✅ Distribuciones por estado, tipo, ubicación
-    ✅ Análisis geográfico con bounding boxes
-    ✅ Filtros para análisis específicos
-    ✅ Formato optimizado para gráficos y visualizaciones
+    ### Arquitectura Analítica
     
-    Métricas incluidas:
-    - Resumen general (totales, porcentajes)
-    - Distribuciones por estado, tipo, ubicación
-    - Métricas geográficas (bbox, centros)
-    - Tendencias y análisis comparativo
+    **Sin filtros**: Análisis global del portafolio completo de proyectos  
+    **Con filtros**: Análisis segmentado según criterios específicos de negocio
     
-    Filtros disponibles:
-    - departamento/municipio: análisis por ubicación
-    - estado: filtrar por estado de proyectos
-    - tipo_intervencion: análisis por tipo
-    - fecha_desde/fecha_hasta: análisis temporal
+    **Optimización**: Hereda filtrado server-side de endpoints geometry y attributes
     
-    Casos de uso:
-    - Dashboards ejecutivos con KPIs
-    - Gráficos de distribución (pie, bar charts)
-    - Mapas de calor geográficos
-    - Reportes ejecutivos filtrados
-    - Análisis comparativo por regiones
+    ### Métricas Generadas
+    
+    | Categoría | Contenido |
+    |-----------|-----------|
+    | **Resumen General** | Totales, cobertura de datos, completitud |
+    | **Distribuciones** | Rankings y porcentajes por estado, tipo, centro gestor, ubicación |
+    | **Análisis Geográfico** | Bounding box, centro de gravedad, dispersión territorial |
+    | **Calidad de Datos** | Completitud por campos críticos, análisis de integridad |
+    | **KPIs de Negocio** | Proyectos activos/finalizados, tasa completitud, cobertura territorial |
+    
+    ### Parámetros de Segmentación
+    
+    | Filtro | Aplicación |
+    |--------|------------|
+    | nombre_centro_gestor | Análisis por responsable institucional |
+    | tipo_intervencion | Segmentación por categoría de proyecto |
+    | estado | Filtrado por fase de ejecución |
+    | comuna_corregimiento | Análisis territorial nivel medio |
+    | barrio_vereda | Análisis territorial granular |
+    
+    ### Aplicaciones
+    
+    - Dashboards ejecutivos con KPIs institucionales
+    - Reportes gerenciales de seguimiento y control  
+    - Análisis de distribución y cobertura territorial
+    - Evaluación de calidad y completitud de datos
+    - Métricas para toma de decisiones estratégicas
     """
     if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
         return {
@@ -567,18 +585,16 @@ async def export_dashboard_for_nextjs(
         # Construir filtros para dashboard
         filters = {}
         
-        if departamento:
-            filters["departamento"] = departamento
-        if municipio:
-            filters["municipio"] = municipio
-        if estado:
-            filters["estado"] = estado
+        if nombre_centro_gestor:
+            filters["nombre_centro_gestor"] = nombre_centro_gestor
         if tipo_intervencion:
             filters["tipo_intervencion"] = tipo_intervencion
-        if fecha_desde:
-            filters["fecha_desde"] = fecha_desde
-        if fecha_hasta:
-            filters["fecha_hasta"] = fecha_hasta
+        if estado:
+            filters["estado"] = estado
+        if comuna_corregimiento:
+            filters["comuna_corregimiento"] = comuna_corregimiento
+        if barrio_vereda:
+            filters["barrio_vereda"] = barrio_vereda
         
         result = await get_unidades_proyecto_dashboard(filters)
         
@@ -607,66 +623,102 @@ async def export_dashboard_for_nextjs(
             detail=f"Error procesando dashboard: {str(e)}"
         )
 
+
 # ============================================================================
-# ENDPOINTS DE LEGACY (COMPATIBILIDAD)
+# ENDPOINT PARA OPCIONES DE FILTROS
 # ============================================================================
 
-@app.get("/unidades-proyecto", tags=["Legacy Endpoints"])
-async def get_unidades_proyecto_legacy(
-    limit: Optional[int] = Query(None, ge=1, description="Límite opcional de documentos"),
-    format: str = Query("normalized", description="Formato: 'raw', 'normalized'")
+@app.get("/unidades-proyecto/filters", tags=["Unidades de Proyecto"], response_class=JSONResponse)
+async def get_filters_endpoint(
+    field: Optional[str] = Query(
+        None, 
+        description="Campo específico para obtener valores únicos (opcional)",
+        enum=[
+            "estado", "tipo_intervencion", "nombre_centro_gestor", 
+            "comuna_corregimiento", "barrio_vereda", "fuente_financiacion", 
+            "ano"
+        ]
+    ),
+    limit: Optional[int] = Query(
+        None, 
+        description="Límite de valores únicos a retornar (opcional)", 
+        ge=1,
+        le=100
+    )
 ):
     """
-    🔄 ENDPOINT DE COMPATIBILIDAD
+    **Obtener valores únicos para filtros de Unidades de Proyecto**
     
-    Endpoint de compatibilidad para sistemas existentes.
-    Para nuevas integraciones usar los endpoints especializados:
-    - /unidades-proyecto/geometry (para mapas)
-    - /unidades-proyecto/attributes (para tablas)
+    Endpoint optimizado para poblar controles de filtrado en dashboards y interfaces.
+    Diseñado específicamente para aplicaciones NextJS con carga eficiente de opciones.
+    
+    **Características principales:**
+    - **Filtrado inteligente**: Especifica un campo para cargar solo sus valores
+    - **Control de volumen**: Aplica límites para evitar sobrecarga de datos  
+    - **Optimización server-side**: Usa queries eficientes de Firestore
+    - **Cache-friendly**: Estructura optimizada para sistemas de caché
+    
+    **Casos de uso:**
+    - Poblar dropdowns y selectores en dashboards
+    - Cargar opciones de filtrado dinámicamente
+    - Implementar autocomplete y búsqueda predictiva
+    - Validar valores disponibles antes de filtrar
+    
+    **Campos disponibles:**
+    - `estado`: Estados de proyecto (activo, completado, etc.)
+    - `tipo_intervencion`: Tipos de intervención urbana
+    - `nombre_centro_gestor`: Centros gestores responsables
+    - `comuna_corregimiento`: Ubicaciones por comuna/corregimiento
+    - `barrio_vereda`: Ubicaciones por barrio/vereda
+    - `fuente_financiacion`: Fuentes de financiación del proyecto
+    - `ano`: Años de ejecución disponibles
+    - `departamento`: Departamentos con proyectos
+    - `municipio`: Municipios con proyectos
+    
+    **Optimizaciones aplicadas:**
+    - Sampling inteligente de documentos para reducir latencia
+    - Filtros server-side en Firestore para mejor rendimiento
+    - Límites configurables para controlar payload
+    - Estructura de respuesta optimizada para frontend
     """
     if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
         return {
             "success": False,
             "error": "Firebase temporarily unavailable", 
-            "data": [],
-            "count": 0,
-            "legacy": True
+            "filters": {},
+            "type": "filters"
         }
     
     try:
-        result = await get_all_unidades_proyecto_simple(limit=limit)
+        result = await get_filter_options(field=field, limit=limit)
         
-        if not result["success"]:
+        if not result.get("success", False):
             raise HTTPException(
                 status_code=500,
-                detail=f"Error obteniendo datos: {result.get('error', 'Error desconocido')}"
+                detail=f"Error obteniendo filtros: {result.get('error', 'Error desconocido')}"
             )
-        
-        data = result.get("data", [])
         
         response_data = {
             "success": True,
-            "data": data,
-            "total": len(data),
-            "format": format,
+            "filters": result["filters"],
+            "metadata": {
+                "total_fields": result.get("total_fields", 0),
+                "field_requested": result.get("field_requested"),
+                "limit_applied": result.get("limit_applied"),
+                "optimized_query": True,
+                "cache_recommended": True,
+                "utf8_enabled": True,
+                "spanish_support": True
+            },
+            "type": "filters",
+            "collection": "unidades-proyecto", 
             "timestamp": datetime.now().isoformat(),
-            "legacy": True,
-            "recommendation": "Use /geometry or /attributes endpoints for better performance"
+            "message": f"Filtros obtenidos exitosamente"
         }
-        
-        # Calcular ETag simple para cache
-        import hashlib
-        etag = hashlib.md5(str(len(data)).encode()).hexdigest()[:8]
         
         return JSONResponse(
             content=response_data,
-            headers={
-                "ETag": etag,
-                "Cache-Control": "public, max-age=1800",
-                "X-Total-Count": str(response_data["total"]),
-                "X-Format": format,
-                "X-Legacy": "true"
-            }
+            media_type="application/json; charset=utf-8"
         )
         
     except HTTPException:
@@ -674,45 +726,9 @@ async def get_unidades_proyecto_legacy(
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Error procesando solicitud: {str(e)}"
+            detail=f"Error procesando filtros: {str(e)}"
         )
 
-@app.get("/unidades-proyecto/summary", tags=["Legacy Endpoints"])
-async def get_unidades_proyecto_resumen_legacy():
-    """
-    📊 RESUMEN DE UNIDADES DE PROYECTO (LEGACY)
-    
-    Obtener resumen estadístico de las unidades de proyecto
-    """
-    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
-        return {
-            "success": False,
-            "error": "Firebase temporarily unavailable",
-            "total_documentos": 0,
-            "proyectos_unicos": 0,
-            "distribuciones": {},
-            "legacy": True
-        }
-    try:
-        result = await get_unidades_proyecto_summary()
-        
-        if not result["success"]:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error generando resumen: {result.get('error', 'Error desconocido')}"
-            )
-        
-        # Añadir marca de legacy
-        result["legacy"] = True
-        return result
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error obteniendo resumen: {str(e)}"
-        )
 
 # ============================================================================
 # SERVIDOR

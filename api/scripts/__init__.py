@@ -30,6 +30,7 @@ try:
         get_unidades_proyecto_geometry,
         get_unidades_proyecto_attributes,
         get_unidades_proyecto_dashboard,
+        get_filter_options,
         get_unidades_proyecto_summary,
         validate_unidades_proyecto_collection,
     )
@@ -54,6 +55,9 @@ except ImportError as e:
     async def get_unidades_proyecto_summary():
         return {"success": False, "error": "Unidades proyecto operations not available"}
     
+    async def get_filter_options(field=None, limit=None):
+        return {"success": False, "error": "Unidades proyecto operations not available", "filters": {}}
+    
     async def validate_unidades_proyecto_collection():
         return {"valid": False, "error": "Unidades proyecto operations not available"}
 
@@ -68,6 +72,7 @@ __all__ = [
     "get_unidades_proyecto_geometry",
     "get_unidades_proyecto_attributes",
     "get_unidades_proyecto_dashboard",
+    "get_filter_options",
     "get_unidades_proyecto_summary",
     "validate_unidades_proyecto_collection",
     
