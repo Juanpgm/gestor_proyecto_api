@@ -483,6 +483,158 @@ async def get_all_unidades_proyecto_simple(limit: Optional[int] = None) -> Dict[
             "count": 0
         }
 
+
+async def get_unidades_proyecto_geometry() -> Dict[str, Any]:
+    """
+    Obtener solo los datos de geometría (coordenadas, linestring, etc.) de unidades-proyecto
+    Especializado para NextJS - Datos geoespaciales
+    """
+    try:
+        print(f"🗺️ DEBUG: Obteniendo datos de GEOMETRÍA...")
+        
+        db = get_firestore_client()
+        if db is None:
+            return {
+                "success": False,
+                "error": "No se pudo conectar a Firestore",
+                "data": [],
+                "count": 0
+            }
+        
+        collection_ref = db.collection('unidades_proyecto')
+        docs = collection_ref.stream()
+        
+        geometry_data = []
+        doc_count = 0
+        
+        # Campos de geometría que queremos extraer
+        geometry_fields = [
+            'upid',  # Siempre incluir upid
+            'coordenadas', 
+            'geometry', 
+            'linestring', 
+            'polygon', 
+            'coordinates',
+            'lat', 
+            'lng', 
+            'latitude', 
+            'longitude',
+            'geom',
+            'shape',
+            'location'
+        ]
+        
+        for doc in docs:
+            doc_data = doc.to_dict()
+            
+            # Extraer solo campos de geometría que existan
+            geometry_record = {'id': doc.id}  # Incluir ID del documento
+            
+            for field in geometry_fields:
+                if field in doc_data:
+                    geometry_record[field] = doc_data[field]
+            
+            # Solo agregar si tiene upid y al menos un campo geométrico
+            if 'upid' in geometry_record and len(geometry_record) > 2:
+                geometry_data.append(geometry_record)
+                doc_count += 1
+                
+                if doc_count % 100 == 0:
+                    print(f"🗺️ DEBUG: Procesados {doc_count} registros de geometría...")
+        
+        print(f"🗺️ DEBUG: TOTAL geometrías procesadas: {len(geometry_data)}")
+        
+        return {
+            "success": True,
+            "data": geometry_data,
+            "count": len(geometry_data),
+            "type": "geometry",
+            "message": f"Obtenidos {len(geometry_data)} registros de geometría"
+        }
+        
+    except Exception as e:
+        print(f"❌ ERROR en get_unidades_proyecto_geometry: {str(e)}")
+        import traceback
+        print(f"❌ TRACEBACK: {traceback.format_exc()}")
+        
+        return {
+            "success": False,
+            "error": f"Error obteniendo geometrías: {str(e)}",
+            "data": [],
+            "count": 0
+        }
+
+
+async def get_unidades_proyecto_attributes() -> Dict[str, Any]:
+    """
+    Obtener solo los atributos de tabla (sin geometría) de unidades-proyecto
+    Especializado para NextJS - Tabla de atributos
+    """
+    try:
+        print(f"📋 DEBUG: Obteniendo ATRIBUTOS de tabla...")
+        
+        db = get_firestore_client()
+        if db is None:
+            return {
+                "success": False,
+                "error": "No se pudo conectar a Firestore",
+                "data": [],
+                "count": 0
+            }
+        
+        collection_ref = db.collection('unidades_proyecto')
+        docs = collection_ref.stream()
+        
+        attributes_data = []
+        doc_count = 0
+        
+        # Campos de geometría que queremos EXCLUIR
+        geometry_fields = {
+            'coordenadas', 'geometry', 'linestring', 'polygon', 'coordinates',
+            'lat', 'lng', 'latitude', 'longitude', 'geom', 'shape', 'location'
+        }
+        
+        for doc in docs:
+            doc_data = doc.to_dict()
+            
+            # Crear registro solo con atributos (sin geometría)
+            attributes_record = {'id': doc.id}  # Incluir ID del documento
+            
+            for field, value in doc_data.items():
+                # Excluir campos de geometría pero incluir todo lo demás
+                if field not in geometry_fields:
+                    attributes_record[field] = value
+            
+            # Solo agregar si tiene upid
+            if 'upid' in attributes_record:
+                attributes_data.append(attributes_record)
+                doc_count += 1
+                
+                if doc_count % 100 == 0:
+                    print(f"📋 DEBUG: Procesados {doc_count} registros de atributos...")
+        
+        print(f"📋 DEBUG: TOTAL atributos procesados: {len(attributes_data)}")
+        
+        return {
+            "success": True,
+            "data": attributes_data,
+            "count": len(attributes_data),
+            "type": "attributes",
+            "message": f"Obtenidos {len(attributes_data)} registros de atributos"
+        }
+        
+    except Exception as e:
+        print(f"❌ ERROR en get_unidades_proyecto_attributes: {str(e)}")
+        import traceback
+        print(f"❌ TRACEBACK: {traceback.format_exc()}")
+        
+        return {
+            "success": False,
+            "error": f"Error obteniendo atributos: {str(e)}",
+            "data": [],
+            "count": 0
+        }
+
 async def execute_firestore_query(query_func: Callable, *args, **kwargs) -> Tuple[bool, Any, Optional[str]]:
     """
     Ejecutar consulta a Firestore de forma segura y funcional
