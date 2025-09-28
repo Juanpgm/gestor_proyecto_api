@@ -215,39 +215,77 @@ def create_application_default_credentials():
         return None
 
 def create_credentials_for_environment(env: str):
-    """Create appropriate credentials with ADC priority"""
+    """Create appropriate credentials with production priority"""
     from firebase_admin import credentials
     
-    # Priority 1: Try Application Default Credentials (most secure)
-    try:
-        adc_creds = credentials.ApplicationDefault()
-        print("✅ Using Application Default Credentials (ADC)")
-        return adc_creds
-    except Exception as adc_error:
-        print(f"⚠️ ADC not available: {adc_error}")
+    print(f"🔍 DEBUG: Environment detected: {env}")
     
-    # Priority 2: Try service account from environment variables
-    if env in ['railway', 'vercel', 'heroku']:
-        service_creds = create_service_account_credentials()
-        if service_creds:
-            try:
-                cert_creds = credentials.Certificate(service_creds)
-                print("✅ Using service account from environment variables")
-                return cert_creds
-            except Exception as env_error:
-                print(f"⚠️ Environment credentials failed: {env_error}")
+    # Priority 1: Production environments - Service Account from env vars (most secure for deployment)
+    if env in ['railway', 'vercel', 'heroku', 'gcp']:
+        print(f"🚀 PRODUCTION mode for {env}")
+        
+        # Check for base64 encoded service account (recommended for Railway)
+        encoded_key = os.getenv('FIREBASE_SERVICE_ACCOUNT_KEY') or os.getenv('GOOGLE_APPLICATION_CREDENTIALS_JSON')
+        if encoded_key:
+            print("🔑 Found base64 service account key")
+            service_creds = create_service_account_credentials()
+            if service_creds:
+                try:
+                    cert_creds = credentials.Certificate(service_creds)
+                    print("✅ Using base64 service account key")
+                    return cert_creds
+                except Exception as env_error:
+                    print(f"❌ Base64 service account failed: {env_error}")
+        else:
+            print("⚠️ No FIREBASE_SERVICE_ACCOUNT_KEY found")
+        
+        # Try individual environment variables
+        if os.getenv('FIREBASE_PROJECT_ID') and os.getenv('FIREBASE_CLIENT_EMAIL'):
+            print("🔑 Found individual Firebase env vars")
+            service_creds = create_service_account_credentials()
+            if service_creds:
+                try:
+                    cert_creds = credentials.Certificate(service_creds)
+                    print("✅ Using individual Firebase environment variables")
+                    return cert_creds
+                except Exception as env_error:
+                    print(f"❌ Individual env vars failed: {env_error}")
+        else:
+            print("⚠️ Firebase individual env vars not complete")
     
-    # Priority 3: Try service account file
+    # Priority 2: Local development - Try Application Default Credentials
+    else:
+        print("🏠 LOCAL development mode")
+        try:
+            adc_creds = credentials.ApplicationDefault()
+            print("✅ Using Application Default Credentials (ADC)")
+            return adc_creds
+        except Exception as adc_error:
+            print(f"⚠️ ADC not available: {adc_error}")
+    
+    # Priority 3: Fallback - Try service account file (both environments)
     if os.path.exists('firebase-service-account.json'):
+        print("📁 Found service account file")
         try:
             file_creds = credentials.Certificate('firebase-service-account.json')
             print("✅ Using service account file")
             return file_creds
         except Exception as file_error:
-            print(f"⚠️ Service account file failed: {file_error}")
+            print(f"❌ Service account file failed: {file_error}")
+    else:
+        print("📁 No service account file found")
     
     # No valid credentials found
     print("❌ No valid credentials found")
+    print(f"🔍 DEBUG: Environment variables present:")
+    env_vars = [
+        'FIREBASE_PROJECT_ID', 'FIREBASE_SERVICE_ACCOUNT_KEY', 
+        'GOOGLE_APPLICATION_CREDENTIALS_JSON', 'FIREBASE_CLIENT_EMAIL'
+    ]
+    for var in env_vars:
+        has_var = bool(os.getenv(var))
+        print(f"   {var}: {'✅' if has_var else '❌'}")
+    
     return None
 
 # === FIREBASE INITIALIZATION ===
