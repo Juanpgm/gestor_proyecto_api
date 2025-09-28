@@ -16,7 +16,11 @@ from datetime import datetime
 
 # Importar Firebase con configuración automática
 try:
-    from database.firebase_config import FirebaseManager, PROJECT_ID, FIREBASE_AVAILABLE
+    from database.firebase_config import FirebaseManager, PROJECT_ID, FIREB        }
+
+# ============================================================================
+# ENDPOINTS DE LEGACY (COMPATIBILIDAD)
+# ============================================================================VAILABLE
     print("Firebase auto-config loaded successfully")
 except Exception as e:
     print(f"Warning: Firebase import failed: {e}")
@@ -156,15 +160,15 @@ async def read_root():
         "endpoints": {
             "general": ["/", "/health", "/ping"],
             "firebase": ["/firebase/status", "/firebase/collections"],
-            "nextjs_integration": [
-                "/unidades-proyecto/nextjs-geometry", 
-                "/unidades-proyecto/nextjs-attributes",
-                "/unidades-proyecto/nextjs-dashboard"
+            "unidades_proyecto": [
+                "/unidades-proyecto/geometry", 
+                "/unidades-proyecto/attributes",
+                "/unidades-proyecto/dashboard"
             ],
             "legacy": ["/unidades-proyecto", "/unidades-proyecto/summary"]
         },
         "new_features": {
-            "filters": "Todos los endpoints de NextJS ahora soportan filtros avanzados",
+            "filters": "Todos los endpoints de Unidades de Proyecto ahora soportan filtros avanzados",
             "supported_filters": [
                 "upid", "estado", "tipo_intervencion", "departamento", "municipio",
                 "search", "bbox", "fecha_desde", "fecha_hasta", "limit", "offset"
@@ -292,10 +296,10 @@ async def get_firebase_collections_summary():
         raise HTTPException(status_code=500, detail=f"Error obteniendo resumen: {str(e)}")
 
 # ============================================================================
-# ENDPOINTS ESPECIALIZADOS PARA NEXTJS
+# ENDPOINTS DE UNIDADES DE PROYECTO
 # ============================================================================
 
-@app.get("/unidades-proyecto/nextjs-geometry", tags=["Next.js Integration"])
+@app.get("/unidades-proyecto/geometry", tags=["Unidades de Proyecto"])
 async def export_geometry_for_nextjs(
     # Filtros básicos
     upid: Optional[str] = Query(None, description="ID específico de unidad de proyecto"),
@@ -310,7 +314,7 @@ async def export_geometry_for_nextjs(
     limit: Optional[int] = Query(None, ge=1, le=1000, description="Límite de registros")
 ):
     """
-    🗺️ ENDPOINT DE GEOMETRÍAS PARA NEXT.JS CON FILTROS 🗺️
+    🗺️ ENDPOINT DE GEOMETRÍAS CON FILTROS 🗺️
     
     Obtiene datos de geometría (coordenadas, linestring, etc.) 
     desde la colección 'unidades-proyecto' de Firestore con filtros avanzados.
@@ -320,7 +324,7 @@ async def export_geometry_for_nextjs(
     ✅ Solo datos geoespaciales + upid
     ✅ Filtros por ubicación, estado, tipo, etc.
     ✅ Optimizado para mapas y visualizaciones
-    ✅ Formato limpio para NextJS/React
+    ✅ Formato limpio para frontend
     
     Filtros disponibles:
     - upid: ID específico
@@ -404,7 +408,7 @@ async def export_geometry_for_nextjs(
             detail=f"Error procesando geometrías: {str(e)}"
         )
 
-@app.get("/unidades-proyecto/nextjs-attributes", tags=["Next.js Integration"])
+@app.get("/unidades-proyecto/attributes", tags=["Unidades de Proyecto"])
 async def export_attributes_for_nextjs(
     # Filtros básicos
     upid: Optional[str] = Query(None, description="ID específico de unidad de proyecto"),
@@ -421,7 +425,7 @@ async def export_attributes_for_nextjs(
     offset: Optional[int] = Query(None, ge=0, description="Offset para paginación")
 ):
     """
-    📋 ENDPOINT DE ATRIBUTOS PARA NEXT.JS CON FILTROS 📋
+    📋 ENDPOINT DE ATRIBUTOS CON FILTROS 📋
     
     Obtiene atributos de tabla (sin geometría) 
     desde la colección 'unidades-proyecto' de Firestore con filtros avanzados.
@@ -513,7 +517,7 @@ async def export_attributes_for_nextjs(
             detail=f"Error procesando atributos: {str(e)}"
         )
 
-@app.get("/unidades-proyecto/nextjs-dashboard", tags=["Next.js Integration"])
+@app.get("/unidades-proyecto/dashboard", tags=["Unidades de Proyecto"])
 async def export_dashboard_for_nextjs(
     # Filtros para dashboard
     departamento: Optional[str] = Query(None, description="Departamento para análisis"),
@@ -524,7 +528,7 @@ async def export_dashboard_for_nextjs(
     fecha_hasta: Optional[str] = Query(None, description="Fecha hasta (YYYY-MM-DD)")
 ):
     """
-    📊 ENDPOINT DE DASHBOARD PARA NEXT.JS CON FILTROS 📊
+    📊 ENDPOINT DE DASHBOARD CON FILTROS 📊
     
     Obtiene datos agregados y métricas para dashboards 
     desde la colección 'unidades-proyecto' de Firestore con análisis estadístico.
@@ -621,8 +625,8 @@ async def get_unidades_proyecto_legacy(
     
     Endpoint de compatibilidad para sistemas existentes.
     Para nuevas integraciones usar los endpoints especializados:
-    - /unidades-proyecto/nextjs-geometry (para mapas)
-    - /unidades-proyecto/nextjs-attributes (para tablas)
+    - /unidades-proyecto/geometry (para mapas)
+    - /unidades-proyecto/attributes (para tablas)
     """
     if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
         return {
@@ -651,7 +655,7 @@ async def get_unidades_proyecto_legacy(
             "format": format,
             "timestamp": datetime.now().isoformat(),
             "legacy": True,
-            "recommendation": "Use /nextjs-geometry or /nextjs-attributes endpoints for better performance"
+            "recommendation": "Use /geometry or /attributes endpoints for better performance"
         }
         
         # Calcular ETag simple para cache
