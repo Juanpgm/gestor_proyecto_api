@@ -16,11 +16,7 @@ from datetime import datetime
 
 # Importar Firebase con configuración automática
 try:
-    from database.firebase_config import FirebaseManager, PROJECT_ID, FIREB        }
-
-# ============================================================================
-# ENDPOINTS DE LEGACY (COMPATIBILIDAD)
-# ============================================================================VAILABLE
+    from database.firebase_config import FirebaseManager, PROJECT_ID, FIREBASE_AVAILABLE
     print("Firebase auto-config loaded successfully")
 except Exception as e:
     print(f"Warning: Firebase import failed: {e}")
