@@ -17,9 +17,19 @@ from datetime import datetime
 # Importar Firebase con configuración automática
 try:
     from database.firebase_config import FirebaseManager, PROJECT_ID, FIREBASE_AVAILABLE
-    print("Firebase auto-config loaded successfully")
+    print("✅ Firebase auto-config loaded successfully")
+    
+    # Ejecutar auto-setup al importar
+    if FIREBASE_AVAILABLE:
+        setup_result = FirebaseManager.setup()
+        if setup_result:
+            print("✅ Firebase auto-setup completed during import")
+        else:
+            print("⚠️ Firebase auto-setup failed, will retry during app startup")
+    
 except Exception as e:
-    print(f"Warning: Firebase import failed: {e}")
+    print(f"⚠️ Warning: Firebase import failed: {e}")
+    print("💡 Configure Firebase credentials or run 'gcloud auth application-default login'")
     FIREBASE_AVAILABLE = False
     PROJECT_ID = "your-project-id"
     
@@ -29,7 +39,7 @@ except Exception as e:
         @staticmethod 
         def setup(): return False
         @staticmethod
-        def test_connection(): return {'connected': False, 'message': 'Not available'}
+        def test_connection(): return {'connected': False, 'message': 'Firebase configuration required'}
 
 # Importar scripts de forma segura
 try:
@@ -63,11 +73,12 @@ async def lifespan(app: FastAPI):
     # Inicializar Firebase automáticamente
     if FIREBASE_AVAILABLE:
         if FirebaseManager.setup():
-            print("Firebase initialized successfully")
+            print("✅ Firebase initialized successfully")
         else:
-            print("Warning: Firebase initialization failed - API will run in limited mode")
+            print("⚠️ Firebase initialization failed - API will run in limited mode without Firebase")
     else:
-        print("Firebase not available - API running in limited mode")
+        print("⚠️ Firebase not available - API running in limited mode")
+        print("💡 To enable Firebase: configure credentials or run 'gcloud auth application-default login'")
     
     yield
     
@@ -141,27 +152,6 @@ async def timeout_middleware(request: Request, call_next):
 # ============================================================================
 # ENDPOINTS GENERALES
 # ============================================================================
-
-@app.get("/")
-async def read_root():
-    """Endpoint raíz con información básica de la API"""
-    return {
-        "message": "Gestor de Proyectos API",
-        "version": "1.0.0",
-        "timestamp": datetime.now().isoformat(),
-        "firebase_project": PROJECT_ID,
-        "status": "running",
-        "documentation": "/docs",
-        "endpoints": {
-            "general": ["/", "/health", "/ping"],
-            "firebase": ["/firebase/status", "/firebase/collections"],
-            "nextjs_integration": [
-                "/unidades-proyecto/nextjs-geometry", 
-                "/unidades-proyecto/nextjs-attributes"
-            ],
-            "legacy": ["/unidades-proyecto", "/unidades-proyecto/summary"]
-        }
-    }
 
 @app.get("/ping", tags=["General"])
 async def ping():
@@ -1055,7 +1045,6 @@ async def get_dashboard_summary():
 # ACTUALIZACIÓN DE ENDPOINTS EXISTENTES CON TAGS
 # ============================================================================
 
-# Actualizar el endpoint raíz para mostrar los nuevos endpoints
 @app.get("/", tags=["General"])
 async def read_root():
     """Endpoint raíz con información de la API v2.0 - Unidades de Proyecto"""
