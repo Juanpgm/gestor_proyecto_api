@@ -29,6 +29,7 @@ try:
         get_all_unidades_proyecto_simple,
         get_unidades_proyecto_geometry,
         get_unidades_proyecto_attributes,
+        get_unidades_proyecto_dashboard,
         get_unidades_proyecto_summary,
         validate_unidades_proyecto_collection,
     )
@@ -41,11 +42,14 @@ except ImportError as e:
     async def get_all_unidades_proyecto_simple(limit=None):
         return {"success": False, "error": "Unidades proyecto operations not available", "data": [], "count": 0}
     
-    async def get_unidades_proyecto_geometry():
+    async def get_unidades_proyecto_geometry(filters=None):
         return {"success": False, "error": "Unidades proyecto operations not available", "data": [], "count": 0}
     
-    async def get_unidades_proyecto_attributes():
+    async def get_unidades_proyecto_attributes(filters=None, limit=None, offset=None):
         return {"success": False, "error": "Unidades proyecto operations not available", "data": [], "count": 0}
+    
+    async def get_unidades_proyecto_dashboard(filters=None):
+        return {"success": False, "error": "Unidades proyecto operations not available", "dashboard": {}}
     
     async def get_unidades_proyecto_summary():
         return {"success": False, "error": "Unidades proyecto operations not available"}
@@ -63,6 +67,7 @@ __all__ = [
     "get_all_unidades_proyecto_simple",
     "get_unidades_proyecto_geometry",
     "get_unidades_proyecto_attributes",
+    "get_unidades_proyecto_dashboard",
     "get_unidades_proyecto_summary",
     "validate_unidades_proyecto_collection",
     
