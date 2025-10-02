@@ -97,6 +97,56 @@ def initialize_firebase_with_service_account():
         print(f"✅ Service Account email: {creds_data.get('client_email')}")
         print(f"✅ Project ID in SA: {creds_data.get('project_id')}")
         
+        # FIX: Handle private_key formatting issues (ENHANCED)
+        private_key = creds_data.get('private_key', '')
+        if private_key:
+            print(f"🔧 Original private key length: {len(private_key)}")
+            print(f"🔧 Private key preview: {private_key[:50]}...")
+            
+            # Multiple fixes for private key formatting
+            original_key = private_key
+            
+            # Fix 1: Replace literal \n with actual newlines
+            if '\\n' in private_key and '\n' not in private_key:
+                print("🔧 Converting literal \\n to actual newlines...")
+                private_key = private_key.replace('\\n', '\n')
+                
+            # Fix 2: Handle double-escaped newlines
+            elif '\\\\n' in private_key:
+                print("🔧 Converting double-escaped \\\\n to newlines...")
+                private_key = private_key.replace('\\\\n', '\n')
+                
+            # Fix 3: Already has proper newlines but might have extra escaping
+            elif '\n' in private_key and '\\n' in private_key:
+                print("🔧 Cleaning mixed newline formats...")
+                private_key = private_key.replace('\\n', '\n')
+            
+            # Update the credential data
+            creds_data['private_key'] = private_key
+            
+            print(f"🔧 Fixed private key length: {len(private_key)}")
+            
+            # Validate private key format
+            if not private_key.startswith('-----BEGIN'):
+                print("❌ Private key doesn't start with -----BEGIN")
+                print(f"❌ Actually starts with: {private_key[:20]}")
+                raise Exception("Invalid private key format: missing BEGIN marker")
+            
+            if not private_key.rstrip().endswith('-----'):
+                print("❌ Private key doesn't end with ----- marker")
+                print(f"❌ Actually ends with: {private_key[-20:]}")
+                raise Exception("Invalid private key format: missing END marker")
+            
+            # Check for proper RSA structure
+            if 'BEGIN PRIVATE KEY' in private_key:
+                print("✅ PKCS#8 format private key detected")
+            elif 'BEGIN RSA PRIVATE KEY' in private_key:
+                print("✅ RSA format private key detected")
+            else:
+                print("⚠️ Unknown private key format")
+            
+            print("✅ Private key format validated and fixed")
+        
         # Initialize Firebase
         cred = credentials.Certificate(creds_data)
         app = firebase_admin.initialize_app(cred, {

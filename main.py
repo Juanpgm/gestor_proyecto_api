@@ -247,14 +247,28 @@ async def railway_debug():
                 required_fields = ['type', 'project_id', 'private_key', 'client_email']
                 missing_fields = [f for f in required_fields if not creds_data.get(f)]
                 
+                # Validate private key format
+                private_key = creds_data.get("private_key", "")
+                private_key_issues = []
+                
+                if private_key:
+                    if '\\n' in private_key and '\n' not in private_key:
+                        private_key_issues.append("needs_line_break_fix")
+                    if not private_key.startswith('-----BEGIN'):
+                        private_key_issues.append("missing_begin_marker")
+                    if not private_key.rstrip().endswith('-----'):
+                        private_key_issues.append("missing_end_marker")
+                
                 sa_test = {
                     "status": "success",
                     "method": method_used,
                     "client_email": creds_data.get("client_email", "missing"),
                     "project_id": creds_data.get("project_id", "missing"),
-                    "has_private_key": bool(creds_data.get("private_key")),
+                    "has_private_key": bool(private_key),
+                    "private_key_length": len(private_key) if private_key else 0,
+                    "private_key_issues": private_key_issues,
                     "missing_fields": missing_fields,
-                    "valid": len(missing_fields) == 0
+                    "valid": len(missing_fields) == 0 and len(private_key_issues) == 0
                 }
             except Exception as e:
                 sa_test = {

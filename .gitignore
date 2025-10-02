@@ -214,3 +214,4 @@ railway_troubleshooter.py
 railway_monitor.py
 railway_test.py
 quick_test.py
+*.json
