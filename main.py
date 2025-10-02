@@ -216,33 +216,52 @@ async def railway_debug():
             "FIRESTORE_TIMEOUT": os.getenv("FIRESTORE_TIMEOUT", "NOT_SET")
         }
         
-        # Test de decodificación de Service Account
+        # Test de decodificación de Service Account (mejorado)
         sa_test = {"status": "not_tested"}
         sa_key = os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY")
         if sa_key:
             try:
                 import json
                 import base64
-                if sa_key.startswith("{"):
+                
+                creds_data = None
+                method_used = "unknown"
+                
+                # Method 1: Plain JSON
+                if sa_key.strip().startswith("{"):
                     creds_data = json.loads(sa_key)
-                    sa_test = {
-                        "status": "success_plain_json",
-                        "client_email": creds_data.get("client_email", "unknown"),
-                        "project_id": creds_data.get("project_id", "unknown")
-                    }
+                    method_used = "plain_json"
                 else:
-                    decoded = base64.b64decode(sa_key).decode()
-                    creds_data = json.loads(decoded)
-                    sa_test = {
-                        "status": "success_base64_decoded",
-                        "client_email": creds_data.get("client_email", "unknown"),
-                        "project_id": creds_data.get("project_id", "unknown")
-                    }
+                    # Method 2: Base64
+                    try:
+                        decoded = base64.b64decode(sa_key).decode()
+                        creds_data = json.loads(decoded)
+                        method_used = "base64_standard"
+                    except:
+                        # Method 3: URL-safe Base64
+                        decoded = base64.urlsafe_b64decode(sa_key).decode()
+                        creds_data = json.loads(decoded)
+                        method_used = "base64_urlsafe"
+                
+                # Validate required fields
+                required_fields = ['type', 'project_id', 'private_key', 'client_email']
+                missing_fields = [f for f in required_fields if not creds_data.get(f)]
+                
+                sa_test = {
+                    "status": "success",
+                    "method": method_used,
+                    "client_email": creds_data.get("client_email", "missing"),
+                    "project_id": creds_data.get("project_id", "missing"),
+                    "has_private_key": bool(creds_data.get("private_key")),
+                    "missing_fields": missing_fields,
+                    "valid": len(missing_fields) == 0
+                }
             except Exception as e:
                 sa_test = {
                     "status": "failed",
                     "error": str(e),
-                    "error_type": type(e).__name__
+                    "error_type": type(e).__name__,
+                    "key_preview": sa_key[:50] + "..." if len(sa_key) > 50 else sa_key
                 }
         
         # Test Firebase directly
