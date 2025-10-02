@@ -292,11 +292,38 @@ def create_credentials_for_environment(env: str, project_key: str = 'default'):
     
     print(f"🔍 DEBUG: Environment detected: {env}, Project: {project_key}")
     
-    # Priority 1: Production environments - Service Account from env vars (most secure for deployment)
+    # Priority 1: Production environments - Workload Identity Federation first, then Service Account
     if env in ['railway', 'vercel', 'heroku', 'gcp']:
         print(f"🚀 PRODUCTION mode for {env} - Project: {project_key}")
         
-        # Try service account credentials for this specific project
+        # Priority 1a: Try Workload Identity Federation (most secure)
+        try:
+            # Check if we have Workload Identity credentials JSON
+            import os
+            wif_creds_json = os.getenv('GOOGLE_APPLICATION_CREDENTIALS_JSON')
+            if wif_creds_json:
+                import json
+                import tempfile
+                # Create temporary file with WIF credentials
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+                    if isinstance(wif_creds_json, str):
+                        f.write(wif_creds_json)
+                    else:
+                        json.dump(wif_creds_json, f)
+                    temp_path = f.name
+                
+                # Set environment variable for google-auth
+                os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = temp_path
+                
+                # Use Application Default Credentials with WIF
+                adc_creds = credentials.ApplicationDefault()
+                print(f"✅ Using Workload Identity Federation for {project_key}")
+                return adc_creds
+                
+        except Exception as wif_error:
+            print(f"⚠️ Workload Identity Federation not available for {project_key}: {wif_error}")
+        
+        # Priority 1b: Fallback to service account credentials
         service_creds = create_service_account_credentials(project_key)
         if service_creds:
             try:
