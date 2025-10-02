@@ -1,7 +1,25 @@
 """
 Firebase Auto-Configuration - Functional Programming Approach
 Detects environment automatically and configures Firebase for both local and Railway deployment
-Integrates with Google Workload Identity Federation auto-setup
+Integrates with Google Workload Iden    print(f"🔧 Creating credentials for {env} environment")
+    
+    # Prioridad 1: Service account desde variables de entorno PRIMERO
+    service_creds = create_service_account_credentials()
+    if service_creds:
+        try:
+            creds = credentials.Certificate(service_creds)
+            print("✅ Using service account from environment variables")
+            return creds
+        except Exception as e:
+            print(f"⚠️ Service account env failed: {e}")
+    
+    # Prioridad 2: Application Default Credentials
+    try:
+        creds = credentials.ApplicationDefault()
+        print("✅ Using Application Default Credentials")
+        return creds
+    except Exception as e:
+        print(f"⚠️ ADC not available: {e}")o-setup
 Eliminates all duplicated and obsolete logic
 """
 
@@ -85,50 +103,46 @@ def get_project_config(project_key: str = 'default') -> Dict[str, str]:
 def check_adc_authentication() -> tuple[bool, str]:
     """Check if Application Default Credentials are configured"""
     try:
-        import subprocess
-        
-        # Check if gcloud is configured
-        result = subprocess.run(
-            ['gcloud', 'config', 'get-value', 'project'],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=10
-        )
-        
-        project_id = result.stdout.strip()
-        if project_id and project_id != 'None':
-            return True, project_id
-        else:
-            return False, "No default project configured"
-            
-    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
-        return False, "gcloud not configured or not available"
+        # Test ADC directly with firebase-admin
+        from firebase_admin import credentials
+        creds = credentials.ApplicationDefault()
+        return True, "ADC available"
+    except Exception as e:
+        try:
+            # Fallback: check gcloud
+            import subprocess
+            result = subprocess.run(
+                ['gcloud', 'config', 'get-value', 'project'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return True, result.stdout.strip()
+        except:
+            pass
+        return False, f"ADC not available: {e}"
 
 def auto_setup_firebase_if_needed() -> bool:
     """Check if Firebase can use ADC (Application Default Credentials)"""
     try:
-        # Priority 1: Check ADC first (most secure and automatic)
-        adc_available, project_or_message = check_adc_authentication()
+        # Test ADC directly
+        adc_available, message = check_adc_authentication()
         if adc_available:
-            print(f"✅ Using Application Default Credentials for project: {project_or_message}")
+            print(f"✅ Application Default Credentials available: {message}")
             return True
         
-        # Priority 2: Check for service account file
+        # Check for service account file
         if os.path.exists('firebase-service-account.json'):
-            print("✅ Using service account file: firebase-service-account.json")
+            print("✅ Service account file found")
             return True
         
-        # Priority 3: Check environment variables
-        if all(os.getenv(var) for var in ['FIREBASE_PROJECT_ID', 'FIREBASE_CLIENT_EMAIL']):
-            print("✅ Using environment variables for Firebase authentication")
+        # Check environment variables
+        if os.getenv('FIREBASE_SERVICE_ACCOUNT_KEY'):
+            print("✅ Service account key in environment")
             return True
         
-        # No authentication method available
-        print("⚠️ Firebase not configured. Recommended setup:")
-        print("   🚀 EASIEST: gcloud auth application-default login")
-        print("   📋 Alternative: Set environment variables")
-        print("   📁 Alternative: Create firebase-service-account.json file")
+        print(f"⚠️ No Firebase credentials found: {message}")
         return False
                 
     except Exception as e:
@@ -230,6 +244,8 @@ def create_credentials_for_environment(env: str, project_key: str = 'default'):
             print(f"⚠️ Service account file failed: {e}")
     
     print("❌ No valid credentials found")
+    print("💡 Please set FIREBASE_SERVICE_ACCOUNT_KEY environment variable")
+    print("💡 Or run: gcloud auth application-default login")
     return None
 
 # === FIREBASE INITIALIZATION ===
@@ -246,14 +262,19 @@ def initialize_firebase_app(project_key: str = 'default'):
             pass  # App doesn't exist, create it
         
         config = get_project_config(project_key)
-        creds = create_credentials_for_environment(config['environment'], project_key)
         
-        if not creds:
-            print("❌ No credentials found. Please configure:")
-            print("   1. gcloud auth application-default login")
-            print("   2. Set FIREBASE_SERVICE_ACCOUNT_KEY environment variable")
-            print("   3. Create firebase-service-account.json file")
-            return None
+        # Test ADC first directly
+        from firebase_admin import credentials
+        try:
+            creds = credentials.ApplicationDefault()
+            print("✅ Using Application Default Credentials")
+        except Exception as adc_error:
+            print(f"⚠️ ADC failed: {adc_error}")
+            creds = create_credentials_for_environment(config['environment'], project_key)
+            if not creds:
+                print("❌ No credentials found. Please run:")
+                print("   gcloud auth application-default login")
+                return None
         
         # Initialize with project config
         app = firebase_admin.initialize_app(creds, {
