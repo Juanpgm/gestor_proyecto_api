@@ -7,9 +7,9 @@ fastapi==0.116.2
 uvicorn[standard]==0.32.0
 
 # Firebase Admin SDK con todas las dependencias
-firebase-admin==6.5.0
-google-cloud-firestore==2.19.0
-google-auth==2.35.0
+firebase-admin==7.1.0
+google-cloud-firestore==2.21.0
+google-auth==2.40.3
 google-api-python-client==2.183.0
 
 # Configuración
