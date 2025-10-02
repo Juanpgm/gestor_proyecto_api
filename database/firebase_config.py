@@ -7,6 +7,7 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 import json
 import base64
+import binascii
 import logging
 
 # Configure logging
@@ -43,8 +44,18 @@ def initialize_with_service_account():
         raise Exception("FIREBASE_SERVICE_ACCOUNT_KEY environment variable not set")
     
     try:
+        # Clean the Base64 string (remove whitespace, newlines)
+        sa_key_clean = sa_key.strip().replace('\n', '').replace('\r', '').replace(' ', '')
+        logger.info(f"🔑 Service Account Key length: {len(sa_key_clean)} characters")
+        
+        # Add padding if necessary
+        missing_padding = len(sa_key_clean) % 4
+        if missing_padding:
+            sa_key_clean += '=' * (4 - missing_padding)
+            logger.info(f"🔧 Added {4 - missing_padding} padding characters")
+        
         # Decode Base64 service account
-        decoded_key = base64.b64decode(sa_key).decode('utf-8')
+        decoded_key = base64.b64decode(sa_key_clean).decode('utf-8')
         creds_data = json.loads(decoded_key)
         
         logger.info(f"✅ Service Account: {creds_data.get('client_email')}")
@@ -56,6 +67,13 @@ def initialize_with_service_account():
         logger.info("🎉 Firebase initialized with Service Account")
         return app
         
+    except binascii.Error as e:
+        logger.error(f"❌ Base64 decode error: {e}")
+        logger.error(f"Key preview: {sa_key[:50]}...")
+        raise Exception(f"Invalid Base64 format: {e}")
+    except json.JSONDecodeError as e:
+        logger.error(f"❌ JSON decode error: {e}")
+        raise Exception(f"Invalid JSON in Service Account: {e}")
     except Exception as e:
         logger.error(f"❌ Service Account initialization failed: {e}")
         raise
