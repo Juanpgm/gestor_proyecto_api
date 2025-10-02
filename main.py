@@ -202,80 +202,36 @@ async def ping():
 
 @app.get("/debug/railway", tags=["General"])
 async def railway_debug():
-    """Debug específico para Railway - Diagnóstico completo"""
+    """Debug específico para Railway - Diagnóstico simplificado"""
     try:
         # Variables de entorno
         env_info = {
             "FIREBASE_PROJECT_ID": os.getenv("FIREBASE_PROJECT_ID", "NOT_SET"),
             "HAS_FIREBASE_SERVICE_ACCOUNT_KEY": bool(os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY")),
-            "SERVICE_ACCOUNT_KEY_LENGTH": len(os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY", "")),
-            "ENVIRONMENT": os.getenv("ENVIRONMENT", "NOT_SET"),
-            "PORT": os.getenv("PORT", "NOT_SET"),
             "RAILWAY_ENVIRONMENT": os.getenv("RAILWAY_ENVIRONMENT", "NOT_SET"),
-            "FIRESTORE_BATCH_SIZE": os.getenv("FIRESTORE_BATCH_SIZE", "NOT_SET"),
-            "FIRESTORE_TIMEOUT": os.getenv("FIRESTORE_TIMEOUT", "NOT_SET")
+            "PORT": os.getenv("PORT", "NOT_SET")
         }
         
-        # Test de decodificación de Service Account (mejorado)
+        # Test de Service Account
         sa_test = {"status": "not_tested"}
-        sa_key = os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY")
-        if sa_key:
+        if os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY"):
             try:
                 import json
                 import base64
                 
-                creds_data = None
-                method_used = "unknown"
-                
-                # Method 1: Plain JSON
-                if sa_key.strip().startswith("{"):
-                    creds_data = json.loads(sa_key)
-                    method_used = "plain_json"
-                else:
-                    # Method 2: Base64
-                    try:
-                        decoded = base64.b64decode(sa_key).decode()
-                        creds_data = json.loads(decoded)
-                        method_used = "base64_standard"
-                    except:
-                        # Method 3: URL-safe Base64
-                        decoded = base64.urlsafe_b64decode(sa_key).decode()
-                        creds_data = json.loads(decoded)
-                        method_used = "base64_urlsafe"
-                
-                # Validate required fields
-                required_fields = ['type', 'project_id', 'private_key', 'client_email']
-                missing_fields = [f for f in required_fields if not creds_data.get(f)]
-                
-                # Validate private key format
-                private_key = creds_data.get("private_key", "")
-                private_key_issues = []
-                
-                if private_key:
-                    if '\\n' in private_key and '\n' not in private_key:
-                        private_key_issues.append("needs_line_break_fix")
-                    if not private_key.startswith('-----BEGIN'):
-                        private_key_issues.append("missing_begin_marker")
-                    if not private_key.rstrip().endswith('-----'):
-                        private_key_issues.append("missing_end_marker")
+                decoded = base64.b64decode(os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY")).decode('utf-8')
+                creds_data = json.loads(decoded)
                 
                 sa_test = {
                     "status": "success",
-                    "method": method_used,
                     "client_email": creds_data.get("client_email", "missing"),
                     "project_id": creds_data.get("project_id", "missing"),
-                    "has_private_key": bool(private_key),
-                    "private_key_length": len(private_key) if private_key else 0,
-                    "private_key_issues": private_key_issues,
-                    "missing_fields": missing_fields,
-                    "valid": len(missing_fields) == 0 and len(private_key_issues) == 0
+                    "has_private_key": bool(creds_data.get("private_key"))
                 }
             except Exception as e:
                 sa_test = {
                     "status": "failed",
-                    "error": str(e),
-                    "error_type": type(e).__name__,
-                    "key_preview": sa_key[:50] + "..." if len(sa_key) > 50 else sa_key
+                    "error": str(e)
                 }
         
         # Test Firebase directly

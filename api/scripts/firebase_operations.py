@@ -36,7 +36,7 @@ async def get_collections_info() -> Dict[str, Any]:
         }
     try:
         firebase_manager = FirebaseManager()
-        db = firebase_manager.get_firestore_client()
+        db = firebase_manager.get_client()
         if db is None:
             raise Exception("No se pudo conectar a Firestore")
         
@@ -124,7 +124,7 @@ async def test_firebase_connection() -> Dict[str, Any]:
     """
     try:
         firebase_manager = FirebaseManager()
-        db = firebase_manager.get_firestore_client()
+        db = firebase_manager.get_client()
         if db is None:
             return {
                 "connected": False,

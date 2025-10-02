@@ -1,186 +1,91 @@
 """
-Firebase Configuration - Workload Identity Federation Priority
+Firebase Configuration - Clean and Simple
+Environment-aware authentication: Railway (Service Account) vs Local (ADC)
 """
 import os
 import firebase_admin
 from firebase_admin import credentials, firestore
 import json
 import base64
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID", "unidad-cumplimiento-aa245")
 
 def is_railway_environment():
     """Detect if we're running in Railway"""
-    railway_indicators = [
-        os.getenv("RAILWAY_ENVIRONMENT"),
-        os.getenv("RAILWAY_PROJECT_ID"),
-        os.getenv("RAILWAY_SERVICE_ID"),
-        os.getenv("NIXPACKS_METADATA")  # Railway uses Nixpacks
-    ]
-    return any(railway_indicators)
+    return os.getenv("RAILWAY_ENVIRONMENT") is not None
 
 def initialize_firebase():
+    """Initialize Firebase based on environment"""
     try:
         return firebase_admin.get_app()
     except ValueError:
         pass
     
-    is_railway = is_railway_environment()
-    print(f"🚀 Initializing Firebase: {PROJECT_ID}")
-    print(f"🌍 Railway environment: {'YES' if is_railway else 'NO'}")
+    logger.info(f"🚀 Initializing Firebase: {PROJECT_ID}")
     
-    # RAILWAY PRIORITY: Service Account only
-    if is_railway:
-        print("🚂 RAILWAY DETECTED - Using Service Account authentication")
-        return initialize_firebase_with_service_account()
-    
-    # LOCAL PRIORITY: Workload Identity Federation (ADC) first
-    print("🏠 LOCAL ENVIRONMENT - Trying Workload Identity Federation")
-    try:
-        cred = credentials.ApplicationDefault()
-        app = firebase_admin.initialize_app(cred, {"projectId": PROJECT_ID})
-        print("✅ Using Application Default Credentials (Workload Identity)")
-        return app
-    except Exception as e:
-        print(f"⚠️ ADC failed: {e}")
-        print("🔄 Fallback to Service Account...")
-        return initialize_firebase_with_service_account()
+    if is_railway_environment():
+        logger.info("🚂 Railway environment - using Service Account")
+        return initialize_with_service_account()
+    else:
+        logger.info("💻 Local environment - using Application Default Credentials")
+        return initialize_with_adc()
 
-def initialize_firebase_with_service_account():
-    """Initialize Firebase with Service Account - optimized for Railway"""
+def initialize_with_service_account():
+    """Initialize Firebase with Service Account (Railway)"""
     sa_key = os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY")
     
     if not sa_key:
-        print("❌ FIREBASE_SERVICE_ACCOUNT_KEY not found")
-        print("💡 Set this environment variable in Railway dashboard")
-        raise Exception("No Service Account Key available")
-    
-    print(f"🔑 Service Account Key found (length: {len(sa_key)})")
+        raise Exception("FIREBASE_SERVICE_ACCOUNT_KEY environment variable not set")
     
     try:
-        # Try different parsing methods
-        creds_data = None
+        # Decode Base64 service account
+        decoded_key = base64.b64decode(sa_key).decode('utf-8')
+        creds_data = json.loads(decoded_key)
         
-        # Method 1: Plain JSON
-        if sa_key.strip().startswith("{"):
-            print("📝 Parsing as plain JSON")
-            creds_data = json.loads(sa_key)
-            
-        # Method 2: Base64 encoded
-        else:
-            print("🔓 Decoding from Base64")
-            try:
-                decoded = base64.b64decode(sa_key).decode('utf-8')
-                creds_data = json.loads(decoded)
-            except Exception as b64_error:
-                print(f"❌ Base64 decode failed: {b64_error}")
-                # Method 3: Maybe it's URL-safe base64
-                try:
-                    decoded = base64.urlsafe_b64decode(sa_key).decode('utf-8')
-                    creds_data = json.loads(decoded)
-                    print("✅ Decoded with URL-safe Base64")
-                except Exception as url_b64_error:
-                    print(f"❌ URL-safe Base64 also failed: {url_b64_error}")
-                    raise
-        
-        if not creds_data:
-            raise Exception("Could not parse Service Account credentials")
-        
-        # Validate required fields
-        required_fields = ['type', 'project_id', 'private_key', 'client_email']
-        missing_fields = [field for field in required_fields if not creds_data.get(field)]
-        
-        if missing_fields:
-            print(f"❌ Missing required fields: {missing_fields}")
-            raise Exception(f"Invalid Service Account: missing {missing_fields}")
-        
-        print(f"✅ Service Account email: {creds_data.get('client_email')}")
-        print(f"✅ Project ID in SA: {creds_data.get('project_id')}")
-        
-        # FIX: Handle private_key formatting issues (ENHANCED)
-        private_key = creds_data.get('private_key', '')
-        if private_key:
-            print(f"🔧 Original private key length: {len(private_key)}")
-            print(f"🔧 Private key preview: {private_key[:50]}...")
-            
-            # Multiple fixes for private key formatting
-            original_key = private_key
-            
-            # Fix 1: Replace literal \n with actual newlines
-            if '\\n' in private_key and '\n' not in private_key:
-                print("🔧 Converting literal \\n to actual newlines...")
-                private_key = private_key.replace('\\n', '\n')
-                
-            # Fix 2: Handle double-escaped newlines
-            elif '\\\\n' in private_key:
-                print("🔧 Converting double-escaped \\\\n to newlines...")
-                private_key = private_key.replace('\\\\n', '\n')
-                
-            # Fix 3: Already has proper newlines but might have extra escaping
-            elif '\n' in private_key and '\\n' in private_key:
-                print("🔧 Cleaning mixed newline formats...")
-                private_key = private_key.replace('\\n', '\n')
-            
-            # Update the credential data
-            creds_data['private_key'] = private_key
-            
-            print(f"🔧 Fixed private key length: {len(private_key)}")
-            
-            # Validate private key format
-            if not private_key.startswith('-----BEGIN'):
-                print("❌ Private key doesn't start with -----BEGIN")
-                print(f"❌ Actually starts with: {private_key[:20]}")
-                raise Exception("Invalid private key format: missing BEGIN marker")
-            
-            if not private_key.rstrip().endswith('-----'):
-                print("❌ Private key doesn't end with ----- marker")
-                print(f"❌ Actually ends with: {private_key[-20:]}")
-                raise Exception("Invalid private key format: missing END marker")
-            
-            # Check for proper RSA structure
-            if 'BEGIN PRIVATE KEY' in private_key:
-                print("✅ PKCS#8 format private key detected")
-            elif 'BEGIN RSA PRIVATE KEY' in private_key:
-                print("✅ RSA format private key detected")
-            else:
-                print("⚠️ Unknown private key format")
-            
-            print("✅ Private key format validated and fixed")
+        logger.info(f"✅ Service Account: {creds_data.get('client_email')}")
         
         # Initialize Firebase
         cred = credentials.Certificate(creds_data)
-        app = firebase_admin.initialize_app(cred, {
-            'projectId': creds_data.get('project_id', PROJECT_ID)
-        })
+        app = firebase_admin.initialize_app(cred, {'projectId': PROJECT_ID})
         
-        print("🎉 Firebase initialized successfully with Service Account")
+        logger.info("🎉 Firebase initialized with Service Account")
         return app
         
-    except json.JSONDecodeError as json_error:
-        print(f"❌ JSON parsing failed: {json_error}")
-        print("💡 Check that FIREBASE_SERVICE_ACCOUNT_KEY contains valid JSON")
-        raise
     except Exception as e:
-        print(f"❌ Service Account initialization failed: {e}")
-        print(f"❌ Error type: {type(e).__name__}")
+        logger.error(f"❌ Service Account initialization failed: {e}")
         raise
 
+def initialize_with_adc():
+    """Initialize Firebase with Application Default Credentials (Local)"""
+    try:
+        cred = credentials.ApplicationDefault()
+        app = firebase_admin.initialize_app(cred, {'projectId': PROJECT_ID})
+        
+        logger.info("✅ Firebase initialized with Application Default Credentials")
+        return app
+        
+    except Exception as e:
+        logger.error(f"❌ ADC initialization failed: {e}")
+        # Fallback to Service Account if available
+        if os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY"):
+            logger.info("🔄 Falling back to Service Account...")
+            return initialize_with_service_account()
+        else:
+            raise
+
 def get_firestore_client():
+    """Get Firestore client"""
     initialize_firebase()
     return firestore.client()
 
+# Backward compatibility
 def get_default_client():
     return get_firestore_client()
-
-# Constantes para compatibilidad
-FIREBASE_AVAILABLE = True
-
-try:
-    import firebase_admin
-    from firebase_admin import credentials, firestore
-    FIREBASE_AVAILABLE = True
-except ImportError:
-    FIREBASE_AVAILABLE = False
 
 class FirebaseManager:
     @staticmethod
@@ -189,48 +94,30 @@ class FirebaseManager:
     
     @staticmethod  
     def test_connection():
+        """Test Firebase connection"""
         try:
-            # Get Firestore client
             client = get_firestore_client()
-            if not client:
-                return {"connected": False, "message": "Could not get Firestore client"}
             
-            # Test 1: Create collection reference (basic test)
-            test_ref = client.collection("_connection_test")
-            if not test_ref:
-                return {"connected": False, "message": "Could not create collection reference"}
+            # Test basic connectivity
+            collections = list(client.collections())
             
-            # Test 2: Try to read an actual collection (more thorough)
-            try:
-                collections = list(client.collections())
-                collection_count = len(collections)
-                
-                return {
-                    "connected": True, 
-                    "message": f"Connected to {PROJECT_ID}",
-                    "collections_found": collection_count,
-                    "environment": "railway" if is_railway_environment() else "local"
-                }
-            except Exception as collection_error:
-                # If we can't list collections, try a simpler test
-                print(f"⚠️ Collection listing failed: {collection_error}")
-                return {
-                    "connected": True, 
-                    "message": f"Basic connection to {PROJECT_ID} (limited access)",
-                    "warning": str(collection_error)
-                }
+            return {
+                "connected": True, 
+                "message": f"Connected to {PROJECT_ID}",
+                "collections_found": len(collections),
+                "environment": "railway" if is_railway_environment() else "local"
+            }
                 
         except Exception as e:
             return {
                 "connected": False, 
                 "message": str(e),
-                "error_type": type(e).__name__,
                 "environment": "railway" if is_railway_environment() else "local"
             }
     
     @staticmethod
     def is_available():
-        return FIREBASE_AVAILABLE
+        return True
     
     @staticmethod
     def setup():
@@ -241,7 +128,9 @@ class FirebaseManager:
         except Exception:
             return False
 
+# For backward compatibility
+FIREBASE_AVAILABLE = True
+
 if __name__ == "__main__":
     status = FirebaseManager.test_connection()
     print(f"Status: {status}")
-
