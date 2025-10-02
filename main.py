@@ -17,9 +17,9 @@ from datetime import datetime
 # Importar Firebase con configuración automática
 try:
     from database.firebase_config import FirebaseManager, PROJECT_ID, FIREBASE_AVAILABLE
-    print("Firebase auto-config loaded successfully")
+    print(f"✅ Firebase auto-config loaded successfully - FIREBASE_AVAILABLE: {FIREBASE_AVAILABLE}")
 except Exception as e:
-    print(f"Warning: Firebase import failed: {e}")
+    print(f"❌ Warning: Firebase import failed: {e}")
     FIREBASE_AVAILABLE = False
     PROJECT_ID = "your-project-id"
     
@@ -46,9 +46,12 @@ try:
         validate_unidades_proyecto_collection,
     )
     SCRIPTS_AVAILABLE = True
+    print(f"✅ Scripts imported successfully - SCRIPTS_AVAILABLE: {SCRIPTS_AVAILABLE}")
 except Exception as e:
-    print(f"Warning: Scripts import failed: {e}")
+    print(f"❌ Warning: Scripts import failed: {e}")
     SCRIPTS_AVAILABLE = False
+
+
 
 # Configurar el lifespan de la aplicación
 @asynccontextmanager
@@ -149,16 +152,18 @@ async def read_root():
         "message": "Gestor de Proyectos API",
         "version": "1.0.0",
         "timestamp": datetime.now().isoformat(),
+        "last_updated": "2025-10-02T00:00:00Z",  # API last update date
         "firebase_project": PROJECT_ID,
         "status": "running",
         "documentation": "/docs",
         "endpoints": {
             "general": ["/", "/health", "/ping"],
-            "firebase": ["/firebase/status", "/firebase/collections"],
+            "firebase": ["/firebase/status", "/firebase/collections"], 
             "unidades_proyecto": [
                 "/unidades-proyecto/geometry", 
                 "/unidades-proyecto/attributes",
-                "/unidades-proyecto/dashboard"
+                "/unidades-proyecto/dashboard",
+                "/unidades-proyecto/filters"
             ]
         },
         "new_features": {
@@ -168,14 +173,19 @@ async def read_root():
                 "comuna_corregimiento", "barrio_vereda", "nombre_up", "direccion",
                 "referencia_contrato", "referencia_proceso", "include_bbox", "limit", "offset"
             ],
-            "dashboard": "Nuevo endpoint de dashboard con métricas agregadas y análisis estadístico"
+            "dashboard": "Nuevo endpoint de dashboard con métricas agregadas y análisis estadístico",
+            "workload_identity": "Autenticación automática usando Google Cloud Workload Identity Federation"
         }
     }
 
 @app.get("/ping", tags=["General"])
 async def ping():
     """Health check super simple para Railway"""
-    return {"status": "ok", "timestamp": datetime.now().isoformat()}
+    return {
+        "status": "ok", 
+        "timestamp": datetime.now().isoformat(),
+        "last_updated": "2025-10-02T00:00:00Z"  # Endpoint creation/update date
+    }
 
 @app.get("/health", tags=["General"])
 async def health_check():
@@ -194,17 +204,20 @@ async def health_check():
         
         # Verificar Firebase usando configuración funcional
         if FIREBASE_AVAILABLE:
+            # Test default project
             firebase_status = FirebaseManager.test_connection()
             basic_response["services"]["firebase"] = firebase_status
             basic_response["services"]["scripts"] = {"available": SCRIPTS_AVAILABLE}
             
             if not firebase_status["connected"]:
                 basic_response["status"] = "degraded"
+                
         else:
             basic_response["services"]["firebase"] = {
                 "available": False, 
                 "message": "Firebase SDK not available"
             }
+
             basic_response["status"] = "degraded"
         
         return basic_response
@@ -238,6 +251,8 @@ async def firebase_status():
                 detail=f"Firebase no disponible: {connection_result.get('error', 'Error desconocido')}"
             )
         
+        # Add timestamp for endpoint tracking
+        connection_result["last_updated"] = "2025-10-02T00:00:00Z"  # Endpoint creation/update date
         return connection_result
         
     except HTTPException:
@@ -259,6 +274,8 @@ async def get_firebase_collections():
                 detail=f"Error obteniendo información de colecciones: {collections_data.get('error', 'Error desconocido')}"
             )
         
+        # Add timestamp for endpoint tracking
+        collections_data["last_updated"] = "2025-10-02T00:00:00Z"  # Endpoint creation/update date  
         return collections_data
         
     except HTTPException:
@@ -283,6 +300,8 @@ async def get_firebase_collections_summary():
                 detail=f"Error obteniendo resumen: {summary_data.get('error', 'Error desconocido')}"
             )
         
+        # Add timestamp for endpoint tracking
+        summary_data["last_updated"] = "2025-10-02T00:00:00Z"  # Endpoint creation/update date
         return summary_data
         
     except HTTPException:
@@ -343,13 +362,22 @@ async def export_geometry_for_nextjs(
     - Integración con bibliotecas cartográficas
     - Visualización masiva de geometrías
     """
-    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+    # Verificar disponibilidad de Firebase de forma dinámica
+    firebase_available = FirebaseManager.is_available()
+    print(f"🔍 DEBUG Geometry endpoint - Firebase available: {firebase_available}, Scripts available: {SCRIPTS_AVAILABLE}")
+    
+    if not firebase_available or not SCRIPTS_AVAILABLE:
         return {
             "success": False,
-            "error": "Firebase temporarily unavailable",
+            "error": f"Services unavailable - Firebase: {firebase_available}, Scripts: {SCRIPTS_AVAILABLE}",
             "data": [],
             "count": 0,
-            "type": "geometry"
+            "type": "geometry",
+            "debug": {
+                "firebase_available": firebase_available,
+                "scripts_available": SCRIPTS_AVAILABLE,
+                "project_id": PROJECT_ID
+            }
         }
     
     try:
@@ -385,6 +413,7 @@ async def export_geometry_for_nextjs(
             "collection": "unidades-proyecto",
             "filters_applied": result.get("filters_applied", {}),
             "timestamp": datetime.now().isoformat(),
+            "last_updated": "2025-10-02T00:00:00Z",  # Endpoint creation/update date
             "message": result.get("message", "Geometrías obtenidas exitosamente")
         }
         
@@ -513,6 +542,7 @@ async def export_attributes_for_nextjs(
             "filters_applied": result.get("filters_applied", {}),
             "pagination": result.get("pagination", {}),
             "timestamp": datetime.now().isoformat(),
+            "last_updated": "2025-10-02T00:00:00Z",  # Endpoint creation/update date
             "message": result.get("message", "Atributos obtenidos exitosamente")
         }
         
@@ -612,6 +642,7 @@ async def export_dashboard_for_nextjs(
             "collection": "unidades-proyecto",
             "filters_applied": filters,
             "timestamp": datetime.now().isoformat(),
+            "last_updated": "2025-10-02T00:00:00Z",  # Endpoint creation/update date
             "message": result.get("message", "Dashboard generado exitosamente")
         }
         
@@ -713,6 +744,7 @@ async def get_filters_endpoint(
             "type": "filters",
             "collection": "unidades-proyecto", 
             "timestamp": datetime.now().isoformat(),
+            "last_updated": "2025-10-02T00:00:00Z",  # Endpoint creation/update date
             "message": f"Filtros obtenidos exitosamente"
         }
         
