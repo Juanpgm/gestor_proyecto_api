@@ -1,9 +1,35 @@
-# 🔐 Script de PowerShell para configurar Workload Identity Federation para Railway
+# 🔐 Archivo de credenciales WIF generado - Copia este JSON completo como GOOGLE_APPLICATION_CREDENTIALS_JSON
 
-$PROJECT_ID = "unidad-cumplimiento-aa245"
-$POOL_ID = "railway-pool"
-$PROVIDER_ID = "railway-provider"
-$SERVICE_ACCOUNT_NAME = "railway-service"
+$WIF_CREDENTIALS = @"
+{
+  "type": "external_account",
+  "audience": "//iam.googleapis.com/projects/226627821040/locations/global/workloadIdentityPools/railway-pool/providers/railway-provider",
+  "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+  "token_url": "https://sts.googleapis.com/v1/token",
+  "service_account_impersonation_url": "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/railway-firebase@unidad-cumplimiento-aa245.iam.gserviceaccount.com:generateAccessToken",
+  "credential_source": {
+    "url": "https://railway.app/.well-known/oidc_subject_token",
+    "headers": {
+      "Authorization": "Bearer \$RAILWAY_TOKEN"
+    }
+  }
+}
+"@
+
+Write-Host "📋 CONFIGURACIÓN PARA RAILWAY:" -ForegroundColor Green
+Write-Host "===============================" -ForegroundColor Yellow
+Write-Host ""
+Write-Host "🔧 Variables a configurar en Railway Dashboard:" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "GOOGLE_CLOUD_PROJECT=unidad-cumplimiento-aa245" -ForegroundColor White
+Write-Host "FIREBASE_PROJECT_ID=unidad-cumplimiento-aa245" -ForegroundColor White
+Write-Host "FIRESTORE_BATCH_SIZE=500" -ForegroundColor White
+Write-Host "FIRESTORE_TIMEOUT=30" -ForegroundColor White
+Write-Host ""
+Write-Host "GOOGLE_APPLICATION_CREDENTIALS_JSON=" -ForegroundColor Yellow -NoNewline
+Write-Host $WIF_CREDENTIALS -ForegroundColor White
+Write-Host ""
+Write-Host "✅ ¡Ya está todo configurado!" -ForegroundColor Green
 
 Write-Host "🚀 Configurando Workload Identity Federation para Railway..." -ForegroundColor Green
 Write-Host "Proyecto: $PROJECT_ID" -ForegroundColor Yellow

@@ -43,6 +43,7 @@ RAILWAY_TOKEN_FILE=/tmp/railway-token
 ```
 
 #### Configuración alternativa simplificada:
+
 ```bash
 # Solo las variables esenciales si ya tienes WIF configurado
 GOOGLE_CLOUD_PROJECT=unidad-cumplimiento-aa245
@@ -54,10 +55,11 @@ GOOGLE_APPLICATION_CREDENTIALS_JSON=<json-completo-del-workload-identity-credent
 ### Opción 1: Workload Identity Federation (RECOMENDADO)
 
 1. **Ejecuta el script de configuración**:
+
    ```powershell
    # En PowerShell
    .\setup_workload_identity.ps1
-   
+
    # O en Bash/Linux
    chmod +x setup_workload_identity.sh
    ./setup_workload_identity.sh
