@@ -461,14 +461,10 @@ class FirebaseManager:
         try:
             import firebase_admin
             from firebase_admin import credentials, firestore
-            # Verificar si las credenciales están disponibles
-            print(f"🔍 DEBUG FirebaseManager.is_available() - firebase_admin imported successfully")
             return True
-        except ImportError as e:
-            print(f"🔍 DEBUG FirebaseManager.is_available() - Import error: {e}")
+        except ImportError:
             return False
-        except Exception as e:
-            print(f"🔍 DEBUG FirebaseManager.is_available() - Other error: {e}")
+        except Exception:
             return False
     
     @staticmethod

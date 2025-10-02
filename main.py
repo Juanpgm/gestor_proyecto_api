@@ -362,22 +362,13 @@ async def export_geometry_for_nextjs(
     - Integración con bibliotecas cartográficas
     - Visualización masiva de geometrías
     """
-    # Verificar disponibilidad de Firebase de forma dinámica
-    firebase_available = FirebaseManager.is_available()
-    print(f"🔍 DEBUG Geometry endpoint - Firebase available: {firebase_available}, Scripts available: {SCRIPTS_AVAILABLE}")
-    
-    if not firebase_available or not SCRIPTS_AVAILABLE:
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
         return {
             "success": False,
-            "error": f"Services unavailable - Firebase: {firebase_available}, Scripts: {SCRIPTS_AVAILABLE}",
+            "error": "Firebase temporarily unavailable",
             "data": [],
             "count": 0,
-            "type": "geometry",
-            "debug": {
-                "firebase_available": firebase_available,
-                "scripts_available": SCRIPTS_AVAILABLE,
-                "project_id": PROJECT_ID
-            }
+            "type": "geometry"
         }
     
     try:
