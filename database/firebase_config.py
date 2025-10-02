@@ -152,28 +152,39 @@ def auto_setup_firebase_if_needed() -> bool:
 # === FUNCTIONAL FIREBASE SETUP ===
 
 def create_service_account_credentials() -> Optional[Dict[str, Any]]:
-    """Create service account credentials - SIMPLIFIED"""
+    """Create service account credentials - SIMPLIFIED with better debugging"""
+    
+    print("🔍 Attempting to create service account credentials...")
     
     # Método 1: JSON codificado en base64 (para producción)
     for env_var in ['FIREBASE_SERVICE_ACCOUNT_KEY', 'GOOGLE_APPLICATION_CREDENTIALS_JSON']:
         encoded_key = os.getenv(env_var)
         if encoded_key:
+            print(f"🔍 Found {env_var} (length: {len(encoded_key)})")
             try:
                 import base64
                 if encoded_key.strip().startswith('{'):
                     # JSON plano
-                    return json.loads(encoded_key)
+                    print(f"✅ Decoding plain JSON from {env_var}")
+                    creds = json.loads(encoded_key)
+                    print(f"✅ Service account email: {creds.get('client_email', 'unknown')}")
+                    return creds
                 else:
                     # Base64 encoded
+                    print(f"✅ Decoding Base64 JSON from {env_var}")
                     decoded = base64.b64decode(encoded_key).decode('utf-8')
-                    return json.loads(decoded)
+                    creds = json.loads(decoded)
+                    print(f"✅ Service account email: {creds.get('client_email', 'unknown')}")
+                    return creds
             except Exception as e:
-                print(f"⚠️ Error decoding {env_var}: {e}")
+                print(f"❌ Error decoding {env_var}: {e}")
+                # Continue trying other methods
     
     # Método 2: Variables individuales
+    print("🔍 Trying individual environment variables...")
     required_vars = {
         'project_id': 'FIREBASE_PROJECT_ID',
-        'private_key_id': 'FIREBASE_PRIVATE_KEY_ID',
+        'private_key_id': 'FIREBASE_PRIVATE_KEY_ID', 
         'private_key': 'FIREBASE_PRIVATE_KEY',
         'client_email': 'FIREBASE_CLIENT_EMAIL',
         'client_id': 'FIREBASE_CLIENT_ID'
@@ -182,8 +193,11 @@ def create_service_account_credentials() -> Optional[Dict[str, Any]]:
     env_values = {}
     for key, env_var in required_vars.items():
         env_values[key] = os.getenv(env_var)
+        has_value = bool(env_values[key])
+        print(f"  {env_var}: {'✅' if has_value else '❌'}")
     
     if all(env_values.values()):
+        print("✅ All individual variables found, creating credentials")
         return {
             "type": "service_account",
             "project_id": env_values['project_id'],
@@ -197,6 +211,7 @@ def create_service_account_credentials() -> Optional[Dict[str, Any]]:
             "client_x509_cert_url": f"https://www.googleapis.com/robot/v1/metadata/x509/{env_values['client_email']}"
         }
     
+    print("❌ No valid service account credentials found")
     return None
 
 def create_application_default_credentials():
@@ -263,18 +278,28 @@ def initialize_firebase_app(project_key: str = 'default'):
         
         config = get_project_config(project_key)
         
-        # Test ADC first directly
+        # Use different credential strategies based on environment
         from firebase_admin import credentials
-        try:
-            creds = credentials.ApplicationDefault()
-            print("✅ Using Application Default Credentials")
-        except Exception as adc_error:
-            print(f"⚠️ ADC failed: {adc_error}")
+        
+        # For production environments (Railway, Vercel, etc.), use Service Account first
+        if config['environment'] in ['railway', 'vercel', 'heroku', 'gcp']:
+            print(f"🚀 Production environment ({config['environment']}) - Using Service Account")
             creds = create_credentials_for_environment(config['environment'], project_key)
             if not creds:
-                print("❌ No credentials found. Please run:")
-                print("   gcloud auth application-default login")
+                print("❌ No service account credentials found for production")
                 return None
+        else:
+            # For local development, try ADC first
+            try:
+                creds = credentials.ApplicationDefault()
+                print("✅ Using Application Default Credentials (local)")
+            except Exception as adc_error:
+                print(f"⚠️ ADC failed: {adc_error}")
+                creds = create_credentials_for_environment(config['environment'], project_key)
+                if not creds:
+                    print("❌ No credentials found. Please run:")
+                    print("   gcloud auth application-default login")
+                    return None
         
         # Initialize with project config
         app = firebase_admin.initialize_app(creds, {

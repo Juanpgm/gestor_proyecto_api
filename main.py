@@ -63,14 +63,21 @@ async def lifespan(app: FastAPI):
     print(f"Environment: {os.getenv('ENVIRONMENT', 'development')}")
     print(f"Firebase Project: {PROJECT_ID}")
     
-    # Inicializar Firebase automáticamente
+    # Inicializar Firebase automáticamente (sin fallar la app)
+    firebase_initialized = False
     if FIREBASE_AVAILABLE:
-        if FirebaseManager.setup():
-            print("Firebase initialized successfully")
-        else:
-            print("Warning: Firebase initialization failed - API will run in limited mode")
+        try:
+            firebase_initialized = FirebaseManager.setup()
+            if firebase_initialized:
+                print("✅ Firebase initialized successfully")
+            else:
+                print("⚠️ Firebase initialization failed - API will run in limited mode")
+        except Exception as e:
+            print(f"⚠️ Firebase setup error: {e} - API will run in limited mode")
     else:
-        print("Firebase not available - API running in limited mode")
+        print("⚠️ Firebase not available - API running in limited mode")
+    
+    print(f"🚀 API starting with Firebase: {'✅ Connected' if firebase_initialized else '❌ Limited mode'}")
     
     yield
     
@@ -156,6 +163,12 @@ async def read_root():
         "firebase_project": PROJECT_ID,
         "status": "running",
         "documentation": "/docs",
+        "environment_debug": {
+            "firebase_project_id": os.getenv("FIREBASE_PROJECT_ID", "NOT_SET"),
+            "has_service_account_key": bool(os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY")),
+            "environment": os.getenv("ENVIRONMENT", "NOT_SET"),
+            "port": os.getenv("PORT", "NOT_SET")
+        },
         "endpoints": {
             "general": ["/", "/health", "/ping"],
             "firebase": ["/firebase/status", "/firebase/collections"], 
@@ -187,6 +200,44 @@ async def ping():
         "last_updated": "2025-10-02T00:00:00Z"  # Endpoint creation/update date
     }
 
+@app.get("/debug/railway", tags=["General"])
+async def railway_debug():
+    """Debug específico para Railway"""
+    try:
+        env_info = {
+            "FIREBASE_PROJECT_ID": os.getenv("FIREBASE_PROJECT_ID", "NOT_SET"),
+            "HAS_FIREBASE_SERVICE_ACCOUNT_KEY": bool(os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY")),
+            "ENVIRONMENT": os.getenv("ENVIRONMENT", "NOT_SET"),
+            "PORT": os.getenv("PORT", "NOT_SET"),
+            "RAILWAY_ENVIRONMENT": os.getenv("RAILWAY_ENVIRONMENT", "NOT_SET"),
+            "FIRESTORE_BATCH_SIZE": os.getenv("FIRESTORE_BATCH_SIZE", "NOT_SET"),
+            "FIRESTORE_TIMEOUT": os.getenv("FIRESTORE_TIMEOUT", "NOT_SET")
+        }
+        
+        # Test Firebase directly
+        firebase_test = None
+        if FIREBASE_AVAILABLE:
+            try:
+                firebase_test = FirebaseManager.test_connection()
+            except Exception as e:
+                firebase_test = {"error": str(e)}
+        
+        return {
+            "status": "debug_info",
+            "timestamp": datetime.now().isoformat(),
+            "environment_variables": env_info,
+            "firebase_test": firebase_test,
+            "firebase_available": FIREBASE_AVAILABLE,
+            "scripts_available": SCRIPTS_AVAILABLE,
+            "project_id_detected": PROJECT_ID
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
 @app.get("/health", tags=["General"])
 async def health_check():
     """Verificar estado de salud de la API"""
@@ -208,6 +259,15 @@ async def health_check():
             firebase_status = FirebaseManager.test_connection()
             basic_response["services"]["firebase"] = firebase_status
             basic_response["services"]["scripts"] = {"available": SCRIPTS_AVAILABLE}
+            
+            # Debug info for Railway
+            basic_response["debug"] = {
+                "firebase_project_env": os.getenv("FIREBASE_PROJECT_ID", "NOT_SET"),
+                "has_sa_key": bool(os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY")),
+                "firebase_available": FIREBASE_AVAILABLE,
+                "scripts_available": SCRIPTS_AVAILABLE,
+                "environment": os.getenv("ENVIRONMENT", "development")
+            }
             
             if not firebase_status["connected"]:
                 basic_response["status"] = "degraded"
@@ -240,25 +300,37 @@ async def health_check():
 @app.get("/firebase/status", tags=["Firebase"])
 async def firebase_status():
     """Verificar estado de la conexión con Firebase"""
-    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
     try:
+        if not FIREBASE_AVAILABLE:
+            return {
+                "connected": False,
+                "error": "Firebase SDK not available",
+                "available": False,
+                "status": "unavailable",
+                "last_updated": "2025-10-02T00:00:00Z"
+            }
+        
+        if not SCRIPTS_AVAILABLE:
+            return {
+                "connected": False,
+                "error": "Scripts not available",
+                "available": FIREBASE_AVAILABLE,
+                "status": "limited",
+                "last_updated": "2025-10-02T00:00:00Z"
+            }
+        
         connection_result = await test_firebase_connection()
-        
-        if not connection_result["connected"]:
-            raise HTTPException(
-                status_code=503, 
-                detail=f"Firebase no disponible: {connection_result.get('error', 'Error desconocido')}"
-            )
-        
-        # Add timestamp for endpoint tracking
-        connection_result["last_updated"] = "2025-10-02T00:00:00Z"  # Endpoint creation/update date
+        connection_result["last_updated"] = "2025-10-02T00:00:00Z"
         return connection_result
         
-    except HTTPException:
-        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error verificando Firebase: {str(e)}")
+        return {
+            "connected": False,
+            "error": f"Error checking Firebase: {str(e)}",
+            "available": FIREBASE_AVAILABLE,
+            "status": "error",
+            "last_updated": "2025-10-02T00:00:00Z"
+        }
 
 @app.get("/firebase/collections", tags=["Firebase"])
 async def get_firebase_collections():
