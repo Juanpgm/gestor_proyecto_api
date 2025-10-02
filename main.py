@@ -202,17 +202,48 @@ async def ping():
 
 @app.get("/debug/railway", tags=["General"])
 async def railway_debug():
-    """Debug específico para Railway"""
+    """Debug específico para Railway - Diagnóstico completo"""
     try:
+        # Variables de entorno
         env_info = {
             "FIREBASE_PROJECT_ID": os.getenv("FIREBASE_PROJECT_ID", "NOT_SET"),
             "HAS_FIREBASE_SERVICE_ACCOUNT_KEY": bool(os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY")),
+            "SERVICE_ACCOUNT_KEY_LENGTH": len(os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY", "")),
             "ENVIRONMENT": os.getenv("ENVIRONMENT", "NOT_SET"),
             "PORT": os.getenv("PORT", "NOT_SET"),
             "RAILWAY_ENVIRONMENT": os.getenv("RAILWAY_ENVIRONMENT", "NOT_SET"),
             "FIRESTORE_BATCH_SIZE": os.getenv("FIRESTORE_BATCH_SIZE", "NOT_SET"),
             "FIRESTORE_TIMEOUT": os.getenv("FIRESTORE_TIMEOUT", "NOT_SET")
         }
+        
+        # Test de decodificación de Service Account
+        sa_test = {"status": "not_tested"}
+        sa_key = os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY")
+        if sa_key:
+            try:
+                import json
+                import base64
+                if sa_key.startswith("{"):
+                    creds_data = json.loads(sa_key)
+                    sa_test = {
+                        "status": "success_plain_json",
+                        "client_email": creds_data.get("client_email", "unknown"),
+                        "project_id": creds_data.get("project_id", "unknown")
+                    }
+                else:
+                    decoded = base64.b64decode(sa_key).decode()
+                    creds_data = json.loads(decoded)
+                    sa_test = {
+                        "status": "success_base64_decoded",
+                        "client_email": creds_data.get("client_email", "unknown"),
+                        "project_id": creds_data.get("project_id", "unknown")
+                    }
+            except Exception as e:
+                sa_test = {
+                    "status": "failed",
+                    "error": str(e),
+                    "error_type": type(e).__name__
+                }
         
         # Test Firebase directly
         firebase_test = None
@@ -226,10 +257,12 @@ async def railway_debug():
             "status": "debug_info",
             "timestamp": datetime.now().isoformat(),
             "environment_variables": env_info,
+            "service_account_test": sa_test,
             "firebase_test": firebase_test,
             "firebase_available": FIREBASE_AVAILABLE,
             "scripts_available": SCRIPTS_AVAILABLE,
-            "project_id_detected": PROJECT_ID
+            "project_id_detected": PROJECT_ID,
+            "recommendation": "Check service_account_test and firebase_test for issues"
         }
     except Exception as e:
         return {

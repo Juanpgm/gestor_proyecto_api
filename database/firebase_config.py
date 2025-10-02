@@ -15,9 +15,38 @@ def initialize_firebase():
     except ValueError:
         pass
     
+    environment = os.getenv("RAILWAY_ENVIRONMENT", "local")
     print(f"🚀 Initializing Firebase: {PROJECT_ID}")
+    print(f"🌍 Environment detected: {environment}")
     
-    # PRIORITY 1: Workload Identity Federation (ADC)
+    # RAILWAY: Use Service Account first (ADC not available)
+    if environment or os.getenv("RAILWAY_ENVIRONMENT"):
+        print("🚂 Railway environment detected - Using Service Account first")
+        sa_key = os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY")
+        if sa_key:
+            print(f"🔑 Service Account Key found (length: {len(sa_key)})")
+            try:
+                if sa_key.startswith("{"):
+                    print("📝 Parsing plain JSON key")
+                    creds_data = json.loads(sa_key)
+                else:
+                    print("🔓 Decoding Base64 key")
+                    decoded = base64.b64decode(sa_key).decode()
+                    creds_data = json.loads(decoded)
+                
+                print(f"✅ Service Account email: {creds_data.get('client_email', 'unknown')}")
+                cred = credentials.Certificate(creds_data)
+                app = firebase_admin.initialize_app(cred, {"projectId": PROJECT_ID})
+                print("✅ Railway: Firebase initialized with Service Account")
+                return app
+            except Exception as sa_e:
+                print(f"❌ Railway Service Account failed: {sa_e}")
+                print(f"❌ Error type: {type(sa_e).__name__}")
+        else:
+            print("❌ No FIREBASE_SERVICE_ACCOUNT_KEY found in Railway")
+    
+    # LOCAL: Use Workload Identity Federation (ADC)
+    print("🏠 Local environment - Trying Application Default Credentials")
     try:
         cred = credentials.ApplicationDefault()
         app = firebase_admin.initialize_app(cred, {"projectId": PROJECT_ID})
@@ -25,23 +54,6 @@ def initialize_firebase():
         return app
     except Exception as e:
         print(f"⚠️ ADC failed: {e}")
-        
-        # FALLBACK: Service Account
-        sa_key = os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY")
-        if sa_key:
-            try:
-                if sa_key.startswith("{"):
-                    creds_data = json.loads(sa_key)
-                else:
-                    creds_data = json.loads(base64.b64decode(sa_key).decode())
-                
-                cred = credentials.Certificate(creds_data)
-                app = firebase_admin.initialize_app(cred, {"projectId": PROJECT_ID})
-                print("✅ Using Service Account (fallback)")
-                return app
-            except Exception as sa_e:
-                print(f"❌ Service Account failed: {sa_e}")
-        
         print("💡 Run: gcloud auth application-default login")
         raise
 
