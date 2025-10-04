@@ -1691,7 +1691,7 @@ async def validate_session(
 
 @app.post("/auth/login", tags=["Administración y Control de Accesos"])
 async def login_user(
-    request: Request
+    login_data: UserLoginRequest
 ):
     """
     ## 🔑 Validación de Credenciales para Next.js
@@ -1739,39 +1739,9 @@ async def login_user(
     try:
         check_user_management_availability()
         
-        # Obtener credenciales del body JSON o form data
-        email = None
-        password = None
-        
-        try:
-            body = await request.json()
-            email = body.get("email")
-            password = body.get("password")
-        except Exception as json_error:
-            try:
-                form = await request.form()
-                email = form.get("email")
-                password = form.get("password")
-            except Exception as form_error:
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "success": False,
-                        "error": "Datos requeridos",
-                        "message": "Proporcione email y password en el body",
-                        "code": "CREDENTIALS_REQUIRED"
-                    }
-                )
-        
-        if not email or not password:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "success": False,
-                    "error": "Email y contraseña requeridos",
-                    "code": "CREDENTIALS_REQUIRED"
-                }
-            )
+        # Los datos ya están validados por Pydantic
+        email = login_data.email
+        password = login_data.password
         
         result = await authenticate_email_password(email, password)
         
