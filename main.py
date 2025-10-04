@@ -1737,8 +1737,6 @@ async def login_user(
     ```
     """
     try:
-        check_user_management_availability()
-        
         # Los datos ya están validados por Pydantic
         email = login_data.email
         password = login_data.password
