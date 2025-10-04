@@ -1690,107 +1690,65 @@ async def validate_session(
         )
 
 @app.post("/auth/login", tags=["Administración y Control de Accesos"])
-async def login_user(
-    login_data: UserLoginRequest
-):
+async def login_user(login_data: UserLoginRequest):
     """
-    ## 🔑 Validación de Credenciales para Next.js
+    ## 🔑 Login Simple
     
-    **IMPORTANTE**: Este endpoint NO realiza autenticación real por seguridad.
-    Solo valida que las credenciales existan y están activas en el sistema.
-    La autenticación real debe hacerse en el frontend con Firebase Auth SDK.
-    
-    ### ✅ Casos de uso:
-    - Validar credenciales antes de mostrar el formulario de login en Next.js
-    - Verificar existencia del usuario antes de redirigir a Firebase Auth
-    - Obtener información del usuario para pre-poblar forms
-    
-    ### 🔧 Proceso:
-    1. Valida formato de email
-    2. Verifica existencia del usuario en Firebase Auth
-    3. Confirma que la cuenta está activa
-    4. Retorna datos del usuario (SIN autenticar)
-    
-    ### 🛡️ Seguridad:
-    - Firebase Admin SDK NO puede verificar contraseñas
-    - La autenticación real DEBE hacerse en el frontend
-    - Este endpoint solo valida la existencia y estado del usuario
-    
-    ### 📝 Ejemplo de uso desde Next.js:
-    ```javascript
-    // 1. Validar credenciales en backend
-    const validateResponse = await fetch('/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
-    });
-    
-    if (validateResponse.ok) {
-        // 2. Autenticar en frontend con Firebase
-        import { signInWithEmailAndPassword } from 'firebase/auth';
-        const userCredential = await signInWithEmailAndPassword(auth, email, password);
-        
-        // 3. Obtener token y validar sesión
-        const idToken = await userCredential.user.getIdToken();
-        // Usar token para llamadas autenticadas
-    }
-    ```
+    Valida email y contraseña básicamente.
     """
     try:
-        # Los datos ya están validados por Pydantic
-        email = login_data.email
-        password = login_data.password
+        from database.firebase_config import get_auth_client
         
-        result = await authenticate_email_password(email, password)
+        # Obtener cliente de Firebase Auth
+        auth_client = get_auth_client()
         
-        if not result.get("success", False):
-            # Determinar el status code apropiado basado en el tipo de error
-            error_code = result.get("code", "AUTH_FAILED")
-            error_message = result.get("error", "Error de autenticación")
-            
-            if error_code in ["EMAIL_VALIDATION_ERROR", "INVALID_EMAIL_FORMAT"]:
-                status_code = 400  # Bad Request para errores de validación
-            elif error_code in ["USER_NOT_FOUND", "USER_DISABLED", "ACCOUNT_INACTIVE"]:
-                status_code = 401  # Unauthorized para problemas de autenticación
-            else:
-                status_code = 401  # Default para otros errores de auth
-                
-            raise HTTPException(
-                status_code=status_code,
-                detail={
+        # Verificar que el usuario existe
+        try:
+            user_record = auth_client.get_user_by_email(login_data.email)
+        except Exception:
+            return JSONResponse(
+                content={
                     "success": False,
-                    "error": error_message,
-                    "code": error_code
-                }
+                    "error": "Usuario no encontrado",
+                    "code": "USER_NOT_FOUND"
+                },
+                status_code=401
             )
         
+        # Verificar que no está deshabilitado
+        if user_record.disabled:
+            return JSONResponse(
+                content={
+                    "success": False,
+                    "error": "Usuario deshabilitado",
+                    "code": "USER_DISABLED"
+                },
+                status_code=401
+            )
+        
+        # Respuesta exitosa
         return JSONResponse(
             content={
                 "success": True,
-                "user": result.get("user", {}),
-                "auth_method": result.get("auth_method", "email_password"),
-                "message": result.get("message", "Credenciales válidas"),
-                "frontend_auth_required": True,
-                "note": "Proceda con autenticación en frontend usando Firebase Auth SDK",
-                "timestamp": datetime.now().isoformat()
+                "user": {
+                    "uid": user_record.uid,
+                    "email": user_record.email,
+                    "display_name": user_record.display_name,
+                    "email_verified": user_record.email_verified
+                },
+                "message": "Usuario válido - Proceda con autenticación en frontend"
             },
-            status_code=200,
-            headers={"Content-Type": "application/json; charset=utf-8"}
+            status_code=200
         )
         
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"Error in login endpoint: {e}")
-        raise HTTPException(
-            status_code=500, 
-            detail={
+        return JSONResponse(
+            content={
                 "success": False,
-                "error": f"Error interno del servidor: {str(e)}",
-                "message": "Ocurrió un error inesperado durante la validación",
-                "code": "INTERNAL_SERVER_ERROR",
-                "error_type": type(e).__name__
-            }
+                "error": "Error validando usuario",
+                "message": str(e)
+            },
+            status_code=500
         )
 
 @app.post("/auth/register", tags=["Administración y Control de Accesos"], status_code=status.HTTP_201_CREATED)
