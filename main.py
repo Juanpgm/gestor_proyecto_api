@@ -1783,13 +1783,15 @@ async def login_user(
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Error in login endpoint: {e}")
         raise HTTPException(
             status_code=500, 
             detail={
                 "success": False,
-                "error": "Error interno del servidor",
+                "error": f"Error interno del servidor: {str(e)}",
                 "message": "Ocurrió un error inesperado durante la validación",
-                "code": "INTERNAL_SERVER_ERROR"
+                "code": "INTERNAL_SERVER_ERROR",
+                "error_type": type(e).__name__
             }
         )
 
