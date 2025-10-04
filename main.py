@@ -2416,19 +2416,26 @@ async def list_system_users(
         for doc in docs:
             if doc.exists:
                 user_data = doc.to_dict()
+                
+                # Convertir timestamps a strings para evitar error de serialización
+                def serialize_timestamp(timestamp_field):
+                    if timestamp_field and hasattr(timestamp_field, 'isoformat'):
+                        return timestamp_field.isoformat()
+                    return timestamp_field
+                
                 user_info = {
                     "uid": doc.id,
                     "email": user_data.get("email"),
                     "fullname": user_data.get("fullname"),
                     "cellphone": user_data.get("cellphone"),
                     "nombre_centro_gestor": user_data.get("nombre_centro_gestor"),
-                    "created_at": user_data.get("created_at"),
-                    "updated_at": user_data.get("updated_at"),
+                    "created_at": serialize_timestamp(user_data.get("created_at")),
+                    "updated_at": serialize_timestamp(user_data.get("updated_at")),
                     "is_active": user_data.get("is_active", True),
                     "email_verified": user_data.get("email_verified", False),
                     "can_use_google_auth": user_data.get("can_use_google_auth", False),
                     "auth_providers": user_data.get("auth_providers", []),
-                    "last_login": user_data.get("last_login"),
+                    "last_login": serialize_timestamp(user_data.get("last_login")),
                     "login_count": user_data.get("login_count", 0)
                 }
                 users_list.append(user_info)
