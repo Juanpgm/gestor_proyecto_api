@@ -15,10 +15,7 @@ except ImportError:
     firestore = None
     gcp_exceptions = None
 
-from database.firebase_config import FirebaseManager
-
-# Constantes para compatibilidad
-PROJECT_ID = "gestor-proyecto"  # Este se obtendrá dinámicamente
+from database.firebase_config import get_firestore_client, get_auth_client, PROJECT_ID
 BATCH_SIZE = 500
 TIMEOUT = 30
 
@@ -35,8 +32,7 @@ async def get_collections_info() -> Dict[str, Any]:
             "collections": []
         }
     try:
-        firebase_manager = FirebaseManager()
-        db = firebase_manager.get_client()
+        db = get_firestore_client()
         if db is None:
             raise Exception("No se pudo conectar a Firestore")
         
@@ -123,8 +119,7 @@ async def test_firebase_connection() -> Dict[str, Any]:
         Dict con resultado de la prueba de conexión
     """
     try:
-        firebase_manager = FirebaseManager()
-        db = firebase_manager.get_client()
+        db = get_firestore_client()
         if db is None:
             return {
                 "connected": False,

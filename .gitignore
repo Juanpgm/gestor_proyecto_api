@@ -202,6 +202,12 @@ railway-service-account-key.json
 .env.production*
 .env.secrets*
 
+# Railway configuration files with real values
+railway-config-summary.txt
+railway-workload-identity.json
+.env.railway
+.env.production
+
 # Firebase and Google Cloud credentials
 firebase-adminsdk-*.json
 gcp-service-account-*.json

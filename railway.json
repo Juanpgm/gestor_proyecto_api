@@ -1,11 +1,23 @@
 {
   "build": {
-    "builder": "dockerfile"
+    "builder": "dockerfile",
+    "buildCommand": "echo 'Building with production optimizations...'"
   },
   "deploy": {
     "healthcheckPath": "/health",
     "healthcheckTimeout": 120,
     "restartPolicyType": "on_failure",
-    "restartPolicyMaxRetries": 5
+    "restartPolicyMaxRetries": 5,
+    "numReplicas": 1,
+    "sleepApplication": false
+  },
+  "environments": {
+    "production": {
+      "variables": {
+        "ENVIRONMENT": "production",
+        "LOG_LEVEL": "INFO",
+        "PYTHONUNBUFFERED": "1"
+      }
+    }
   }
 }
