@@ -1692,53 +1692,87 @@ async def validate_session(
 @app.post("/auth/login", tags=["Administración y Control de Accesos"])
 async def login_user(login_data: UserLoginRequest):
     """
-    ## 🔑 Login Simple
+    ## 🔑 Autenticación de Usuario
     
-    Valida email y contraseña básicamente.
+    Valida credenciales de email y contraseña completas.
+    **IMPORTANTE**: La validación real de la contraseña debe hacerse en el frontend 
+    con Firebase Auth SDK. Este endpoint solo valida la existencia y estado del usuario.
+    
+    ### ✅ Casos de uso:
+    - Validación previa antes de autenticación frontend
+    - Verificación de estado del usuario
+    - Obtener información básica del usuario para login
+    
+    ### 🔧 Proceso:
+    1. Valida formato del email
+    2. Verifica existencia del usuario en Firebase Auth
+    3. Verifica que el usuario no esté deshabilitado
+    4. Verifica que la cuenta esté activa en Firestore
+    5. Actualiza estadísticas de login
+    
+    ### 📝 Ejemplo de uso desde Next.js:
+    ```javascript
+    // 1. Primero validar con nuestro endpoint
+    const preValidation = await fetch('/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    
+    if (preValidation.ok) {
+      // 2. Luego autenticar con Firebase SDK
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      console.log('Usuario autenticado:', userCredential.user);
+    }
+    ```
     """
     try:
-        from database.firebase_config import get_auth_client
+        check_user_management_availability()
         
-        # Obtener cliente de Firebase Auth
-        auth_client = get_auth_client()
+        # Usar la función de autenticación completa que ya existe
+        result = await authenticate_email_password(login_data.email, login_data.password)
         
-        # Verificar que el usuario existe
-        try:
-            user_record = auth_client.get_user_by_email(login_data.email)
-        except Exception:
-            return JSONResponse(
-                content={
-                    "success": False,
-                    "error": "Usuario no encontrado",
-                    "code": "USER_NOT_FOUND"
-                },
-                status_code=401
-            )
+        if not result["success"]:
+            error_code = result.get("code", "AUTH_ERROR")
+            
+            if error_code in ["USER_NOT_FOUND", "USER_DISABLED", "ACCOUNT_INACTIVE"]:
+                raise HTTPException(
+                    status_code=401,
+                    detail={
+                        "success": False,
+                        "error": result["error"],
+                        "code": error_code
+                    }
+                )
+            elif error_code in ["EMAIL_VALIDATION_ERROR", "INVALID_EMAIL_FORMAT"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "success": False,
+                        "error": result["error"],
+                        "code": error_code
+                    }
+                )
+            else:
+                raise HTTPException(
+                    status_code=500,
+                    detail={
+                        "success": False,
+                        "error": result["error"],
+                        "code": error_code
+                    }
+                )
         
-        # Verificar que no está deshabilitado
-        if user_record.disabled:
-            return JSONResponse(
-                content={
-                    "success": False,
-                    "error": "Usuario deshabilitado",
-                    "code": "USER_DISABLED"
-                },
-                status_code=401
-            )
-        
-        # Respuesta exitosa
         return JSONResponse(
             content={
                 "success": True,
-                "user": {
-                    "uid": user_record.uid,
-                    "email": user_record.email,
-                    "display_name": user_record.display_name,
-                    "email_verified": user_record.email_verified
-                },
-                "message": "Usuario válido - Proceda con autenticación en frontend"
+                "user": result.get("user", {}),
+                "auth_method": result.get("auth_method", "email_password"),
+                "message": result.get("message", "Credenciales válidas - Proceda con autenticación en frontend"),
+                "timestamp": datetime.now().isoformat()
             },
-            status_code=200
+            status_code=200,
+            headers={"Content-Type": "application/json; charset=utf-8"}
         )
         
     except Exception as e:
@@ -1752,9 +1786,7 @@ async def login_user(login_data: UserLoginRequest):
         )
 
 @app.post("/auth/register", tags=["Administración y Control de Accesos"], status_code=status.HTTP_201_CREATED)
-async def register_user(
-    request: Request
-):
+async def register_user(registration_data: UserRegistrationRequest):
     """
     ## 👤 Registro de Usuario Nuevo para Next.js
     
@@ -1772,12 +1804,14 @@ async def register_user(
     - Rol por defecto: 'viewer' (modificable por administrador)
     - Generación opcional de enlace de verificación
     - Verificación de dominio (@cali.gov.co)
-    - Soporte para JSON y form data
+    - Validación automática usando modelos Pydantic
     
     ### 📋 Requisitos:
     - **Email**: Debe ser del dominio @cali.gov.co
     - **Contraseña**: Mínimo 8 caracteres, mayúsculas, minúsculas, números y símbolos
     - **Teléfono**: Formato colombiano válido (+57 3XX XXX XXXX)
+    - **Nombre completo**: Mínimo 2 palabras
+    - **Centro gestor**: Nombre del centro gestor responsable
     
     ### 📝 Ejemplo de uso desde Next.js:
     ```javascript
@@ -1804,58 +1838,13 @@ async def register_user(
     try:
         check_user_management_availability()
         
-        # Obtener datos del body JSON o form data
-        email = None
-        password = None
-        fullname = None
-        cellphone = None
-        nombre_centro_gestor = None
-        
-        try:
-            body = await request.json()
-            email = body.get("email")
-            password = body.get("password") 
-            fullname = body.get("fullname")
-            cellphone = body.get("cellphone")
-            nombre_centro_gestor = body.get("nombre_centro_gestor")
-        except Exception as json_error:
-            try:
-                form = await request.form()
-                email = form.get("email")
-                password = form.get("password")
-                fullname = form.get("fullname") 
-                cellphone = form.get("cellphone")
-                nombre_centro_gestor = form.get("nombre_centro_gestor")
-            except Exception as form_error:
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "success": False,
-                        "error": "Datos requeridos",
-                        "message": "Proporcione todos los campos requeridos en el body",
-                        "code": "REGISTRATION_DATA_REQUIRED"
-                    }
-                )
-        
-        # Validar que todos los campos requeridos estén presentes
-        if not all([email, password, fullname, cellphone, nombre_centro_gestor]):
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "success": False,
-                    "error": "Campos requeridos faltantes",
-                    "message": "email, password, fullname, cellphone y nombre_centro_gestor son requeridos",
-                    "code": "MISSING_REQUIRED_FIELDS"
-                }
-            )
-        
-        # Llamar a la función de creación de usuario
+        # Llamar a la función de creación de usuario con datos validados
         result = await create_user_account(
-            email=email,
-            password=password,
-            fullname=fullname,
-            cellphone=cellphone,
-            nombre_centro_gestor=nombre_centro_gestor,
+            email=registration_data.email,
+            password=registration_data.password,
+            fullname=registration_data.fullname,
+            cellphone=registration_data.cellphone,
+            nombre_centro_gestor=registration_data.nombre_centro_gestor,
             send_email_verification=True
         )
         
