@@ -215,8 +215,13 @@ def main():
     if not check_gcloud_auth():
         return
     
-    # Obtener project ID
-    project_id = "your-project-id"  # Tu proyecto
+    # Obtener project ID desde variable de entorno o input
+    project_id = os.getenv("FIREBASE_PROJECT_ID")
+    if not project_id:
+        project_id = input("🎯 Ingresa tu Firebase Project ID: ").strip()
+        if not project_id:
+            print("❌ Project ID es requerido")
+            return
     print(f"🎯 Proyecto: {project_id}")
     
     # Obtener project number
