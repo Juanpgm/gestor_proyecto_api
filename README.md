@@ -1,13 +1,31 @@
 # 🚀 Gestor de Proyectos API
 
-API REST simple para gestión de proyectos con Firebase/Firestore.
+API REST para gestión contractual con Firebase/Firestore.
+
+## 📚 Documentación Completa
+
+### 🐍 Para Desarrollo Local
+
+**[Guía Completa de Setup Virtual Environment](docs/api_setup_docs/virtual_environment_setup.md)**
+
+- Configuración paso a paso con entornos virtuales
+- Configuración de Firebase y base de datos de prueba
+- Solución de problemas detallada
+
+### ⚡ Para Desarrolladores Experimentados
+
+**[Comandos Rápidos](docs/api_setup_docs/quick_reference.md)**
+
+- Setup en 5 minutos
+- Comandos de desarrollo frecuentes
+- Troubleshooting rápido
 
 ## ⚡ Inicio Rápido
 
 ### 1. Configurar
 
 ```bash
-git clone <tu-repo>
+git clone https://github.com/Juanpgm/gestor_proyecto_api.git
 cd gestor_proyecto_api
 ```
 
@@ -40,12 +58,22 @@ La API estará en: `http://localhost:8000`
 
 ## 📋 Endpoints
 
-- `GET /` - Información de la API
-- `GET /health` - Estado de salud
-- `GET /docs` - Documentación Swagger
+### Sistema
+
+- `GET /health` - Estado de salud de la API
+- `GET /docs` - Documentación Swagger interactiva
+- `GET /redoc` - Documentación ReDoc
+
+### Gestión Contractual
+
+- `GET /contratos/init_contratos_seguimiento` - Datos de contratos
+  - `?referencia_contrato=VALUE` - Filtro por referencia
+  - `?nombre_centro_gestor=VALUE` - Filtro por centro gestor
+
+### Legacy (Unidades de Proyecto)
+
 - `GET /unidades-proyecto` - Todas las unidades de proyecto
 - `GET /unidades-proyecto/summary` - Resumen estadístico
-- `GET /unidades-proyecto/filter` - Filtrar unidades
 
 ## 🌐 Despliegue
 
@@ -72,12 +100,27 @@ docker run -p 8000:8000 --env-file .env gestor-proyecto-api
 
 ```
 gestor_proyecto_api/
-├── main.py              # Aplicación FastAPI
-├── database/config.py   # Configuración Firebase
-├── api/scripts/         # Lógica de negocio
-├── Dockerfile           # Para contenedorización
-├── requirements.txt     # Dependencias
-└── .env                # Configuración
+├── main.py                    # Aplicación FastAPI principal
+├── database/
+│   └── firebase_config.py     # Configuración Firebase/Firestore
+├── api/scripts/               # Lógica de negocio
+│   ├── contratos_operations.py
+│   └── firebase_operations.py
+├── docs/                      # 📚 Documentación completa
+│   ├── README.md              # Índice de documentación
+│   └── api_setup_docs/        # Guías de setup
+├── .env.example              # Template de configuración
+├── requirements.txt          # Dependencias Python
+└── Dockerfile               # Para contenedorización
 ```
+
+## 🔐 Configuración de Seguridad
+
+- ✅ Archivos `.env` excluidos del repositorio
+- ✅ Application Default Credentials para desarrollo local
+- ✅ Service Account Keys para producción
+- ✅ Variables de entorno para configuración sensible
+
+**📖 Ver [documentación completa](docs/) para configuración detallada.**
 
 ¡Listo para usar! 🎉
