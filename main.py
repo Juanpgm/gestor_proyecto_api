@@ -36,6 +36,14 @@ import uvicorn
 import asyncio
 from datetime import datetime
 
+# Importar para manejar tipos de Firebase
+try:
+    from google.cloud.firestore_v1._helpers import DatetimeWithNanoseconds
+    FIREBASE_TYPES_AVAILABLE = True
+except ImportError:
+    FIREBASE_TYPES_AVAILABLE = False
+    DatetimeWithNanoseconds = None
+
 
 
 # Importar Firebase con configuración automática
@@ -303,6 +311,25 @@ def handle_utf8_text(text: str) -> str:
     if isinstance(text, str):
         return text.encode('utf-8').decode('utf-8')
     return str(text)
+
+def clean_firebase_data(data):
+    """
+    Limpia datos de Firebase para serialización JSON
+    Convierte DatetimeWithNanoseconds y otros tipos no serializables
+    """
+    if isinstance(data, dict):
+        cleaned = {}
+        for key, value in data.items():
+            cleaned[key] = clean_firebase_data(value)
+        return cleaned
+    elif isinstance(data, list):
+        return [clean_firebase_data(item) for item in data]
+    elif FIREBASE_TYPES_AVAILABLE and isinstance(data, DatetimeWithNanoseconds):
+        return data.isoformat()
+    elif isinstance(data, datetime):
+        return data.isoformat()
+    else:
+        return data
 
 # �🛠️ MIDDLEWARE DE TIMEOUT PARA PREVENIR COLGADAS
 @app.middleware("http")
@@ -1758,12 +1785,16 @@ async def validate_session(
                 }
             )
         
+        # Limpiar datos de Firebase antes de serializar
+        clean_user_data = clean_firebase_data(result.get("user", {}))
+        clean_token_data = clean_firebase_data(result.get("token_data", {}))
+        
         return JSONResponse(
             content={
                 "success": True,
                 "session_valid": True,
-                "user": result.get("user", {}),
-                "token_info": result.get("token_data", {}),
+                "user": clean_user_data,
+                "token_info": clean_token_data,
                 "verified_at": result.get("verified_at"),
                 "message": "Sesión válida"
             },
@@ -1858,10 +1889,13 @@ async def login_user(login_data: UserLoginRequest):
                     }
                 )
         
+        # Limpiar datos de Firebase antes de serializar
+        clean_user_data = clean_firebase_data(result.get("user", {}))
+        
         return JSONResponse(
             content={
                 "success": True,
-                "user": result.get("user", {}),
+                "user": clean_user_data,
                 "auth_method": result.get("auth_method", "email_password"),
                 "message": result.get("message", "Credenciales válidas - Proceda con autenticación en frontend"),
                 "timestamp": datetime.now().isoformat()
@@ -1873,13 +1907,13 @@ async def login_user(login_data: UserLoginRequest):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unexpected error in login endpoint: {e}")
+        print(f"Unexpected error in login endpoint: {e}")  # Usar print para debug inmediato
         return JSONResponse(
             content={
-                "success": False,
-                "error": "Error interno del servidor",
-                "message": "Ocurrió un error inesperado durante el login",
-                "code": "INTERNAL_SERVER_ERROR"
+                "error": "Internal server error",
+                "message": "An unexpected error occurred", 
+                "fallback": True,
+                "timestamp": datetime.now().isoformat()
             },
             status_code=500
         )
@@ -1995,9 +2029,12 @@ async def register_user(registration_data: UserRegistrationRequest):
                 )
         
         # Si llegamos aquí, la creación fue exitosa
+        # Limpiar datos de Firebase antes de serializar
+        clean_user_data = clean_firebase_data(result.get("user", {}))
+        
         response_data = {
             "success": True,
-            "user": result.get("user", {}),
+            "user": clean_user_data,
             "message": result.get("message", "Usuario creado exitosamente"),
             "timestamp": datetime.now().isoformat()
         }
@@ -2278,9 +2315,12 @@ async def google_auth_unified(
                     "code": error_code
                 })
         
+        # Limpiar datos de Firebase antes de serializar
+        clean_user_data = clean_firebase_data(result["user"])
+        
         return {
             "success": True,
-            "user": result["user"],
+            "user": clean_user_data,
             "auth_method": "workload_identity_google",
             "security_level": "high",
             "user_created": result.get("user_created", False),
@@ -2435,27 +2475,24 @@ async def list_system_users(
             if doc.exists:
                 user_data = doc.to_dict()
                 
-                # Convertir timestamps a strings para evitar error de serialización
-                def serialize_timestamp(timestamp_field):
-                    if timestamp_field and hasattr(timestamp_field, 'isoformat'):
-                        return timestamp_field.isoformat()
-                    return timestamp_field
-                
                 user_info = {
                     "uid": doc.id,
                     "email": user_data.get("email"),
                     "fullname": user_data.get("fullname"),
                     "cellphone": user_data.get("cellphone"),
                     "nombre_centro_gestor": user_data.get("nombre_centro_gestor"),
-                    "created_at": serialize_timestamp(user_data.get("created_at")),
-                    "updated_at": serialize_timestamp(user_data.get("updated_at")),
+                    "created_at": user_data.get("created_at"),
+                    "updated_at": user_data.get("updated_at"),
                     "is_active": user_data.get("is_active", True),
                     "email_verified": user_data.get("email_verified", False),
                     "can_use_google_auth": user_data.get("can_use_google_auth", False),
                     "auth_providers": user_data.get("auth_providers", []),
-                    "last_login": serialize_timestamp(user_data.get("last_login")),
+                    "last_login": user_data.get("last_login"),
                     "login_count": user_data.get("login_count", 0)
                 }
+                
+                # Limpiar datos de Firebase antes de agregar a la lista
+                user_info = clean_firebase_data(user_info)
                 users_list.append(user_info)
         
         return JSONResponse(
