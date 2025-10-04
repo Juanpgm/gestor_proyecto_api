@@ -44,6 +44,8 @@ try:
         get_unidades_proyecto_dashboard,
         get_filter_options,
         validate_unidades_proyecto_collection,
+        # Contratos operations
+        get_contratos_init_data,
     )
     SCRIPTS_AVAILABLE = True
     print(f"✅ Scripts imported successfully - SCRIPTS_AVAILABLE: {SCRIPTS_AVAILABLE}")
@@ -177,6 +179,9 @@ async def read_root():
                 "/unidades-proyecto/attributes",
                 "/unidades-proyecto/dashboard",
                 "/unidades-proyecto/filters"
+            ],
+            "gestion_contractual": [
+                "/contratos/init_contratos_seguimiento"
             ]
         },
         "new_features": {
@@ -845,6 +850,52 @@ async def get_filters_endpoint(
             status_code=500,
             detail=f"Error procesando filtros: {str(e)}"
         )
+
+
+# ============================================================================
+# ENDPOINTS DE GESTIÓN CONTRACTUAL
+# ============================================================================
+
+@app.get("/contratos/init_contratos_seguimiento", tags=["Gestión Contractual"])
+async def init_contratos_seguimiento(
+    referencia_contrato: Optional[str] = Query(None, description="Referencia del contrato (búsqueda parcial)"),
+    nombre_centro_gestor: Optional[str] = Query(None, description="Centro gestor responsable (exacto)")
+):
+    """
+    ## Inicialización de Contratos para Seguimiento
+    
+    Obtiene datos de contratos desde la colección `contratos_emprestito` con filtros optimizados.
+    
+    **Campos retornados**: bpin, banco, nombre_centro_gestor, estado_contrato, referencia_contrato, 
+    referencia_proceso, objeto_contrato, modalidad_contratacion
+    
+    **Filtros**:
+    - `referencia_contrato`: Textbox - búsqueda parcial
+    - `nombre_centro_gestor`: Dropdown - selección exacta
+    
+    Sin filtros retorna todos los datos disponibles.
+    """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        return {"success": False, "error": "Firebase no disponible", "data": [], "count": 0}
+    
+    try:
+        filters = {}
+        if referencia_contrato:
+            filters["referencia_contrato"] = referencia_contrato
+        if nombre_centro_gestor:
+            filters["nombre_centro_gestor"] = nombre_centro_gestor
+        
+        result = await get_contratos_init_data(filters)
+        
+        if not result["success"]:
+            raise HTTPException(status_code=500, detail=result.get('error', 'Error obteniendo contratos'))
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error procesando contratos: {str(e)}")
 
 
 # ============================================================================

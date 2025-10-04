@@ -38,6 +38,16 @@ try:
 except ImportError as e:
     print(f"Warning: Unidades proyecto operations not available: {e}")
     UNIDADES_PROYECTO_AVAILABLE = False
+
+try:
+    from .contratos_operations import (
+        get_contratos_init_data,
+        get_contratos_filter_options,
+    )
+    CONTRATOS_OPERATIONS_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Contratos operations not available: {e}")
+    CONTRATOS_OPERATIONS_AVAILABLE = False
     
     # Crear funciones dummy para evitar errores
     async def get_all_unidades_proyecto_simple(limit=None):
@@ -61,6 +71,19 @@ except ImportError as e:
     async def validate_unidades_proyecto_collection():
         return {"valid": False, "error": "Unidades proyecto operations not available"}
 
+try:
+    from .contratos_operations import (
+        get_contratos_init_data,
+    )
+    CONTRATOS_OPERATIONS_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Contratos operations not available: {e}")
+    CONTRATOS_OPERATIONS_AVAILABLE = False
+    
+    # Crear función dummy para contratos
+    async def get_contratos_init_data(filters=None):
+        return {"success": False, "error": "Contratos operations not available", "data": [], "count": 0}
+
 __all__ = [
     # Firebase operations
     "get_collections_info",
@@ -76,7 +99,11 @@ __all__ = [
     "get_unidades_proyecto_summary",
     "validate_unidades_proyecto_collection",
     
+    # Contratos operations
+    "get_contratos_init_data",
+    
     # Availability flags
     "FIREBASE_OPERATIONS_AVAILABLE",
     "UNIDADES_PROYECTO_AVAILABLE",
+    "CONTRATOS_OPERATIONS_AVAILABLE",
 ]
