@@ -7,7 +7,12 @@ try:
     from .firebase_operations import (
         get_collections_info,
         test_firebase_connection,
-        get_collections_summary
+        get_collections_summary,
+        get_proyectos_presupuestales,
+        get_unique_nombres_centros_gestores,
+        get_proyectos_presupuestales_by_bpin,
+        get_proyectos_presupuestales_by_bp,
+        get_proyectos_presupuestales_by_centro_gestor
     )
     FIREBASE_OPERATIONS_AVAILABLE = True
 except ImportError as e:
@@ -22,6 +27,21 @@ except ImportError as e:
         return {"success": False, "error": "Firebase operations not available"}
     
     async def get_collections_summary():
+        return {"success": False, "error": "Firebase operations not available"}
+    
+    async def get_proyectos_presupuestales():
+        return {"success": False, "error": "Firebase operations not available"}
+    
+    async def get_unique_nombres_centros_gestores():
+        return {"success": False, "error": "Firebase operations not available"}
+    
+    async def get_proyectos_presupuestales_by_bpin(bpin: str):
+        return {"success": False, "error": "Firebase operations not available"}
+    
+    async def get_proyectos_presupuestales_by_bp(bp: str):
+        return {"success": False, "error": "Firebase operations not available"}
+    
+    async def get_proyectos_presupuestales_by_centro_gestor(nombre_centro_gestor: str):
         return {"success": False, "error": "Firebase operations not available"}
 
 try:
@@ -119,6 +139,11 @@ __all__ = [
     "get_collections_info",
     "test_firebase_connection", 
     "get_collections_summary",
+    "get_proyectos_presupuestales",
+    "get_unique_nombres_centros_gestores",
+    "get_proyectos_presupuestales_by_bpin",
+    "get_proyectos_presupuestales_by_bp",
+    "get_proyectos_presupuestales_by_centro_gestor",
     
     # Unidades proyecto operations
     "get_all_unidades_proyecto_simple",

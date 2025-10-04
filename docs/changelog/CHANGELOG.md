@@ -4,7 +4,7 @@
 
 ### ✨ Nuevas Funcionalidades
 
-- **Nuevo endpoint de Gestión Contractual**: `/contratos/init_contratos_seguimiento`
+- **Nuevo endpoint de Interoperabilidad con Artefacto de Seguimiento**: `/contratos/init_contratos_seguimiento`
   - Filtro por `referencia_contrato` (búsqueda parcial)
   - Filtro por `nombre_centro_gestor` (coincidencia exacta)
   - Extracción de 8 campos específicos de contratos
@@ -47,7 +47,7 @@
 **Archivos principales modificados:**
 
 - `api/scripts/contratos_operations.py` - Nuevo módulo de operaciones
-- `main.py` - Nuevo endpoint bajo tag "Gestión Contractual"
+- `main.py` - Nuevo endpoint bajo tag "Interoperabilidad con Artefacto de Seguimiento"
 - `docs/` - Nueva estructura de documentación completa
 
 **Tecnologías:**

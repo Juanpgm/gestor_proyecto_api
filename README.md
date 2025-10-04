@@ -1,6 +1,6 @@
 # 🚀 Gestor de Proyectos API
 
-API REST para gestión contractual con Firebase/Firestore.
+API REST para interoperabilidad con artefacto de seguimiento con Firebase/Firestore.
 
 ## 📚 Documentación Completa
 
@@ -64,7 +64,7 @@ La API estará en: `http://localhost:8000`
 - `GET /docs` - Documentación Swagger interactiva
 - `GET /redoc` - Documentación ReDoc
 
-### Gestión Contractual
+### Interoperabilidad con Artefacto de Seguimiento
 
 - `GET /contratos/init_contratos_seguimiento` - Datos de contratos
   - `?referencia_contrato=VALUE` - Filtro por referencia

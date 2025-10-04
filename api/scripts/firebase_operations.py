@@ -199,3 +199,268 @@ async def get_collections_summary() -> Dict[str, Any]:
             "error": f"Error obteniendo resumen: {str(e)}",
             "summary": {}
         }
+
+
+async def get_proyectos_presupuestales() -> Dict[str, Any]:
+    """
+    Obtener todos los documentos de la colección "proyectos_presupuestales"
+    
+    Returns:
+        Dict con todos los proyectos presupuestales
+    """
+    if not GOOGLE_CLOUD_AVAILABLE:
+        return {
+            "success": False,
+            "error": "Google Cloud SDK no disponible",
+            "data": [],
+            "count": 0
+        }
+    
+    try:
+        db = get_firestore_client()
+        if db is None:
+            raise Exception("No se pudo conectar a Firestore")
+        
+        # Obtener todos los documentos de la colección
+        collection_ref = db.collection("proyectos_presupuestales")
+        docs = collection_ref.stream()
+        
+        proyectos = []
+        for doc in docs:
+            doc_data = doc.to_dict()
+            doc_data["id"] = doc.id  # Incluir el ID del documento
+            proyectos.append(doc_data)
+        
+        return {
+            "success": True,
+            "data": proyectos,
+            "count": len(proyectos),
+            "collection": "proyectos_presupuestales",
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Error obteniendo proyectos presupuestales: {str(e)}",
+            "data": [],
+            "count": 0
+        }
+
+
+async def get_unique_nombres_centros_gestores() -> Dict[str, Any]:
+    """
+    Obtener valores únicos del campo "nombre_centro_gestor" de la colección "proyectos_presupuestales"
+    
+    Returns:
+        Dict con lista de nombres únicos de centros gestores
+    """
+    if not GOOGLE_CLOUD_AVAILABLE:
+        return {
+            "success": False,
+            "error": "Google Cloud SDK no disponible",
+            "data": [],
+            "count": 0
+        }
+    
+    try:
+        db = get_firestore_client()
+        if db is None:
+            raise Exception("No se pudo conectar a Firestore")
+        
+        # Obtener todos los documentos de la colección
+        collection_ref = db.collection("proyectos_presupuestales")
+        docs = collection_ref.stream()
+        
+        # Usar un set para almacenar valores únicos
+        nombres_centros_gestores = set()
+        
+        for doc in docs:
+            doc_data = doc.to_dict()
+            nombre_centro_gestor = doc_data.get("nombre_centro_gestor")
+            
+            # Solo agregar si el campo existe y no está vacío
+            if nombre_centro_gestor and nombre_centro_gestor.strip():
+                nombres_centros_gestores.add(nombre_centro_gestor.strip())
+        
+        # Convertir set a lista ordenada
+        nombres_unicos = sorted(list(nombres_centros_gestores))
+        
+        return {
+            "success": True,
+            "data": nombres_unicos,
+            "count": len(nombres_unicos),
+            "field": "nombre_centro_gestor",
+            "collection": "proyectos_presupuestales",
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Error obteniendo nombres únicos de centros gestores: {str(e)}",
+            "data": [],
+            "count": 0
+        }
+
+
+async def get_proyectos_presupuestales_by_bpin(bpin: str) -> Dict[str, Any]:
+    """
+    Obtener proyectos presupuestales filtrados por BPIN
+    
+    Args:
+        bpin: Código BPIN para filtrar
+        
+    Returns:
+        Dict con proyectos filtrados por BPIN
+    """
+    if not GOOGLE_CLOUD_AVAILABLE:
+        return {
+            "success": False,
+            "error": "Google Cloud SDK no disponible",
+            "data": [],
+            "count": 0
+        }
+    
+    try:
+        db = get_firestore_client()
+        if db is None:
+            raise Exception("No se pudo conectar a Firestore")
+        
+        # Convertir bpin a entero ya que en la base de datos se almacena como número
+        try:
+            bpin_int = int(bpin)
+        except ValueError:
+            raise Exception(f"BPIN '{bpin}' no es un número válido")
+        
+        # Filtrar por BPIN
+        collection_ref = db.collection("proyectos_presupuestales")
+        query = collection_ref.where("bpin", "==", bpin_int)
+        docs = query.stream()
+        
+        proyectos = []
+        for doc in docs:
+            doc_data = doc.to_dict()
+            doc_data["id"] = doc.id  # Incluir el ID del documento
+            proyectos.append(doc_data)
+        
+        return {
+            "success": True,
+            "data": proyectos,
+            "count": len(proyectos),
+            "collection": "proyectos_presupuestales",
+            "filter": {"field": "bpin", "value": bpin_int},
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Error obteniendo proyectos por BPIN: {str(e)}",
+            "data": [],
+            "count": 0
+        }
+
+
+async def get_proyectos_presupuestales_by_bp(bp: str) -> Dict[str, Any]:
+    """
+    Obtener proyectos presupuestales filtrados por BP
+    
+    Args:
+        bp: Código BP para filtrar
+        
+    Returns:
+        Dict con proyectos filtrados por BP
+    """
+    if not GOOGLE_CLOUD_AVAILABLE:
+        return {
+            "success": False,
+            "error": "Google Cloud SDK no disponible",
+            "data": [],
+            "count": 0
+        }
+    
+    try:
+        db = get_firestore_client()
+        if db is None:
+            raise Exception("No se pudo conectar a Firestore")
+        
+        # Filtrar por BP
+        collection_ref = db.collection("proyectos_presupuestales")
+        query = collection_ref.where("bp", "==", bp)
+        docs = query.stream()
+        
+        proyectos = []
+        for doc in docs:
+            doc_data = doc.to_dict()
+            doc_data["id"] = doc.id  # Incluir el ID del documento
+            proyectos.append(doc_data)
+        
+        return {
+            "success": True,
+            "data": proyectos,
+            "count": len(proyectos),
+            "collection": "proyectos_presupuestales",
+            "filter": {"field": "bp", "value": bp},
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Error obteniendo proyectos por BP: {str(e)}",
+            "data": [],
+            "count": 0
+        }
+
+
+async def get_proyectos_presupuestales_by_centro_gestor(nombre_centro_gestor: str) -> Dict[str, Any]:
+    """
+    Obtener proyectos presupuestales filtrados por nombre de centro gestor
+    
+    Args:
+        nombre_centro_gestor: Nombre del centro gestor para filtrar
+        
+    Returns:
+        Dict con proyectos filtrados por centro gestor
+    """
+    if not GOOGLE_CLOUD_AVAILABLE:
+        return {
+            "success": False,
+            "error": "Google Cloud SDK no disponible",
+            "data": [],
+            "count": 0
+        }
+    
+    try:
+        db = get_firestore_client()
+        if db is None:
+            raise Exception("No se pudo conectar a Firestore")
+        
+        # Filtrar por nombre_centro_gestor
+        collection_ref = db.collection("proyectos_presupuestales")
+        query = collection_ref.where("nombre_centro_gestor", "==", nombre_centro_gestor)
+        docs = query.stream()
+        
+        proyectos = []
+        for doc in docs:
+            doc_data = doc.to_dict()
+            doc_data["id"] = doc.id  # Incluir el ID del documento
+            proyectos.append(doc_data)
+        
+        return {
+            "success": True,
+            "data": proyectos,
+            "count": len(proyectos),
+            "collection": "proyectos_presupuestales",
+            "filter": {"field": "nombre_centro_gestor", "value": nombre_centro_gestor},
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Error obteniendo proyectos por centro gestor: {str(e)}",
+            "data": [],
+            "count": 0
+        }

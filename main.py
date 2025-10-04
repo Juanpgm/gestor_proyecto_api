@@ -62,6 +62,11 @@ try:
         get_collections_info,
         test_firebase_connection,
         get_collections_summary,
+        get_proyectos_presupuestales,
+        get_unique_nombres_centros_gestores,
+        get_proyectos_presupuestales_by_bpin,
+        get_proyectos_presupuestales_by_bp,
+        get_proyectos_presupuestales_by_centro_gestor,
         # Unidades proyecto operations (funciones especializadas y optimizadas)
         get_unidades_proyecto_geometry,
         get_unidades_proyecto_attributes,
@@ -311,8 +316,14 @@ async def read_root():
             "port": os.getenv("PORT", "NOT_SET")
         },
         "endpoints": {
-            "general": ["/", "/health", "/ping"],
+            "general": ["/", "/health", "/ping", "/centros-gestores/nombres-unicos"],
             "firebase": ["/firebase/status", "/firebase/collections"], 
+            "proyectos_de_inversion": [
+                "/proyectos-presupuestales/all",
+                "/proyectos-presupuestales/bpin/{bpin}",
+                "/proyectos-presupuestales/bp/{bp}",
+                "/proyectos-presupuestales/centro-gestor/{nombre_centro_gestor}"
+            ],
             "unidades_proyecto": [
                 "/unidades-proyecto/geometry", 
                 "/unidades-proyecto/attributes",
@@ -520,6 +531,90 @@ async def health_check():
             }
         }
 
+@app.get("/centros-gestores/nombres-unicos", tags=["General"])
+async def get_all_nombres_centros_gestores_unique():
+    """
+    ## Obtener Nombres Únicos de Centros Gestores
+    
+    **Propósito**: Retorna una lista de valores únicos del campo "nombre_centro_gestor" 
+    de la colección "proyectos_presupuestales".
+    
+    ### ✅ Casos de uso:
+    - Poblar dropdowns y selectores en formularios
+    - Filtros dinámicos en dashboards
+    - Validación de centros gestores existentes
+    - Reportes por centro gestor
+    - Análisis de distribución institucional
+    
+    ### 📊 Características:
+    - Valores únicos ordenados alfabéticamente
+    - Filtrado automático de valores vacíos o nulos
+    - Conteo total de centros gestores únicos
+    - Optimizado para carga rápida
+    
+    ### 🔧 Optimizaciones:
+    - Eliminación de duplicados usando set()
+    - Normalización de espacios en blanco
+    - Ordenamiento alfabético para mejor UX
+    - Filtrado de valores vacíos
+    
+    ### 📝 Ejemplo de uso:
+    ```javascript
+    const response = await fetch('/centros-gestores/nombres-unicos');
+    const data = await response.json();
+    if (data.success) {
+        console.log('Centros gestores encontrados:', data.count);
+        const dropdown = data.data.map(nombre => ({
+            value: nombre,
+            label: nombre
+        }));
+    }
+    ```
+    
+    ### 💡 Casos de uso prácticos:
+    - **Formularios**: Autocomplete de centros gestores
+    - **Dashboards**: Filtros dinámicos por institución
+    - **Reportes**: Agrupación por centro gestor
+    - **Validación**: Verificar centros gestores válidos
+    """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
+    
+    try:
+        result = await get_unique_nombres_centros_gestores()
+        
+        if not result["success"]:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error obteniendo nombres únicos de centros gestores: {result.get('error', 'Error desconocido')}"
+            )
+        
+        return {
+            "success": True,
+            "data": result["data"],
+            "count": result["count"],
+            "field": result["field"],
+            "collection": result["collection"],
+            "timestamp": result["timestamp"],
+            "last_updated": "2025-10-04T00:00:00Z",  # Endpoint creation date
+            "message": f"Se obtuvieron {result['count']} nombres únicos de centros gestores",
+            "metadata": {
+                "sorted": True,
+                "filtered_empty": True,
+                "normalized": True,
+                "cache_recommended": True,
+                "utf8_enabled": True
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error procesando nombres únicos de centros gestores: {str(e)}"
+        )
+
 # ============================================================================
 # ENDPOINTS DE FIREBASE
 # ============================================================================
@@ -607,6 +702,292 @@ async def get_firebase_collections_summary():
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error obteniendo resumen: {str(e)}")
+
+# ============================================================================
+# ENDPOINTS DE PROYECTOS DE INVERSIÓN
+# ============================================================================
+
+@app.get("/proyectos-presupuestales/all", tags=["Proyectos de Inversión"])
+async def get_proyectos_all():
+    """
+    ## Obtener Todos los Proyectos Presupuestales
+    
+    **Propósito**: Retorna todos los documentos de la colección "proyectos_presupuestales".
+    
+    ### ✅ Casos de uso:
+    - Obtener listado completo de proyectos presupuestales
+    - Exportación de datos para análisis
+    - Integración con sistemas externos
+    - Reportes y dashboards de proyectos de inversión
+    
+    ### 📊 Información incluida:
+    - Todos los campos disponibles en la colección
+    - ID del documento para referencia
+    - Conteo total de registros
+    - Timestamp de la consulta
+    
+    ### 📝 Ejemplo de uso:
+    ```javascript
+    const response = await fetch('/proyectos-presupuestales/all');
+    const data = await response.json();
+    if (data.success) {
+        console.log('Proyectos encontrados:', data.count);
+        console.log('Datos:', data.data);
+    }
+    ```
+    """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
+    
+    try:
+        result = await get_proyectos_presupuestales()
+        
+        if not result["success"]:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error obteniendo proyectos presupuestales: {result.get('error', 'Error desconocido')}"
+            )
+        
+        return {
+            "success": True,
+            "data": result["data"],
+            "count": result["count"],
+            "collection": result["collection"],
+            "timestamp": result["timestamp"],
+            "last_updated": "2025-10-04T00:00:00Z",  # Endpoint creation date
+            "message": f"Se obtuvieron {result['count']} proyectos presupuestales exitosamente"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error procesando proyectos presupuestales: {str(e)}"
+        )
+
+@app.get("/proyectos-presupuestales/bpin/{bpin}", tags=["Proyectos de Inversión"])
+async def get_proyectos_by_bpin(bpin: str):
+    """
+    ## Obtener Proyectos Presupuestales por BPIN
+    
+    **Propósito**: Retorna proyectos presupuestales filtrados por código BPIN específico.
+    
+    ### ✅ Casos de uso:
+    - Búsqueda de proyectos por código BPIN específico
+    - Consulta de detalles de proyecto individual
+    - Validación de existencia de BPIN
+    - Integración con sistemas de seguimiento presupuestal
+    
+    ### 🔍 Filtrado:
+    - **Campo**: `bpin` (coincidencia exacta)
+    - **Tipo**: String - Código único del proyecto
+    - **Sensible a mayúsculas**: Sí
+    
+    ### 📊 Información incluida:
+    - Todos los campos del proyecto que coincida con el BPIN
+    - ID del documento para referencia
+    - Conteo de registros encontrados
+    - Información del filtro aplicado
+    
+    ### 📝 Ejemplo de uso:
+    ```javascript
+    const bpin = "2023000123456";
+    const response = await fetch(`/proyectos-presupuestales/bpin/${bpin}`);
+    const data = await response.json();
+    if (data.success && data.count > 0) {
+        console.log('Proyecto encontrado:', data.data[0]);
+    } else {
+        console.log('No se encontró proyecto con BPIN:', bpin);
+    }
+    ```
+    
+    ### 💡 Notas:
+    - Si no se encuentra ningún proyecto, retorna array vacío
+    - El BPIN debe ser exacto (sin espacios adicionales)
+    - Típicamente retorna 0 o 1 resultado (BPIN único)
+    """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
+    
+    try:
+        result = await get_proyectos_presupuestales_by_bpin(bpin)
+        
+        if not result["success"]:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error obteniendo proyectos por BPIN: {result.get('error', 'Error desconocido')}"
+            )
+        
+        return {
+            "success": True,
+            "data": result["data"],
+            "count": result["count"],
+            "collection": result["collection"],
+            "filter": result["filter"],
+            "timestamp": result["timestamp"],
+            "last_updated": "2025-10-04T00:00:00Z",  # Endpoint creation date
+            "message": f"Se encontraron {result['count']} proyectos con BPIN '{bpin}'"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error procesando consulta por BPIN: {str(e)}"
+        )
+
+@app.get("/proyectos-presupuestales/bp/{bp}", tags=["Proyectos de Inversión"])
+async def get_proyectos_by_bp(bp: str):
+    """
+    ## Obtener Proyectos Presupuestales por BP
+    
+    **Propósito**: Retorna proyectos presupuestales filtrados por código BP específico.
+    
+    ### ✅ Casos de uso:
+    - Búsqueda de proyectos por código BP específico
+    - Consulta de proyectos relacionados por BP
+    - Análisis de agrupación presupuestal
+    - Reportes por código de proyecto base
+    
+    ### 🔍 Filtrado:
+    - **Campo**: `bp` (coincidencia exacta)
+    - **Tipo**: String - Código base del proyecto
+    - **Sensible a mayúsculas**: Sí
+    
+    ### 📊 Información incluida:
+    - Todos los campos de los proyectos que coincidan con el BP
+    - ID del documento para referencia
+    - Conteo de registros encontrados
+    - Información del filtro aplicado
+    
+    ### 📝 Ejemplo de uso:
+    ```javascript
+    const bp = "BP-2023-001";
+    const response = await fetch(`/proyectos-presupuestales/bp/${bp}`);
+    const data = await response.json();
+    if (data.success && data.count > 0) {
+        console.log(`Encontrados ${data.count} proyectos con BP:`, bp);
+        data.data.forEach(proyecto => {
+            console.log('Proyecto:', proyecto.nombre_proyecto);
+        });
+    }
+    ```
+    
+    ### 💡 Notas:
+    - Puede retornar múltiples proyectos (un BP puede tener varios proyectos)
+    - Si no se encuentra ningún proyecto, retorna array vacío
+    - El BP debe ser exacto (sin espacios adicionales)
+    """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
+    
+    try:
+        result = await get_proyectos_presupuestales_by_bp(bp)
+        
+        if not result["success"]:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error obteniendo proyectos por BP: {result.get('error', 'Error desconocido')}"
+            )
+        
+        return {
+            "success": True,
+            "data": result["data"],
+            "count": result["count"],
+            "collection": result["collection"],
+            "filter": result["filter"],
+            "timestamp": result["timestamp"],
+            "last_updated": "2025-10-04T00:00:00Z",  # Endpoint creation date
+            "message": f"Se encontraron {result['count']} proyectos con BP '{bp}'"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error procesando consulta por BP: {str(e)}"
+        )
+
+@app.get("/proyectos-presupuestales/centro-gestor/{nombre_centro_gestor}", tags=["Proyectos de Inversión"])
+async def get_proyectos_by_centro_gestor(nombre_centro_gestor: str):
+    """
+    ## Obtener Proyectos Presupuestales por Centro Gestor
+    
+    **Propósito**: Retorna proyectos presupuestales filtrados por nombre del centro gestor específico.
+    
+    ### ✅ Casos de uso:
+    - Consulta de proyectos por dependencia responsable
+    - Reportes por entidad gestora
+    - Dashboard por centro de responsabilidad
+    - Análisis de distribución institucional
+    - Seguimiento de proyectos por secretaría/departamento
+    
+    ### 🔍 Filtrado:
+    - **Campo**: `nombre_centro_gestor` (coincidencia exacta)
+    - **Tipo**: String - Nombre completo del centro gestor
+    - **Sensible a mayúsculas**: Sí
+    - **Espacios**: Sensible a espacios adicionales
+    
+    ### 📊 Información incluida:
+    - Todos los campos de los proyectos del centro gestor
+    - ID del documento para referencia
+    - Conteo de registros encontrados
+    - Información del filtro aplicado
+    
+    ### 📝 Ejemplo de uso:
+    ```javascript
+    const centroGestor = "Secretaría de Salud";
+    const response = await fetch(`/proyectos-presupuestales/centro-gestor/${encodeURIComponent(centroGestor)}`);
+    const data = await response.json();
+    if (data.success && data.count > 0) {
+        console.log(`${data.count} proyectos encontrados para:`, centroGestor);
+        const totalPresupuesto = data.data.reduce((sum, p) => sum + (p.presupuesto || 0), 0);
+        console.log('Presupuesto total:', totalPresupuesto);
+    }
+    ```
+    
+    ### 💡 Notas:
+    - Típicamente retorna múltiples proyectos por centro gestor
+    - El nombre debe ser exacto (use `/centros-gestores/nombres-unicos` para obtener nombres válidos)
+    - Para nombres con espacios, usar `encodeURIComponent()` en el frontend
+    - Si no se encuentra ningún proyecto, retorna array vacío
+    
+    ### 🔗 Endpoint relacionado:
+    - `GET /centros-gestores/nombres-unicos` - Para obtener lista de centros gestores válidos
+    """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
+    
+    try:
+        result = await get_proyectos_presupuestales_by_centro_gestor(nombre_centro_gestor)
+        
+        if not result["success"]:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error obteniendo proyectos por centro gestor: {result.get('error', 'Error desconocido')}"
+            )
+        
+        return {
+            "success": True,
+            "data": result["data"],
+            "count": result["count"],
+            "collection": result["collection"],
+            "filter": result["filter"],
+            "timestamp": result["timestamp"],
+            "last_updated": "2025-10-04T00:00:00Z",  # Endpoint creation date
+            "message": f"Se encontraron {result['count']} proyectos para el centro gestor '{nombre_centro_gestor}'"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error procesando consulta por centro gestor: {str(e)}"
+        )
 
 # ============================================================================
 # ENDPOINTS DE UNIDADES DE PROYECTO
@@ -1131,10 +1512,10 @@ async def get_filters_endpoint(
 
 
 # ============================================================================
-# ENDPOINTS DE GESTIÓN CONTRACTUAL
+# ENDPOINTS DE INTEROPERABILIDAD CON ARTEFACTO DE SEGUIMIENTO
 # ============================================================================
 
-@app.get("/contratos/init_contratos_seguimiento", tags=["Gestión Contractual"])
+@app.get("/contratos/init_contratos_seguimiento", tags=["Interoperabilidad con Artefacto de Seguimiento"])
 async def init_contratos_seguimiento(
     referencia_contrato: Optional[str] = Query(None, description="Referencia del contrato (búsqueda parcial)"),
     nombre_centro_gestor: Optional[str] = Query(None, description="Centro gestor responsable (exacto)")
