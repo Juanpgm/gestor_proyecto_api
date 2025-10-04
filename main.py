@@ -1546,214 +1546,62 @@ async def change_password(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error cambiando contraseña: {str(e)}")
 
-@app.get("/auth/config", tags=["Administración y Control de Accesos"])
-async def get_auth_config():
+@app.get("/auth/config", tags=["Integración con el Frontend (NextJS)"])
+async def get_firebase_config():
     """
-    ## ⚙️ Configuración de Autenticación para Next.js
+    ## � Configuración Básica de Firebase para Frontend
     
-    Obtiene la configuración necesaria para integrar Firebase Auth en el frontend.
+    **ENDPOINT PÚBLICO** - Acceso directo desde frontend.
     
-    ### 📋 Información incluida:
-    - ID del proyecto Firebase
-    - Configuración de Firebase para frontend
-    - Endpoints disponibles
-    - Dominios autorizados
-    - Requisitos de contraseña
-    - Métodos de autenticación habilitados
+    Proporciona configuración mínima necesaria para Firebase Auth en frontend.
     
-    ### 📝 Ejemplo de uso desde Next.js:
-    ```javascript
-    // Obtener configuración del backend
-    const configResponse = await fetch('/auth/config');
-    const config = await configResponse.json();
+    ### �️ Seguridad:
+    - Información pública solamente
+    - Datos mínimos necesarios para SDK
+    - Sin exposición de endpoints internos
+    - Sin detalles de configuración sensibles
     
-    // Usar en Firebase config
-    const firebaseConfig = {
-        ...config.firebase_config,
-        // Otras configuraciones específicas del frontend
-    };
-    ```
+    ### � Información incluida:
+    - Project ID de Firebase (público)
+    - Auth Domain de Firebase (público)
+    
+    ### 🎯 Uso:
+    - Inicialización de Firebase SDK en frontend
+    - Configuración de autenticación client-side
     """
+    # Solo información esencial para Firebase SDK
     return {
-        "success": True,
-        "firebase_config": {
-            "projectId": PROJECT_ID,
-            "authDomain": f"{PROJECT_ID}.firebaseapp.com",
-            "databaseURL": f"https://{PROJECT_ID}-default-rtdb.firebaseio.com",
-            "storageBucket": f"{PROJECT_ID}.appspot.com"
-        },
-        "auth_settings": {
-            "domain_restriction": "@cali.gov.co",
-            "password_requirements": {
-                "min_length": 8,
-                "require_uppercase": True,
-                "require_lowercase": True,
-                "require_numbers": True,
-                "require_special": True
-            },
-            "email_verification_required": True,
-            "google_auth_enabled": True,
-            "phone_format": "+57 3XX XXX XXXX",
-            "default_role": "viewer"
-        },
-        "endpoints": {
-            "validate_session": "/auth/validate-session",
-            "login": "/auth/login", 
-            "register": "/auth/register",
-            "google_auth": "/auth/google",
-            "config": "/auth/config"
-        },
-        "auth_methods": [
-            {
-                "method": "email_password",
-                "enabled": True,
-                "description": "Email y contraseña"
-            },
-            {
-                "method": "google",
-                "enabled": True,
-                "description": "Autenticación con Google",
-                "domain_required": "@cali.gov.co"
-            }
-        ],
-        "integration_notes": {
-            "firebase_auth_required": True,
-            "backend_validates_only": True,
-            "frontend_auth_flow": "El frontend debe manejar la autenticación con Firebase Auth SDK",
-            "token_validation": "Usar /auth/validate-session para validar tokens en el backend"
-        },
-        "timestamp": datetime.now().isoformat()
+        "projectId": PROJECT_ID,
+        "authDomain": f"{PROJECT_ID}.firebaseapp.com"
     }
 
-@app.get("/auth/integration-guide", tags=["Administración y Control de Accesos"])
-async def get_integration_guide():
-    """
-    ## 📖 Guía de Integración Completa para Next.js
-    
-    **TODO LO QUE NECESITAS** para integrar autenticación Firebase en Next.js.
-    
-    ### 🎯 **Flujo de Autenticación Recomendado**
-    
-    ### 📋 **1. Configuración Inicial**
-    ```javascript
-    // firebase.js - Configuración de Firebase
-    import { initializeApp } from 'firebase/app';
-    import { getAuth } from 'firebase/auth';
-    
-    // Obtener configuración del backend
-    const configResponse = await fetch('/auth/config');
-    const config = await configResponse.json();
-    
-    const firebaseConfig = config.firebase_config;
-    const app = initializeApp(firebaseConfig);
-    export const auth = getAuth(app);
-    ```
-    
-    ### 🔑 **2. Login con Email/Password**
-    ```javascript
-    import { signInWithEmailAndPassword } from 'firebase/auth';
-    
-    async function loginUser(email, password) {
-        try {
-            // 1. Validar credenciales en backend
-            const validateResponse = await fetch('/auth/login', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email, password })
-            });
-            
-            if (validateResponse.ok) {
-                // 2. Autenticar en frontend
-                const userCredential = await signInWithEmailAndPassword(auth, email, password);
-                console.log('Usuario autenticado:', userCredential.user);
-                return userCredential.user;
-            }
-        } catch (error) {
-            console.error('Error en login:', error);
-        }
-    }
-    ```
-    
-    ### 👤 **3. Registro de Usuario**
-    ```javascript
-    async function registerUser(userData) {
-        const response = await fetch('/auth/register', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(userData)
-        });
-        return await response.json();
-    }
-    ```
-    
-    ### 🔐 **4. Validación de Sesión**
-    ```javascript
-    import { onAuthStateChanged } from 'firebase/auth';
-    
-    onAuthStateChanged(auth, async (user) => {
-        if (user) {
-            const idToken = await user.getIdToken();
-            const response = await fetch('/auth/validate-session', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${idToken}`
-                }
-            });
-            const sessionData = await response.json();
-            console.log('Sesión válida:', sessionData);
-        }
-    });
-    ```
-    """
-    return {
-        "integration_complexity": "moderate",
-        "framework": "Next.js + Firebase Auth SDK",
-        "key_endpoints": {
-            "config": "/auth/config",
-            "login": "/auth/login",
-            "register": "/auth/register", 
-            "validate_session": "/auth/validate-session",
-            "google_auth": "/auth/google"
-        },
-        "auth_flow": {
-            "step_1": "Frontend obtiene configuración desde /auth/config",
-            "step_2": "Frontend inicializa Firebase Auth SDK",
-            "step_3": "Backend valida credenciales en /auth/login",
-            "step_4": "Frontend autentica con Firebase Auth SDK",
-            "step_5": "Backend valida tokens en /auth/validate-session"
-        },
-        "required_packages": [
-            "firebase@^10.0.0",
-            "next@^14.0.0"
-        ],
-        "security_notes": [
-            "Backend NO maneja autenticación directa por seguridad",
-            "Frontend debe usar Firebase Auth SDK para autenticación real", 
-            "Backend solo valida tokens y proporciona datos de usuario",
-            "Tokens ID de Firebase son la fuente de verdad para autenticación"
-        ]
-    }
+# ENDPOINT REMOVIDO: /auth/integration-guide
+# Razón: Documentación estática mejor manejada externamente
+# Fecha: 2025-10-04
+# La documentación de integración está disponible en README.md
 
 @app.get("/auth/workload-identity/status", tags=["Administración y Control de Accesos"])
 async def get_workload_identity_status():
     """
-    ## 🔍 Estado de Workload Identity Federation
+    ## 🔍 Estado de Autenticación con Google Cloud
     
-    Verifica el estado actual del sistema de autenticación automática con Google Cloud.
+    **ENDPOINT DE DIAGNÓSTICO** - Verifica el estado de autenticación con Google Cloud.
     
     ### 📊 Información incluida:
-    - Estado de inicialización de Workload Identity
-    - Validez de credenciales automáticas
-    - Configuración OAuth2 disponible
-    - Integración con Firebase
+    - Estado de Service Account Key o Workload Identity
+    - Validez de credenciales con Google Cloud
+    - Configuración de Firebase
     - Nivel de seguridad actual
     
     ### 🛠️ Útil para:
+    - Verificar configuración después de deployment en Railway
     - Diagnóstico de problemas de autenticación
-    - Verificar configuración automática
     - Auditoría de seguridad
     - Monitoreo del sistema
+    
+    ### ⚠️ Nota:
+    Este endpoint es principalmente para diagnóstico. En producción,
+    considera eliminar o restringir acceso por seguridad.
     """
     try:
         from api.scripts.workload_identity_auth import get_workload_identity_status
