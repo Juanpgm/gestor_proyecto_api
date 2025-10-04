@@ -207,6 +207,7 @@ railway-config-summary.txt
 railway-workload-identity.json
 .env.railway
 .env.production
+RAILWAY_WIF_SETUP.md
 
 # Firebase and Google Cloud credentials
 firebase-adminsdk-*.json
