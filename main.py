@@ -1663,19 +1663,31 @@ async def validate_session(
                 }
             )
         
-        return {
-            "success": True,
-            "session_valid": True,
-            "user": result["user"],
-            "token_info": result.get("token_data", {}),
-            "verified_at": result["verified_at"],
-            "message": "Sesión válida"
-        }
+        return JSONResponse(
+            content={
+                "success": True,
+                "session_valid": True,
+                "user": result.get("user", {}),
+                "token_info": result.get("token_data", {}),
+                "verified_at": result.get("verified_at"),
+                "message": "Sesión válida"
+            },
+            status_code=200,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
         
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error validando sesión: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail={
+                "success": False,
+                "error": "Error interno del servidor",
+                "message": "Ocurrió un error inesperado durante la validación de sesión",
+                "code": "INTERNAL_SERVER_ERROR"
+            }
+        )
 
 @app.post("/auth/login", tags=["Administración y Control de Accesos"])
 async def login_user(
@@ -2039,24 +2051,52 @@ async def change_password(
         
         result = await update_user_password(uid, new_password)
         
-        if not result["success"]:
+        if not result.get("success", False):
             error_code = result.get("code", "PASSWORD_UPDATE_ERROR")
+            error_message = result.get("error", "Error actualizando contraseña")
+            
             if error_code == "USER_NOT_FOUND":
-                raise HTTPException(status_code=404, detail=result["error"])
+                raise HTTPException(
+                    status_code=404, 
+                    detail={
+                        "success": False,
+                        "error": error_message,
+                        "code": error_code
+                    }
+                )
             else:
-                raise HTTPException(status_code=400, detail=result)
+                raise HTTPException(
+                    status_code=400, 
+                    detail={
+                        "success": False,
+                        "error": error_message,
+                        "code": error_code
+                    }
+                )
         
-        return {
-            "success": True,
-            "message": result["message"],
-            "updated_at": result["updated_at"],
-            "timestamp": datetime.now().isoformat()
-        }
+        return JSONResponse(
+            content={
+                "success": True,
+                "message": result.get("message", "Contraseña actualizada exitosamente"),
+                "updated_at": result.get("updated_at"),
+                "timestamp": datetime.now().isoformat()
+            },
+            status_code=200,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
         
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error cambiando contraseña: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail={
+                "success": False,
+                "error": "Error interno del servidor",
+                "message": "Ocurrió un error inesperado durante el cambio de contraseña",
+                "code": "INTERNAL_SERVER_ERROR"
+            }
+        )
 
 @app.get("/auth/config", tags=["Integración con el Frontend (NextJS)"])
 async def get_firebase_config():
@@ -2233,7 +2273,7 @@ async def google_auth_unified(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unexpected error in Google auth: {e}")
+        print(f"Unexpected error in Google auth: {e}")  # Usar print en lugar de logger
         raise HTTPException(status_code=500, detail={
             "error": "Error interno del servidor",
             "message": "Por favor, inténtelo de nuevo más tarde",
@@ -2283,25 +2323,53 @@ async def delete_user(uid: str, soft_delete: Optional[bool] = Query(default=None
         
         result = await delete_user_account(uid, soft_delete if soft_delete is not None else True)
         
-        if not result["success"]:
+        if not result.get("success", False):
             error_code = result.get("code", "USER_DELETE_ERROR")
+            error_message = result.get("error", "Error eliminando usuario")
+            
             if error_code == "USER_NOT_FOUND":
-                raise HTTPException(status_code=404, detail=result["error"])
+                raise HTTPException(
+                    status_code=404, 
+                    detail={
+                        "success": False,
+                        "error": error_message,
+                        "code": error_code
+                    }
+                )
             else:
-                raise HTTPException(status_code=400, detail=result["error"])
+                raise HTTPException(
+                    status_code=400, 
+                    detail={
+                        "success": False,
+                        "error": error_message,
+                        "code": error_code
+                    }
+                )
         
-        return {
-            "success": True,
-            "message": result["message"],
-            "deleted_at": result["deleted_at"],
-            "soft_delete": result["soft_delete"],
-            "timestamp": datetime.now().isoformat()
-        }
+        return JSONResponse(
+            content={
+                "success": True,
+                "message": result.get("message", "Usuario eliminado exitosamente"),
+                "deleted_at": result.get("deleted_at"),
+                "soft_delete": result.get("soft_delete", True),
+                "timestamp": datetime.now().isoformat()
+            },
+            status_code=200,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
         
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error eliminando usuario: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail={
+                "success": False,
+                "error": "Error interno del servidor",
+                "message": "Ocurrió un error inesperado durante la eliminación",
+                "code": "INTERNAL_SERVER_ERROR"
+            }
+        )
 
 # ============================================================================
 # ENDPOINTS ADMINISTRATIVOS DE USUARIOS
@@ -2353,28 +2421,113 @@ async def list_system_users(
         result = await list_users(
             limit=limit,
             page_token=page_token,
-            filter_by_role=filter_by_role.value if filter_by_role else None,
-            filter_by_centro_gestor=filter_by_centro_gestor.value if filter_by_centro_gestor else None,
+            filter_by_role=filter_by_role,
+            filter_by_centro_gestor=filter_by_centro_gestor,
             include_disabled=include_disabled if include_disabled is not None else False
         )
         
-        if not result["success"]:
-            raise HTTPException(status_code=500, detail=result["error"])
+        if not result.get("success", False):
+            raise HTTPException(
+                status_code=500, 
+                detail={
+                    "success": False,
+                    "error": result.get("error", "Error obteniendo lista de usuarios"),
+                    "code": "USER_LIST_ERROR"
+                }
+            )
         
-        return {
-            "success": True,
-            "users": result["users"],
-            "count": result["count"],
-            "has_next_page": result["has_next_page"],
-            "next_page_token": result["next_page_token"],
-            "filters_applied": result["filters_applied"],
-            "timestamp": datetime.now().isoformat()
-        }
+        return JSONResponse(
+            content={
+                "success": True,
+                "users": result.get("users", []),
+                "count": result.get("count", 0),
+                "has_next_page": result.get("has_next_page", False),
+                "next_page_token": result.get("next_page_token"),
+                "filters_applied": result.get("filters_applied", {}),
+                "timestamp": datetime.now().isoformat()
+            },
+            status_code=200,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
         
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error listando usuarios: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail={
+                "success": False,
+                "error": "Error interno del servidor",
+                "message": "Ocurrió un error inesperado al listar usuarios",
+                "code": "INTERNAL_SERVER_ERROR"
+            }
+        )
+
+@app.get("/admin/users/stats", tags=["Administración y Control de Accesos"])
+async def get_user_statistics():
+    """
+    ## 📊 Estadísticas de Usuarios del Sistema
+    
+    Obtiene métricas agregadas sobre usuarios registrados en el sistema.
+    
+    ### ✅ Casos de uso:
+    - Dashboard administrativo
+    - Reportes ejecutivos
+    - Análisis de adopción del sistema
+    - Métricas de seguridad
+    
+    ### 📊 Métricas incluidas:
+    - Total de usuarios registrados
+    - Usuarios activos vs inactivos
+    - Distribución por roles
+    - Distribución por centro gestor
+    - Tasas de verificación de email
+    - Usuarios habilitados para Google Auth
+    
+    ### 💡 Información adicional:
+    - Porcentajes calculados automáticamente
+    - Datos agregados para proteger privacidad
+    - Actualización en tiempo real
+    """
+    try:
+        check_user_management_availability()
+        
+        result = await get_user_statistics()
+        
+        if not result.get("success", False):
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "success": False,
+                    "error": result.get("error", "Error obteniendo estadísticas"),
+                    "code": "STATISTICS_ERROR"
+                }
+            )
+        
+        return JSONResponse(
+            content={
+                "success": True,
+                "statistics": result.get("statistics", {}),
+                "generated_at": result.get("generated_at"),
+                "timestamp": datetime.now().isoformat(),
+                "message": "Estadísticas obtenidas exitosamente"
+            },
+            status_code=200,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "success": False,
+                "error": "Error interno del servidor",
+                "message": "Ocurrió un error inesperado al obtener estadísticas",
+                "code": "INTERNAL_SERVER_ERROR"
+            }
+        )
 
 # ============================================================================
 # SERVIDOR
