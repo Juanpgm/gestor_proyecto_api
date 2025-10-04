@@ -417,27 +417,7 @@ async def test_utf8():
     
     return create_utf8_response(test_data)
 
-@app.post("/test/register-simple", tags=["General"])
-async def test_register_simple():
-    """Endpoint de prueba simple para debugging de registro"""
-    try:
-        return {
-            "success": True,
-            "message": "Test endpoint funcionando",
-            "timestamp": datetime.now().isoformat(),
-            "availability": {
-                "USER_MANAGEMENT_AVAILABLE": USER_MANAGEMENT_AVAILABLE,
-                "AUTH_OPERATIONS_AVAILABLE": AUTH_OPERATIONS_AVAILABLE,
-                "USER_MODELS_AVAILABLE": USER_MODELS_AVAILABLE,
-                "FIREBASE_AVAILABLE": FIREBASE_AVAILABLE
-            }
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "error": str(e),
-            "error_type": type(e).__name__
-        }
+
 
 @app.get("/debug/railway", tags=["General"])
 async def railway_debug():
@@ -1821,8 +1801,6 @@ async def login_user(
     except HTTPException:
         raise
     except Exception as e:
-        # Log del error para debug
-        print(f"Error inesperado en login_user: {type(e).__name__}: {str(e)}")
         raise HTTPException(
             status_code=500, 
             detail={
@@ -1987,42 +1965,26 @@ async def register_user(
                 )
         
         # Si llegamos aquí, la creación fue exitosa
-        print(f"✅ Usuario creado exitosamente: {result.get('user', {}).get('email', 'unknown')}")
+        response_data = {
+            "success": True,
+            "user": result.get("user", {}),
+            "message": result.get("message", "Usuario creado exitosamente"),
+            "timestamp": datetime.now().isoformat()
+        }
         
-        # Crear respuesta simple y limpia
-        try:
-            response_data = {
-                "success": True,
-                "user": result.get("user", {}),
-                "message": result.get("message", "Usuario creado exitosamente"),
-                "timestamp": datetime.now().isoformat()
-            }
-            
-            # Agregar verification_link solo si existe
-            if result.get("verification_link"):
-                response_data["verification_link"] = result["verification_link"]
-            
-            print(f"✅ Response data prepared: {response_data['success']}")
-            
-            return JSONResponse(
-                content=response_data,
-                status_code=201,
-                headers={"Content-Type": "application/json; charset=utf-8"}
-            )
-        except Exception as response_error:
-            print(f"❌ Error creando respuesta: {response_error}")
-            # Fallback a respuesta básica
-            return {
-                "success": True,
-                "message": "Usuario creado exitosamente",
-                "user": {"email": email}
-            }
+        # Agregar verification_link solo si existe
+        if result.get("verification_link"):
+            response_data["verification_link"] = result["verification_link"]
+        
+        return JSONResponse(
+            content=response_data,
+            status_code=201,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
         
     except HTTPException:
         raise
     except Exception as e:
-        # Log del error para debug
-        print(f"Error inesperado en register_user: {type(e).__name__}: {str(e)}")
         raise HTTPException(
             status_code=500, 
             detail={
