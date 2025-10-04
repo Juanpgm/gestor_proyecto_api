@@ -216,7 +216,7 @@ def main():
         return
     
     # Obtener project ID
-    project_id = "dev-test-e778d"  # Tu proyecto
+    project_id = "your-project-id"  # Tu proyecto
     print(f"🎯 Proyecto: {project_id}")
     
     # Obtener project number
