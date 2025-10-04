@@ -16,9 +16,16 @@ class UserRegistrationRequest(BaseModel):
     """Registro de usuario nuevo"""
     email: EmailStr
     password: str
-    fullname: str
+    confirmPassword: str
+    name: str  # Campo principal para compatibilidad con frontend
     cellphone: str
     nombre_centro_gestor: str
+    
+    @validator('confirmPassword')
+    def passwords_match(cls, v, values):
+        if 'password' in values and v != values['password']:
+            raise ValueError('Las contraseñas no coinciden')
+        return v
     
     @validator('cellphone')
     def validate_cellphone(cls, v):

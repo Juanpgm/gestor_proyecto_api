@@ -1904,16 +1904,18 @@ async def register_user(registration_data: UserRegistrationRequest):
     ### 📋 Requisitos:
     - **Email**: Debe ser del dominio @cali.gov.co
     - **Contraseña**: Mínimo 8 caracteres, mayúsculas, minúsculas, números y símbolos
+    - **Confirmar Contraseña**: Debe coincidir exactamente con la contraseña
     - **Teléfono**: Formato colombiano válido (+57 3XX XXX XXXX)
-    - **Nombre completo**: Mínimo 2 palabras
+    - **Nombre completo**: Campo 'name' requerido (mínimo 2 palabras)
     - **Centro gestor**: Nombre del centro gestor responsable
     
-    ### 📝 Ejemplo de uso desde Next.js:
+    ### 📝 Ejemplo de uso desde Next.js (compatible con authService):
     ```javascript
     const userData = {
+      name: "María González",              // Campo requerido
       email: "maria.gonzalez@cali.gov.co",
       password: "SecurePass123!",
-      fullname: "María González",
+      confirmPassword: "SecurePass123!",   // Debe coincidir con password
       cellphone: "+57 315 987 6543",
       nombre_centro_gestor: "Secretaría de Salud"
     };
@@ -1937,7 +1939,7 @@ async def register_user(registration_data: UserRegistrationRequest):
         result = await create_user_account(
             email=registration_data.email,
             password=registration_data.password,
-            fullname=registration_data.fullname,
+            fullname=registration_data.name,  # Usar el campo 'name' directamente
             cellphone=registration_data.cellphone,
             nombre_centro_gestor=registration_data.nombre_centro_gestor,
             send_email_verification=True
