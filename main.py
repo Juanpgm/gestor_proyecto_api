@@ -2418,13 +2418,53 @@ async def list_system_users(
     try:
         check_user_management_availability()
         
-        result = await list_users(
-            limit=limit,
-            page_token=page_token,
-            filter_by_role=filter_by_role,
-            filter_by_centro_gestor=filter_by_centro_gestor,
-            include_disabled=include_disabled if include_disabled is not None else False
-        )
+        # Llamar a la función list_users de forma más segura
+        try:
+            result = await list_users(
+                limit=limit,
+                page_token=page_token,
+                filter_by_role=filter_by_role,
+                filter_by_centro_gestor=filter_by_centro_gestor,
+                include_disabled=include_disabled if include_disabled is not None else False
+            )
+        except Exception as list_error:
+            print(f"Error in list_users function: {list_error}")
+            # Fallback a versión simple
+            from firebase_admin import auth as firebase_auth
+            from database.firebase_config import get_auth_client
+            
+            auth_client = get_auth_client()
+            page = auth_client.list_users(max_results=min(limit, 10))
+            
+            simple_users = []
+            for user in page.users:
+                simple_user = {
+                    "uid": user.uid,
+                    "email": user.email or "No email",
+                    "display_name": user.display_name or "Sin nombre",
+                    "disabled": user.disabled,
+                    "email_verified": user.email_verified,
+                    "creation_time": None,
+                    "last_sign_in": None,
+                    "custom_claims": user.custom_claims or {},
+                    "providers": [],
+                    "firestore_data": {}
+                }
+                simple_users.append(simple_user)
+            
+            result = {
+                "success": True,
+                "users": simple_users,
+                "count": len(simple_users),
+                "has_next_page": page.has_next_page,
+                "next_page_token": page.next_page_token,
+                "filters_applied": {
+                    "role": filter_by_role,
+                    "centro_gestor": filter_by_centro_gestor,
+                    "include_disabled": include_disabled
+                },
+                "fallback_mode": True
+            }
         
         if not result.get("success", False):
             raise HTTPException(
@@ -2463,57 +2503,59 @@ async def list_system_users(
             }
         )
 
-@app.get("/admin/users/test", tags=["Administración y Control de Accesos"])
-async def test_user_listing():
+@app.get("/admin/users/simple", tags=["Administración y Control de Accesos"])
+async def simple_user_list():
     """
-    ## 🧪 Test de Listado de Usuarios - Diagnóstico
+    ## 📋 Lista Simple de Usuarios
     
-    Endpoint de prueba para diagnosticar problemas con el listado de usuarios.
+    Versión simplificada del listado de usuarios sin filtros complejos.
     """
     try:
         check_user_management_availability()
         
-        # Importar aquí para debug
-        from firebase_admin import auth
-        from database.firebase_config import get_firestore_client, get_auth_client
+        # Importar directamente las funciones necesarias
+        from firebase_admin import auth as firebase_auth
+        from database.firebase_config import get_auth_client
         
         auth_client = get_auth_client()
         
-        # Probar obtener usuarios de forma simple
-        page = auth_client.list_users(max_results=2)
+        # Obtener primeros usuarios
+        page = auth_client.list_users(max_results=5)
         
-        users_simple = []
+        users_list = []
         for user in page.users:
-            try:
-                user_simple = {
-                    "uid": user.uid,
-                    "email": user.email,
-                    "display_name": user.display_name,
-                    "disabled": user.disabled,
-                    "email_verified": user.email_verified
-                }
-                users_simple.append(user_simple)
-            except Exception as user_error:
-                users_simple.append({
-                    "uid": getattr(user, 'uid', 'unknown'),
-                    "error": str(user_error)
-                })
+            user_info = {
+                "uid": user.uid,
+                "email": user.email or "No email",
+                "display_name": user.display_name or "Sin nombre",
+                "disabled": user.disabled,
+                "email_verified": user.email_verified
+            }
+            users_list.append(user_info)
         
-        return {
-            "success": True,
-            "users": users_simple,
-            "count": len(users_simple),
-            "total_found": len(page.users),
-            "message": "Test exitoso"
-        }
+        return JSONResponse(
+            content={
+                "success": True,
+                "users": users_list,
+                "count": len(users_list),
+                "has_next_page": page.has_next_page,
+                "message": "Lista simple obtenida exitosamente"
+            },
+            status_code=200,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
         
     except Exception as e:
-        return {
-            "success": False,
-            "error": str(e),
-            "error_type": type(e).__name__,
-            "message": "Error en test de usuarios"
-        }
+        return JSONResponse(
+            content={
+                "success": False,
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "message": "Error obteniendo lista simple"
+            },
+            status_code=500,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
 
 @app.get("/admin/users/stats", tags=["Administración y Control de Accesos"])
 async def get_user_statistics():
