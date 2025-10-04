@@ -14,6 +14,7 @@ from functools import lru_cache
 
 import firebase_admin
 from firebase_admin import credentials, firestore, auth
+import google.auth.transport.requests
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -86,7 +87,7 @@ def decode_service_account(encoded_key: str) -> Dict[str, Any]:
 # Core Firebase initialization functions
 @lru_cache(maxsize=1)
 def initialize_firebase_app() -> firebase_admin.App:
-    """Initialize Firebase app with appropriate credentials and automatic fallback"""
+    """Initialize Firebase app with appropriate credentials and robust Railway fallback"""
     try:
         return firebase_admin.get_app()
     except ValueError:
@@ -94,42 +95,53 @@ def initialize_firebase_app() -> firebase_admin.App:
     
     logger.info(f"🚀 Initializing Firebase: {PROJECT_ID}")
     
-    # ESTRATEGIA DE FALLBACK AUTOMÁTICO: WIF > ADC > Service Account Key
+    # ESTRATEGIA DE FALLBACK ROBUSTO: WIF > Service Account Key > ADC
+    # Cambio: Service Account como fallback preferido para Railway
     
-    # 1. Intentar Workload Identity Federation
+    # 1. Intentar Workload Identity Federation (pero con manejo robusto de errores)
     if is_workload_identity_available():
         try:
             logger.info("🔐 Attempting Workload Identity Federation...")
             return _init_with_workload_identity()
         except Exception as e:
-            logger.warning(f"⚠️ Workload Identity failed: {e}")
-            logger.info("🔄 Falling back to next authentication method...")
+            error_msg = str(e)
+            logger.warning(f"⚠️ Workload Identity failed: {error_msg}")
+            
+            # Detección específica de errores de Railway WIF
+            if "RefreshError" in error_msg or "Identity Pool" in error_msg:
+                logger.error("🚨 Railway WIF Token Issue Detected!")
+                logger.error("💡 Railway OIDC endpoint is not working properly")
+                logger.info("🔄 Attempting Service Account fallback immediately...")
+            else:
+                logger.info("🔄 Falling back to next authentication method...")
     
-    # 2. Intentar Application Default Credentials
-    if _adc_available():
-        try:
-            logger.info("🔑 Attempting Application Default Credentials...")
-            return _init_with_adc()
-        except Exception as e:
-            logger.warning(f"⚠️ ADC failed: {e}")
-            logger.info("🔄 Falling back to Service Account Key...")
-    
-    # 3. Fallback a Service Account Key
+    # 2. Service Account Key (fallback confiable para Railway)
     if get_service_account_key():
         try:
-            logger.info("📋 Using Service Account Key (fallback)...")
+            logger.info("� Using Service Account Key (Railway fallback)...")
             return _init_with_service_account()
         except Exception as e:
             logger.error(f"❌ Service Account Key failed: {e}")
+            logger.info("🔄 Trying Application Default Credentials as last resort...")
+    
+    # 3. Application Default Credentials (último recurso para desarrollo local)
+    if _adc_available():
+        try:
+            logger.info("� Attempting Application Default Credentials...")
+            return _init_with_adc()
+        except Exception as e:
+            logger.warning(f"⚠️ ADC failed: {e}")
             raise RuntimeError(f"All authentication methods failed. Last error: {e}")
     
     # 4. No hay métodos de autenticación disponibles
-    raise RuntimeError(
-        "No authentication method available. Configure one of: "
-        "GOOGLE_APPLICATION_CREDENTIALS_JSON (WIF), "
-        "GOOGLE_APPLICATION_CREDENTIALS (ADC), or "
-        "FIREBASE_SERVICE_ACCOUNT_KEY (Service Account)"
+    error_message = (
+        "No authentication method available. For Railway deployment:\n"
+        "1. Set FIREBASE_SERVICE_ACCOUNT_KEY (recommended for Railway)\n"
+        "2. Or fix GOOGLE_APPLICATION_CREDENTIALS_JSON (WIF)\n"
+        "3. For local development: run 'gcloud auth application-default login'"
     )
+    logger.error(f"❌ {error_message}")
+    raise RuntimeError(error_message)
 
 def _init_with_service_account() -> firebase_admin.App:
     """Initialize with service account credentials"""
@@ -146,28 +158,62 @@ def _init_with_service_account() -> firebase_admin.App:
     return app
 
 def _init_with_workload_identity() -> firebase_admin.App:
-    """Initialize with Workload Identity Federation"""
-    # WIF credentials from JSON string in environment variable
+    """Initialize with Workload Identity Federation with robust error handling"""
     wif_creds_json = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
     if wif_creds_json:
-        import tempfile
-        import json
-        
-        # Create temporary credentials file for WIF
-        creds_data = json.loads(wif_creds_json)
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-            json.dump(creds_data, f)
-            temp_creds_file = f.name
-        
-        # Set the environment variable for ADC to use
-        os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = temp_creds_file
-        logger.info("✅ Workload Identity credentials configured")
+        try:
+            import tempfile
+            import json
+            
+            # Create temporary credentials file for WIF
+            creds_data = json.loads(wif_creds_json)
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+                json.dump(creds_data, f)
+                temp_creds_file = f.name
+            
+            # Set the environment variable for ADC to use
+            os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = temp_creds_file
+            logger.info("✅ Workload Identity credentials configured")
+            
+            # Try to initialize with WIF credentials
+            cred = credentials.ApplicationDefault()
+            
+            # Test if credentials work by trying to refresh them
+            if not cred.valid:
+                try:
+                    cred.refresh(google.auth.transport.requests.Request())
+                except Exception as refresh_error:
+                    logger.error(f"❌ WIF token refresh failed: {refresh_error}")
+                    # If refresh fails, raise an exception to trigger fallback
+                    raise RuntimeError(f"WIF authentication failed: {refresh_error}")
+            
+            app = firebase_admin.initialize_app(cred, {'projectId': PROJECT_ID})
+            logger.info("✅ Firebase initialized with Workload Identity Federation")
+            return app
+            
+        except Exception as wif_error:
+            logger.error(f"❌ Workload Identity initialization failed: {wif_error}")
+            logger.info("🔄 Attempting Service Account fallback...")
+            # Clear the temp file if it was created
+            try:
+                if 'temp_creds_file' in locals():
+                    os.unlink(temp_creds_file)
+                if 'GOOGLE_APPLICATION_CREDENTIALS' in os.environ:
+                    del os.environ['GOOGLE_APPLICATION_CREDENTIALS']
+            except:
+                pass
+            # Raise error to trigger fallback
+            raise RuntimeError(f"WIF failed, attempting fallback: {wif_error}")
     
-    # Use Application Default Credentials (which will now use WIF)
-    cred = credentials.ApplicationDefault()
-    app = firebase_admin.initialize_app(cred, {'projectId': PROJECT_ID})
-    logger.info("✅ Firebase initialized with Workload Identity Federation")
-    return app
+    # If no WIF credentials, try Application Default Credentials
+    try:
+        cred = credentials.ApplicationDefault()
+        app = firebase_admin.initialize_app(cred, {'projectId': PROJECT_ID})
+        logger.info("✅ Firebase initialized with Application Default Credentials")
+        return app
+    except Exception as adc_error:
+        logger.error(f"❌ Application Default Credentials failed: {adc_error}")
+        raise RuntimeError(f"Both WIF and ADC failed: {adc_error}")
 
 def _adc_available() -> bool:
     """Check if Application Default Credentials are available"""

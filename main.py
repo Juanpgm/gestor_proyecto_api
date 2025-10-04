@@ -661,14 +661,34 @@ async def export_geometry_for_nextjs(
     - Integración con bibliotecas cartográficas
     - Visualización masiva de geometrías
     """
+    # Verificación robusta de Firebase con reintentos
     if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
-        return {
-            "success": False,
-            "error": "Firebase temporarily unavailable",
-            "data": [],
-            "count": 0,
-            "type": "geometry"
-        }
+        # Intentar reconfigurar Firebase como último recurso
+        try:
+            print("⚠️ Attempting Firebase reconfiguration...")
+            firebase_initialized, status = configure_firebase()
+            if firebase_initialized:
+                print("✅ Firebase reconfiguration successful")
+            else:
+                print(f"❌ Firebase reconfiguration failed: {status.get('error', 'Unknown error')}")
+                return {
+                    "success": False,
+                    "error": "Firebase not available - check Railway environment variables",
+                    "data": [],
+                    "count": 0,
+                    "type": "geometry",
+                    "help": "Verify FIREBASE_SERVICE_ACCOUNT_KEY or GOOGLE_APPLICATION_CREDENTIALS_JSON",
+                    "railway_fix": "Run generate_railway_fallback.py to create Service Account fallback"
+                }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Firebase configuration failed: {str(e)}",
+                "data": [],
+                "count": 0,
+                "type": "geometry",
+                "help": "Check Railway environment variables or use Service Account fallback"
+            }
     
     try:
         # Construir filtros optimizados para geometrías
@@ -776,14 +796,34 @@ async def export_attributes_for_nextjs(
     - Exportación a formatos estructurados
     - Interfaces de búsqueda avanzada
     """
+    # Verificación robusta de Firebase con reintentos
     if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
-        return {
-            "success": False,
-            "error": "Firebase temporarily unavailable", 
-            "data": [],
-            "count": 0,
-            "type": "attributes"
-        }
+        # Intentar reconfigurar Firebase como último recurso
+        try:
+            print("⚠️ Attempting Firebase reconfiguration...")
+            firebase_initialized, status = configure_firebase()
+            if firebase_initialized:
+                print("✅ Firebase reconfiguration successful")
+            else:
+                print(f"❌ Firebase reconfiguration failed: {status.get('error', 'Unknown error')}")
+                return {
+                    "success": False,
+                    "error": "Firebase not available - check Railway environment variables",
+                    "data": [],
+                    "count": 0,
+                    "type": "attributes",
+                    "help": "Verify FIREBASE_SERVICE_ACCOUNT_KEY or GOOGLE_APPLICATION_CREDENTIALS_JSON",
+                    "railway_fix": "Run generate_railway_fallback.py to create Service Account fallback"
+                }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Firebase configuration failed: {str(e)}",
+                "data": [],
+                "count": 0,
+                "type": "attributes",
+                "help": "Check Railway environment variables or use Service Account fallback"
+            }
     
     try:
         # Construir filtros
@@ -893,13 +933,32 @@ async def export_dashboard_for_nextjs(
     - Evaluación de calidad y completitud de datos
     - Métricas para toma de decisiones estratégicas
     """
+    # Verificación robusta de Firebase con reintentos
     if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
-        return {
-            "success": False,
-            "error": "Firebase temporarily unavailable",
-            "dashboard": {},
-            "type": "dashboard"
-        }
+        # Intentar reconfigurar Firebase como último recurso
+        try:
+            print("⚠️ Attempting Firebase reconfiguration...")
+            firebase_initialized, status = configure_firebase()
+            if firebase_initialized:
+                print("✅ Firebase reconfiguration successful")
+            else:
+                print(f"❌ Firebase reconfiguration failed: {status.get('error', 'Unknown error')}")
+                return {
+                    "success": False,
+                    "error": "Firebase not available - check Railway environment variables",
+                    "dashboard": {},
+                    "type": "dashboard",
+                    "help": "Verify FIREBASE_SERVICE_ACCOUNT_KEY or GOOGLE_APPLICATION_CREDENTIALS_JSON",
+                    "railway_fix": "Run generate_railway_fallback.py to create Service Account fallback"
+                }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Firebase configuration failed: {str(e)}",
+                "dashboard": {},
+                "type": "dashboard",
+                "help": "Check Railway environment variables or use Service Account fallback"
+            }
     
     try:
         # Construir filtros para dashboard
@@ -1002,13 +1061,32 @@ async def get_filters_endpoint(
     - Límites configurables para controlar payload
     - Estructura de respuesta optimizada para frontend
     """
+    # Verificación robusta de Firebase con reintentos
     if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
-        return {
-            "success": False,
-            "error": "Firebase temporarily unavailable", 
-            "filters": {},
-            "type": "filters"
-        }
+        # Intentar reconfigurar Firebase como último recurso
+        try:
+            print("⚠️ Attempting Firebase reconfiguration...")
+            firebase_initialized, status = configure_firebase()
+            if firebase_initialized:
+                print("✅ Firebase reconfiguration successful")
+            else:
+                print(f"❌ Firebase reconfiguration failed: {status.get('error', 'Unknown error')}")
+                return {
+                    "success": False,
+                    "error": "Firebase not available - check Railway environment variables",
+                    "filters": {},
+                    "type": "filters",
+                    "help": "Verify FIREBASE_SERVICE_ACCOUNT_KEY or GOOGLE_APPLICATION_CREDENTIALS_JSON",
+                    "railway_fix": "Run generate_railway_fallback.py to create Service Account fallback"
+                }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Firebase configuration failed: {str(e)}",
+                "filters": {},
+                "type": "filters",
+                "help": "Check Railway environment variables or use Service Account fallback"
+            }
     
     try:
         result = await get_filter_options(field=field, limit=limit)

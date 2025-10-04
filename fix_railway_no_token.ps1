@@ -118,3 +118,19 @@ Write-Host "🚀 PRÓXIMOS PASOS:" -ForegroundColor Magenta
 Write-Host "1. 📋 Copia la configuración a Railway Dashboard" -ForegroundColor White
 Write-Host "2. 🚀 Despliega tu aplicación" -ForegroundColor White
 Write-Host "3. ✅ Verifica en: https://tu-app.railway.app/auth/workload-identity/status" -ForegroundColor White
+Write-Host ""
+Write-Host "🔍 VERIFICACIÓN POST-DEPLOYMENT:" -ForegroundColor Green
+Write-Host "===============================" -ForegroundColor Yellow
+Write-Host "1. Prueba el endpoint health: /health" -ForegroundColor White
+Write-Host "2. Verifica endpoints de unidades-proyecto:" -ForegroundColor White
+Write-Host "   - GET /unidades-proyecto/geometry" -ForegroundColor Cyan
+Write-Host "   - GET /unidades-proyecto/attributes" -ForegroundColor Cyan
+Write-Host "   - GET /unidades-proyecto/dashboard" -ForegroundColor Cyan
+Write-Host "   - GET /unidades-proyecto/filters" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "💡 Si aún hay errores:" -ForegroundColor Yellow
+Write-Host "• Ejecuta: python generate_railway_fallback.py" -ForegroundColor White
+Write-Host "• Revisa: RAILWAY_TROUBLESHOOTING.md" -ForegroundColor White
+Write-Host "• Verifica logs en Railway Dashboard" -ForegroundColor White
+Write-Host ""
+Write-Host "🎉 LISTO! Tus endpoints deberían funcionar perfectamente" -ForegroundColor Green
