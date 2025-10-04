@@ -197,7 +197,8 @@ def get_cors_origins():
     
     # Dominios de servicios de hosting conocidos
     hosting_origins = [
-        # Netlify patterns
+        # Netlify específicos
+        "https://captura-emprestito.netlify.app",  # Dominio específico reportado
         "https://*.netlify.app",
         "https://*.netlify.com", 
         # Vercel patterns
@@ -210,14 +211,12 @@ def get_cors_origins():
         "https://*.web.app",
     ]
     
-    # En desarrollo, permitir localhost y dominios de hosting
+    # Siempre incluir dominios de hosting (tanto en desarrollo como producción)
+    origins.extend(hosting_origins)
+    
+    # En desarrollo, también permitir localhost
     if os.getenv("ENVIRONMENT") != "production":
         origins.extend(local_origins)
-        # En desarrollo también permitir dominios de hosting para pruebas
-        origins.extend(hosting_origins)
-    else:
-        # En producción, solo incluir dominios de hosting seguros
-        origins.extend(hosting_origins)
     
     # Orígenes de producción desde variables de entorno
     frontend_url = os.getenv("FRONTEND_URL")
@@ -253,15 +252,22 @@ async def utf8_middleware(request: Request, call_next):
 # 🌐 CORS CONFIGURADO PARA UTF-8 + HOSTING SERVICES
 origins = get_cors_origins()
 
-# En desarrollo, permitir todos los orígenes para máxima compatibilidad
-if os.getenv("ENVIRONMENT") != "production":
-    print("🔓 Development mode: CORS allowing all origins for compatibility")
-    cors_allow_origins = ["*"]
-    cors_allow_credentials = False  # Con "*" no se pueden usar credentials
-else:
-    print(f"🔒 Production mode: CORS configured for specific origins: {len(origins)} origins")
-    cors_allow_origins = origins
-    cors_allow_credentials = True
+# Siempre incluir dominios específicos importantes
+important_origins = [
+    "https://captura-emprestito.netlify.app",
+    "http://127.0.0.1:5500",
+    "http://localhost:3000",
+    "http://localhost:5500"
+]
+
+# Combinar todos los orígenes
+all_origins = list(set(origins + important_origins))
+
+print(f"🌐 CORS configured for {len(all_origins)} origins including Netlify apps")
+
+# Usar configuración permisiva que funcione en producción
+cors_allow_origins = all_origins
+cors_allow_credentials = True
 
 app.add_middleware(
     CORSMiddleware,
