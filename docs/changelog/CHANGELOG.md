@@ -1,6 +1,30 @@
 # Changelog - API Gestión de Proyectos
 
-## [2025-10-03] - Versión Actual
+## [2025-10-04] - Versión Actual
+
+### 🔧 Correcciones Críticas
+
+- **Fix Endpoint POST /auth/login**: Corrección del error 500 en autenticación
+  - **Problema**: Errores de validación devolvían status 500 con mensajes confusos
+  - **Solución**: Eliminación de HTTPException innecesaria en `authenticate_email_password()`
+  - **Resultado**: Respuestas claras con códigos de estado apropiados:
+    - `422`: Errores de validación Pydantic (formato email inválido)
+    - `401`: Usuario no encontrado, deshabilitado o cuenta inactiva
+    - `400`: Errores de validación de formato
+    - `500`: Solo errores internos reales del servidor
+  - **Archivos modificados**:
+    - `api/scripts/auth_operations.py`
+    - `main.py` (endpoint `/auth/login`)
+
+### 🧪 Testing y Calidad
+
+- **Script de pruebas temporales**: Validación completa del fix de autenticación
+- **Verificación de status codes**: Confirmación de respuestas apropiadas
+- **Limpieza de código**: Eliminación de archivos de prueba temporales
+
+---
+
+## [2025-10-03] - Versión Anterior
 
 ### ✨ Nuevas Funcionalidades
 

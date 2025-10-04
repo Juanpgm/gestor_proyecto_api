@@ -1870,12 +1870,16 @@ async def login_user(login_data: UserLoginRequest):
             headers={"Content-Type": "application/json; charset=utf-8"}
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.error(f"Unexpected error in login endpoint: {e}")
         return JSONResponse(
             content={
                 "success": False,
-                "error": "Error validando usuario",
-                "message": str(e)
+                "error": "Error interno del servidor",
+                "message": "Ocurrió un error inesperado durante el login",
+                "code": "INTERNAL_SERVER_ERROR"
             },
             status_code=500
         )

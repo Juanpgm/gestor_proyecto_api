@@ -31,18 +31,14 @@ async def authenticate_email_password(email: str, password: str) -> Dict[str, An
     Esta función valida los datos y retorna información del usuario
     """
     try:
-        # Validar formato de email - debe devolver 400 para formato inválido
+        # Validar formato de email
         email_validation = validate_email(email)
         if not email_validation["valid"]:
-            # Usar HTTPException 400 para validaciones de formato
-            from fastapi import HTTPException
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": email_validation["error"],
-                    "code": email_validation.get("code", "EMAIL_VALIDATION_ERROR")
-                }
-            )
+            return {
+                "success": False,
+                "error": email_validation["error"],
+                "code": email_validation.get("code", "EMAIL_VALIDATION_ERROR")
+            }
         
         # Obtener usuario por email
         auth_client = get_auth_client()
