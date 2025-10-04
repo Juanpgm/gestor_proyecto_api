@@ -2463,6 +2463,58 @@ async def list_system_users(
             }
         )
 
+@app.get("/admin/users/test", tags=["Administración y Control de Accesos"])
+async def test_user_listing():
+    """
+    ## 🧪 Test de Listado de Usuarios - Diagnóstico
+    
+    Endpoint de prueba para diagnosticar problemas con el listado de usuarios.
+    """
+    try:
+        check_user_management_availability()
+        
+        # Importar aquí para debug
+        from firebase_admin import auth
+        from database.firebase_config import get_firestore_client, get_auth_client
+        
+        auth_client = get_auth_client()
+        
+        # Probar obtener usuarios de forma simple
+        page = auth_client.list_users(max_results=2)
+        
+        users_simple = []
+        for user in page.users:
+            try:
+                user_simple = {
+                    "uid": user.uid,
+                    "email": user.email,
+                    "display_name": user.display_name,
+                    "disabled": user.disabled,
+                    "email_verified": user.email_verified
+                }
+                users_simple.append(user_simple)
+            except Exception as user_error:
+                users_simple.append({
+                    "uid": getattr(user, 'uid', 'unknown'),
+                    "error": str(user_error)
+                })
+        
+        return {
+            "success": True,
+            "users": users_simple,
+            "count": len(users_simple),
+            "total_found": len(page.users),
+            "message": "Test exitoso"
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "error_type": type(e).__name__,
+            "message": "Error en test de usuarios"
+        }
+
 @app.get("/admin/users/stats", tags=["Administración y Control de Accesos"])
 async def get_user_statistics():
     """

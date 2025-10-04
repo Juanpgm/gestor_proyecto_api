@@ -629,6 +629,27 @@ async def list_users(
             if filter_by_centro_gestor and firestore_data.get('nombre_centro_gestor') != filter_by_centro_gestor:
                 continue
             
+            # Manejar timestamps de forma segura
+            try:
+                creation_time = None
+                if user.user_metadata.creation_timestamp:
+                    if hasattr(user.user_metadata.creation_timestamp, 'isoformat'):
+                        creation_time = user.user_metadata.creation_timestamp.isoformat()
+                    else:
+                        creation_time = str(user.user_metadata.creation_timestamp)
+            except:
+                creation_time = None
+            
+            try:
+                last_sign_in = None
+                if user.user_metadata.last_sign_in_timestamp:
+                    if hasattr(user.user_metadata.last_sign_in_timestamp, 'isoformat'):
+                        last_sign_in = user.user_metadata.last_sign_in_timestamp.isoformat()
+                    else:
+                        last_sign_in = str(user.user_metadata.last_sign_in_timestamp)
+            except:
+                last_sign_in = None
+            
             user_info = {
                 "uid": user.uid,
                 "email": user.email,
@@ -636,8 +657,8 @@ async def list_users(
                 "phone_number": user.phone_number,
                 "email_verified": user.email_verified,
                 "disabled": user.disabled,
-                "creation_time": user.user_metadata.creation_timestamp.isoformat() if user.user_metadata.creation_timestamp and hasattr(user.user_metadata.creation_timestamp, 'isoformat') else None,
-                "last_sign_in": user.user_metadata.last_sign_in_timestamp.isoformat() if user.user_metadata.last_sign_in_timestamp and hasattr(user.user_metadata.last_sign_in_timestamp, 'isoformat') else None,
+                "creation_time": creation_time,
+                "last_sign_in": last_sign_in,
                 "custom_claims": user.custom_claims or {},
                 "providers": [provider.provider_id for provider in user.provider_data],
                 "firestore_data": firestore_data
