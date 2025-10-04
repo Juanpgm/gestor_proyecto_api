@@ -436,9 +436,60 @@ async def authenticate_with_workload_identity(google_token: str) -> Dict[str, An
 
 def get_workload_identity_status() -> Dict[str, Any]:
     """
-    Obtener estado completo del sistema de autenticación automática
+    Obtener estado completo del sistema de autenticación automática con fallback info
     """
-    return workload_manager.get_status()
+    # Estado base del Workload Identity Manager
+    status = workload_manager.get_status()
+    
+    # Detectar si se está usando Service Account como fallback
+    service_account_available = bool(os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY"))
+    wif_available = bool(os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON") or 
+                        os.getenv("GOOGLE_APPLICATION_CREDENTIALS"))
+    
+    # Determinar el método de autenticación activo
+    auth_method = "unknown"
+    fallback_active = False
+    
+    if status["workload_identity"]["initialized"]:
+        auth_method = "workload_identity_federation"
+    elif service_account_available and not wif_available:
+        auth_method = "service_account_key"
+        fallback_active = True
+    elif service_account_available and wif_available:
+        # Si ambos están disponibles pero WIF no se inicializó, Service Account está siendo usado como fallback
+        if not status["workload_identity"]["initialized"]:
+            auth_method = "service_account_key_fallback"
+            fallback_active = True
+    
+    # Agregar información de fallback al status
+    status.update({
+        "authentication": {
+            "active_method": auth_method,
+            "fallback_active": fallback_active,
+            "wif_available": wif_available,
+            "service_account_available": service_account_available,
+            "methods_available": {
+                "workload_identity": wif_available,
+                "service_account": service_account_available,
+                "application_default": status["workload_identity"]["has_credentials"]
+            }
+        },
+        "fallback_status": {
+            "configured": service_account_available,
+            "active": fallback_active,
+            "reason": "WIF failed, using Service Account Key" if fallback_active else None
+        },
+        "security_assessment": {
+            "level": "high" if auth_method in ["workload_identity_federation", "service_account_key"] else "medium",
+            "method_security": {
+                "workload_identity_federation": "Highest - No stored secrets",
+                "service_account_key": "High - Encrypted storage",
+                "application_default": "Medium - Environment dependent"
+            }[auth_method] if auth_method in ["workload_identity_federation", "service_account_key", "application_default"] else "Unknown"
+        }
+    })
+    
+    return status
 
 async def generate_google_signin_config_automatic() -> Dict[str, Any]:
     """

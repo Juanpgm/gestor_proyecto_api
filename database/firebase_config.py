@@ -86,7 +86,7 @@ def decode_service_account(encoded_key: str) -> Dict[str, Any]:
 # Core Firebase initialization functions
 @lru_cache(maxsize=1)
 def initialize_firebase_app() -> firebase_admin.App:
-    """Initialize Firebase app with appropriate credentials"""
+    """Initialize Firebase app with appropriate credentials and automatic fallback"""
     try:
         return firebase_admin.get_app()
     except ValueError:
@@ -94,18 +94,42 @@ def initialize_firebase_app() -> firebase_admin.App:
     
     logger.info(f"🚀 Initializing Firebase: {PROJECT_ID}")
     
-    # PRIORIDAD: Workload Identity Federation > Application Default Credentials > Service Account Key
+    # ESTRATEGIA DE FALLBACK AUTOMÁTICO: WIF > ADC > Service Account Key
+    
+    # 1. Intentar Workload Identity Federation
     if is_workload_identity_available():
-        logger.info("🔐 Using Workload Identity Federation")
-        return _init_with_workload_identity()
-    elif _adc_available():
-        logger.info("🔑 Using Application Default Credentials")
-        return _init_with_adc()
-    elif get_service_account_key():
-        logger.info("📋 Using Service Account Key (fallback)")
-        return _init_with_service_account()
-    else:
-        raise RuntimeError("No authentication method available. Configure Workload Identity, ADC, or Service Account Key.")
+        try:
+            logger.info("🔐 Attempting Workload Identity Federation...")
+            return _init_with_workload_identity()
+        except Exception as e:
+            logger.warning(f"⚠️ Workload Identity failed: {e}")
+            logger.info("🔄 Falling back to next authentication method...")
+    
+    # 2. Intentar Application Default Credentials
+    if _adc_available():
+        try:
+            logger.info("🔑 Attempting Application Default Credentials...")
+            return _init_with_adc()
+        except Exception as e:
+            logger.warning(f"⚠️ ADC failed: {e}")
+            logger.info("🔄 Falling back to Service Account Key...")
+    
+    # 3. Fallback a Service Account Key
+    if get_service_account_key():
+        try:
+            logger.info("📋 Using Service Account Key (fallback)...")
+            return _init_with_service_account()
+        except Exception as e:
+            logger.error(f"❌ Service Account Key failed: {e}")
+            raise RuntimeError(f"All authentication methods failed. Last error: {e}")
+    
+    # 4. No hay métodos de autenticación disponibles
+    raise RuntimeError(
+        "No authentication method available. Configure one of: "
+        "GOOGLE_APPLICATION_CREDENTIALS_JSON (WIF), "
+        "GOOGLE_APPLICATION_CREDENTIALS (ADC), or "
+        "FIREBASE_SERVICE_ACCOUNT_KEY (Service Account)"
+    )
 
 def _init_with_service_account() -> firebase_admin.App:
     """Initialize with service account credentials"""
@@ -123,31 +147,27 @@ def _init_with_service_account() -> firebase_admin.App:
 
 def _init_with_workload_identity() -> firebase_admin.App:
     """Initialize with Workload Identity Federation"""
-    try:
-        # WIF credentials from JSON string in environment variable
-        wif_creds_json = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
-        if wif_creds_json:
-            import tempfile
-            import json
-            
-            # Create temporary credentials file for WIF
-            creds_data = json.loads(wif_creds_json)
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-                json.dump(creds_data, f)
-                temp_creds_file = f.name
-            
-            # Set the environment variable for ADC to use
-            os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = temp_creds_file
-            logger.info("✅ Workload Identity credentials configured")
+    # WIF credentials from JSON string in environment variable
+    wif_creds_json = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+    if wif_creds_json:
+        import tempfile
+        import json
         
-        # Use Application Default Credentials (which will now use WIF)
-        cred = credentials.ApplicationDefault()
-        app = firebase_admin.initialize_app(cred, {'projectId': PROJECT_ID})
-        logger.info("✅ Firebase initialized with Workload Identity Federation")
-        return app
-    except Exception as e:
-        logger.warning(f"⚠️ Workload Identity initialization failed: {e}")
-        raise RuntimeError(f"Workload Identity Federation failed: {e}")
+        # Create temporary credentials file for WIF
+        creds_data = json.loads(wif_creds_json)
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump(creds_data, f)
+            temp_creds_file = f.name
+        
+        # Set the environment variable for ADC to use
+        os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = temp_creds_file
+        logger.info("✅ Workload Identity credentials configured")
+    
+    # Use Application Default Credentials (which will now use WIF)
+    cred = credentials.ApplicationDefault()
+    app = firebase_admin.initialize_app(cred, {'projectId': PROJECT_ID})
+    logger.info("✅ Firebase initialized with Workload Identity Federation")
+    return app
 
 def _adc_available() -> bool:
     """Check if Application Default Credentials are available"""
@@ -160,14 +180,10 @@ def _adc_available() -> bool:
 
 def _init_with_adc() -> firebase_admin.App:
     """Initialize with Application Default Credentials"""
-    try:
-        cred = credentials.ApplicationDefault()
-        app = firebase_admin.initialize_app(cred, {'projectId': PROJECT_ID})
-        logger.info("✅ Firebase initialized with Application Default Credentials")
-        return app
-    except Exception as e:
-        logger.warning(f"⚠️ ADC initialization failed: {e}")
-        raise RuntimeError(f"Application Default Credentials failed: {e}")
+    cred = credentials.ApplicationDefault()
+    app = firebase_admin.initialize_app(cred, {'projectId': PROJECT_ID})
+    logger.info("✅ Firebase initialized with Application Default Credentials")
+    return app
 
 # Client factory functions
 @lru_cache(maxsize=1)
