@@ -2,14 +2,18 @@
 
 ## ❌ Problemas Comunes y Soluciones
 
-### 1. **Error: "Unable to retrieve Identity Pool subject token"**
+### 1. **Error: "Unable to retrieve Identity Pool subject token"** ⭐ PROBLEMA COMÚN
 
 ```
 ❌ Síntoma: La aplicación no puede obtener el token OIDC de Railway
-🔧 Solución:
-   - Verifica que RAILWAY_TOKEN esté disponible automáticamente (Railway lo provee)
-   - Confirma que el endpoint https://railway.app/.well-known/oidc_subject_token funciona
-   - Usa Service Account Key como fallback: .\generate_service_account_fallback.ps1
+❌ Causa: Railway ya NO proporciona RAILWAY_TOKEN automáticamente
+🔧 Solución INMEDIATA:
+   - ✅ Usa Service Account Key: .\fix_railway_no_token.ps1
+   - ✅ Método más seguro y estable que WIF
+   - ✅ Funciona inmediatamente sin configuración adicional
+
+🧪 Alternativa experimental:
+   - GitHub OIDC: .\github_oidc_alternative.ps1 (solo para usuarios avanzados)
 ```
 
 ### 2. **Error: "Workload Identity Federation failed"**
