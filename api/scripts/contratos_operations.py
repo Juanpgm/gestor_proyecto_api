@@ -3,12 +3,46 @@ Scripts para manejo de Contratos de Empréstito
 Función optimizada para el endpoint init_contratos_seguimiento
 """
 
+import re
 from typing import Dict, List, Any, Optional
 from database.firebase_config import get_firestore_client
 
 
+def clean_text_field(text: Any) -> str:
+    """Limpiar caracteres especiales de campos de texto manteniendo UTF-8"""
+    if not text:
+        return ''
+    
+    # Convertir a string si no lo es
+    text_str = str(text)
+    
+    # Intentar decodificar si está mal codificado
+    try:
+        # Si el texto viene con encoding incorrecto, intentar corregirlo
+        if 'Ã' in text_str:
+            # Intentar recodificar desde latin-1 a utf-8
+            text_str = text_str.encode('latin-1').decode('utf-8')
+    except (UnicodeDecodeError, UnicodeEncodeError):
+        # Si hay error en la recodificación, mantener el texto original
+        pass
+    
+    # Eliminar caracteres de control pero mantener caracteres UTF-8 válidos
+    text_str = text_str.replace('\n', ' ')  # Saltos de línea
+    text_str = text_str.replace('\r', ' ')  # Retorno de carro
+    text_str = text_str.replace('\t', ' ')  # Tabulaciones
+    text_str = text_str.replace('\v', ' ')  # Tabulación vertical
+    text_str = text_str.replace('\f', ' ')  # Form feed
+    text_str = text_str.replace('\x0b', ' ')  # Tabulación vertical (hex)
+    text_str = text_str.replace('\x0c', ' ')  # Form feed (hex)
+    
+    # Eliminar espacios múltiples y espacios al inicio/final
+    text_str = re.sub(r'\s+', ' ', text_str).strip()
+    
+    return text_str
+
+
 def extract_contract_fields(doc_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Extraer solo los campos requeridos para el endpoint"""
+    """Extraer solo los campos requeridos para el endpoint con texto limpio"""
     registro_origen = doc_data.get('registro_origen', {})
     
     # Normalizar referencia_proceso
@@ -20,13 +54,13 @@ def extract_contract_fields(doc_data: Dict[str, Any]) -> Dict[str, Any]:
     
     return {
         'bpin': doc_data.get('bpin', 0),
-        'banco': registro_origen.get('banco', ''),
-        'nombre_centro_gestor': doc_data.get('nombre_centro_gestor', ''),
-        'estado_contrato': doc_data.get('estado_contrato', ''),
-        'referencia_contrato': doc_data.get('referencia_contrato', ''),
-        'referencia_proceso': referencia_proceso_str,
-        'objeto_contrato': doc_data.get('objeto_contrato', ''),
-        'modalidad_contratacion': doc_data.get('modalidad_contratacion', '')
+        'banco': clean_text_field(registro_origen.get('banco', '')),
+        'nombre_centro_gestor': clean_text_field(doc_data.get('nombre_centro_gestor', '')),
+        'estado_contrato': clean_text_field(doc_data.get('estado_contrato', '')),
+        'referencia_contrato': clean_text_field(doc_data.get('referencia_contrato', '')),
+        'referencia_proceso': clean_text_field(referencia_proceso_str),
+        'objeto_contrato': clean_text_field(doc_data.get('objeto_contrato', '')),
+        'modalidad_contratacion': clean_text_field(doc_data.get('modalidad_contratacion', ''))
     }
 
 
