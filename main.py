@@ -178,22 +178,46 @@ app = FastAPI(
     }
 )
 
-# Configurar CORS - Optimizado para Vercel + Railway
+# Configurar CORS - Optimizado para Vercel + Railway + Netlify + Live Server
 def get_cors_origins():
     """Obtener orígenes CORS desde variables de entorno de forma segura"""
     origins = []
     
-    # Orígenes de desarrollo local
+    # Orígenes de desarrollo local (incluye Live Server)
     local_origins = [
         "http://localhost:3000",
         "http://localhost:3001", 
+        "http://localhost:5500",  # Live Server default port
+        "http://localhost:8080",  # Webpack dev server
         "http://127.0.0.1:3000",
         "http://127.0.0.1:3001",
+        "http://127.0.0.1:5500",  # Live Server con 127.0.0.1
+        "http://127.0.0.1:8080",
     ]
     
-    # En desarrollo, permitir localhost
+    # Dominios de servicios de hosting conocidos
+    hosting_origins = [
+        # Netlify patterns
+        "https://*.netlify.app",
+        "https://*.netlify.com", 
+        # Vercel patterns
+        "https://*.vercel.app",
+        "https://*.vercel.com",
+        # GitHub Pages
+        "https://*.github.io",
+        # Firebase Hosting
+        "https://*.firebaseapp.com",
+        "https://*.web.app",
+    ]
+    
+    # En desarrollo, permitir localhost y dominios de hosting
     if os.getenv("ENVIRONMENT") != "production":
         origins.extend(local_origins)
+        # En desarrollo también permitir dominios de hosting para pruebas
+        origins.extend(hosting_origins)
+    else:
+        # En producción, solo incluir dominios de hosting seguros
+        origins.extend(hosting_origins)
     
     # Orígenes de producción desde variables de entorno
     frontend_url = os.getenv("FRONTEND_URL")
@@ -205,10 +229,10 @@ def get_cors_origins():
     if additional_origins:
         origins.extend([origin.strip() for origin in additional_origins.split(",")])
     
-    # Si no hay orígenes configurados, usar configuración mínima segura
+    # Si no hay orígenes configurados, usar configuración permisiva para desarrollo
     if not origins:
-        print("⚠️ Warning: No CORS origins configured, using localhost only")
-        origins = local_origins
+        print("⚠️ Warning: No CORS origins configured, using default safe origins")
+        origins = local_origins + hosting_origins
     
     return origins
 
@@ -226,12 +250,24 @@ async def utf8_middleware(request: Request, call_next):
     
     return response
 
-# 🌐 CORS CONFIGURADO PARA UTF-8
+# 🌐 CORS CONFIGURADO PARA UTF-8 + HOSTING SERVICES
+origins = get_cors_origins()
+
+# En desarrollo, permitir todos los orígenes para máxima compatibilidad
+if os.getenv("ENVIRONMENT") != "production":
+    print("🔓 Development mode: CORS allowing all origins for compatibility")
+    cors_allow_origins = ["*"]
+    cors_allow_credentials = False  # Con "*" no se pueden usar credentials
+else:
+    print(f"🔒 Production mode: CORS configured for specific origins: {len(origins)} origins")
+    cors_allow_origins = origins
+    cors_allow_credentials = True
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,           
-    allow_credentials=True,          
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],  
+    allow_origins=cors_allow_origins,
+    allow_credentials=cors_allow_credentials,          
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"],  
     allow_headers=[               
         "Authorization",
         "Content-Type", 
@@ -375,6 +411,59 @@ async def ping():
         "last_updated": "2025-10-04T00:00:00Z"  # Endpoint creation/update date
     }
     return create_utf8_response(response_data)
+
+@app.get("/cors-test", tags=["General"])
+async def cors_test(request: Request):
+    """Endpoint específico para probar configuración CORS"""
+    origin = request.headers.get("origin", "No origin header")
+    user_agent = request.headers.get("user-agent", "No user-agent")
+    
+    response_data = {
+        "success": True,
+        "message": "CORS test successful ✅",
+        "origin": origin,
+        "user_agent": user_agent[:100] + "..." if len(user_agent) > 100 else user_agent,
+        "cors_configured": True,
+        "allowed_methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"],
+        "timestamp": datetime.now().isoformat(),
+        "server_info": {
+            "environment": os.getenv("ENVIRONMENT", "development"),
+            "port": os.getenv("PORT", "8000"),
+            "cors_origins_count": len(cors_origins)
+        }
+    }
+    
+    # Crear respuesta con headers CORS explícitos adicionales
+    response = JSONResponse(
+        content=response_data,
+        status_code=200,
+        headers={
+            "Content-Type": "application/json; charset=utf-8",
+            "Access-Control-Allow-Origin": origin if origin != "No origin header" else "*",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, HEAD, PATCH",
+            "Access-Control-Allow-Headers": "Authorization, Content-Type, Accept, Origin, X-Requested-With",
+            "Access-Control-Allow-Credentials": "true"
+        }
+    )
+    
+    return response
+
+@app.options("/cors-test", tags=["General"])
+async def cors_test_options(request: Request):
+    """OPTIONS handler específico para CORS test"""
+    origin = request.headers.get("origin", "*")
+    
+    return JSONResponse(
+        content={"message": "CORS preflight OK"},
+        status_code=200,
+        headers={
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, HEAD, PATCH",
+            "Access-Control-Allow-Headers": "Authorization, Content-Type, Accept, Origin, X-Requested-With",
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Max-Age": "86400"
+        }
+    )
 
 @app.get("/test/utf8", tags=["General"])
 async def test_utf8():
