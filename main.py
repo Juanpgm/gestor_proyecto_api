@@ -2409,7 +2409,7 @@ async def list_system_users(
         
         # Consultar la colección "users" directamente
         users_ref = firestore_client.collection('users')
-        query = users_ref.limit(limit).order_by('created_at')
+        query = users_ref.limit(limit)
         docs = query.get()
         
         users_list = []
