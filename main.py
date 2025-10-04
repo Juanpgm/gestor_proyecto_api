@@ -8,6 +8,7 @@ Soporte completo para UTF-8 y caracteres especiales en español
 
 import os
 import sys
+import logging
 from contextlib import asynccontextmanager
 
 # Configurar encoding UTF-8 para todo el sistema
@@ -415,6 +416,28 @@ async def test_utf8():
     }
     
     return create_utf8_response(test_data)
+
+@app.post("/test/register-simple", tags=["General"])
+async def test_register_simple():
+    """Endpoint de prueba simple para debugging de registro"""
+    try:
+        return {
+            "success": True,
+            "message": "Test endpoint funcionando",
+            "timestamp": datetime.now().isoformat(),
+            "availability": {
+                "USER_MANAGEMENT_AVAILABLE": USER_MANAGEMENT_AVAILABLE,
+                "AUTH_OPERATIONS_AVAILABLE": AUTH_OPERATIONS_AVAILABLE,
+                "USER_MODELS_AVAILABLE": USER_MODELS_AVAILABLE,
+                "FIREBASE_AVAILABLE": FIREBASE_AVAILABLE
+            }
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "error_type": type(e).__name__
+        }
 
 @app.get("/debug/railway", tags=["General"])
 async def railway_debug():
@@ -1725,19 +1748,23 @@ async def login_user(
         check_user_management_availability()
         
         # Obtener credenciales del body JSON o form data
+        email = None
+        password = None
+        
         try:
             body = await request.json()
             email = body.get("email")
             password = body.get("password")
-        except:
+        except Exception as json_error:
             try:
                 form = await request.form()
                 email = form.get("email")
                 password = form.get("password")
-            except:
+            except Exception as form_error:
                 raise HTTPException(
                     status_code=400,
                     detail={
+                        "success": False,
                         "error": "Datos requeridos",
                         "message": "Proporcione email y password en el body",
                         "code": "CREDENTIALS_REQUIRED"
@@ -1748,6 +1775,7 @@ async def login_user(
             raise HTTPException(
                 status_code=400,
                 detail={
+                    "success": False,
                     "error": "Email y contraseña requeridos",
                     "code": "CREDENTIALS_REQUIRED"
                 }
@@ -1755,11 +1783,14 @@ async def login_user(
         
         result = await authenticate_email_password(email, password)
         
-        if not result["success"]:
+        if not result.get("success", False):
             # Determinar el status code apropiado basado en el tipo de error
-            if result.get("code") in ["EMAIL_VALIDATION_ERROR", "INVALID_EMAIL_FORMAT"]:
+            error_code = result.get("code", "AUTH_FAILED")
+            error_message = result.get("error", "Error de autenticación")
+            
+            if error_code in ["EMAIL_VALIDATION_ERROR", "INVALID_EMAIL_FORMAT"]:
                 status_code = 400  # Bad Request para errores de validación
-            elif result.get("code") in ["USER_NOT_FOUND", "USER_DISABLED", "ACCOUNT_INACTIVE"]:
+            elif error_code in ["USER_NOT_FOUND", "USER_DISABLED", "ACCOUNT_INACTIVE"]:
                 status_code = 401  # Unauthorized para problemas de autenticación
             else:
                 status_code = 401  # Default para otros errores de auth
@@ -1767,25 +1798,40 @@ async def login_user(
             raise HTTPException(
                 status_code=status_code,
                 detail={
-                    "error": result["error"],
-                    "code": result.get("code", "AUTH_FAILED")
+                    "success": False,
+                    "error": error_message,
+                    "code": error_code
                 }
             )
         
-        return {
-            "success": True,
-            "user": result["user"],
-            "auth_method": result["auth_method"],
-            "message": result["message"],
-            "frontend_auth_required": True,
-            "note": "Proceda con autenticación en frontend usando Firebase Auth SDK",
-            "timestamp": datetime.now().isoformat()
-        }
+        return JSONResponse(
+            content={
+                "success": True,
+                "user": result.get("user", {}),
+                "auth_method": result.get("auth_method", "email_password"),
+                "message": result.get("message", "Credenciales válidas"),
+                "frontend_auth_required": True,
+                "note": "Proceda con autenticación en frontend usando Firebase Auth SDK",
+                "timestamp": datetime.now().isoformat()
+            },
+            status_code=200,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
         
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error en validación de credenciales: {str(e)}")
+        # Log del error para debug
+        print(f"Error inesperado en login_user: {type(e).__name__}: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail={
+                "success": False,
+                "error": "Error interno del servidor",
+                "message": "Ocurrió un error inesperado durante la validación",
+                "code": "INTERNAL_SERVER_ERROR"
+            }
+        )
 
 @app.post("/auth/register", tags=["Administración y Control de Accesos"], status_code=status.HTTP_201_CREATED)
 async def register_user(
@@ -1841,6 +1887,12 @@ async def register_user(
         check_user_management_availability()
         
         # Obtener datos del body JSON o form data
+        email = None
+        password = None
+        fullname = None
+        cellphone = None
+        nombre_centro_gestor = None
+        
         try:
             body = await request.json()
             email = body.get("email")
@@ -1848,7 +1900,7 @@ async def register_user(
             fullname = body.get("fullname")
             cellphone = body.get("cellphone")
             nombre_centro_gestor = body.get("nombre_centro_gestor")
-        except:
+        except Exception as json_error:
             try:
                 form = await request.form()
                 email = form.get("email")
@@ -1856,10 +1908,11 @@ async def register_user(
                 fullname = form.get("fullname") 
                 cellphone = form.get("cellphone")
                 nombre_centro_gestor = form.get("nombre_centro_gestor")
-            except:
+            except Exception as form_error:
                 raise HTTPException(
                     status_code=400,
                     detail={
+                        "success": False,
                         "error": "Datos requeridos",
                         "message": "Proporcione todos los campos requeridos en el body",
                         "code": "REGISTRATION_DATA_REQUIRED"
@@ -1871,12 +1924,14 @@ async def register_user(
             raise HTTPException(
                 status_code=400,
                 detail={
+                    "success": False,
                     "error": "Campos requeridos faltantes",
                     "message": "email, password, fullname, cellphone y nombre_centro_gestor son requeridos",
                     "code": "MISSING_REQUIRED_FIELDS"
                 }
             )
-            
+        
+        # Llamar a la función de creación de usuario
         result = await create_user_account(
             email=email,
             password=password,
@@ -1886,14 +1941,17 @@ async def register_user(
             send_email_verification=True
         )
         
-        if not result["success"]:
+        # Verificar si la creación fue exitosa
+        if not result.get("success", False):
             error_code = result.get("code", "USER_CREATION_ERROR")
+            error_message = result.get("error", "Error creando cuenta de usuario")
+            
             if error_code == "EMAIL_ALREADY_EXISTS":
                 raise HTTPException(
                     status_code=409, 
                     detail={
                         "success": False,
-                        "error": result["error"],
+                        "error": error_message,
                         "code": error_code
                     }
                 )
@@ -1902,7 +1960,7 @@ async def register_user(
                     status_code=400,
                     detail={
                         "success": False,
-                        "error": result["error"],
+                        "error": error_message,
                         "code": error_code
                     }
                 )
@@ -1912,7 +1970,7 @@ async def register_user(
                     status_code=400,
                     detail={
                         "success": False,
-                        "error": result.get("error", "Datos de entrada inválidos"),
+                        "error": error_message,
                         "code": error_code,
                         "validation_errors": result.get("errors", [])
                     }
@@ -1920,27 +1978,60 @@ async def register_user(
             else:
                 # Error genérico
                 raise HTTPException(
-                    status_code=400,
+                    status_code=500,
                     detail={
                         "success": False,
-                        "error": result.get("error", "Error creando cuenta de usuario"),
+                        "error": error_message,
                         "code": error_code
                     }
                 )
         
-        response_data = {
-            "success": True,
-            "user": result["user"],
-            "verification_link": result.get("verification_link"),
-            "message": handle_utf8_text(result["message"]),
-            "timestamp": datetime.now().isoformat()
-        }
-        return create_utf8_response(response_data, 201)
+        # Si llegamos aquí, la creación fue exitosa
+        print(f"✅ Usuario creado exitosamente: {result.get('user', {}).get('email', 'unknown')}")
+        
+        # Crear respuesta simple y limpia
+        try:
+            response_data = {
+                "success": True,
+                "user": result.get("user", {}),
+                "message": result.get("message", "Usuario creado exitosamente"),
+                "timestamp": datetime.now().isoformat()
+            }
+            
+            # Agregar verification_link solo si existe
+            if result.get("verification_link"):
+                response_data["verification_link"] = result["verification_link"]
+            
+            print(f"✅ Response data prepared: {response_data['success']}")
+            
+            return JSONResponse(
+                content=response_data,
+                status_code=201,
+                headers={"Content-Type": "application/json; charset=utf-8"}
+            )
+        except Exception as response_error:
+            print(f"❌ Error creando respuesta: {response_error}")
+            # Fallback a respuesta básica
+            return {
+                "success": True,
+                "message": "Usuario creado exitosamente",
+                "user": {"email": email}
+            }
         
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error registrando usuario: {str(e)}")
+        # Log del error para debug
+        print(f"Error inesperado en register_user: {type(e).__name__}: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail={
+                "success": False,
+                "error": "Error interno del servidor",
+                "message": "Ocurrió un error inesperado durante el registro",
+                "code": "INTERNAL_SERVER_ERROR"
+            }
+        )
 
 @app.post("/auth/change-password", tags=["Administración y Control de Accesos"])
 async def change_password(
