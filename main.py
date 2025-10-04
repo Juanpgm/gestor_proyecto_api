@@ -2377,169 +2377,138 @@ async def delete_user(uid: str, soft_delete: Optional[bool] = Query(default=None
 
 @app.get("/admin/users", tags=["Administración y Control de Accesos"])
 async def list_system_users(
-    limit: int = Query(default=100, ge=1, le=1000, description="Límite de resultados por página"),
-    page_token: Optional[str] = Query(default=None, description="Token para obtener siguiente página"),
-    filter_by_role: Optional[str] = Query(default=None, description="Filtrar por rol específico"),
-    filter_by_centro_gestor: Optional[str] = Query(default=None, description="Filtrar por centro gestor"),
-    include_disabled: Optional[bool] = Query(default=None, description="Incluir usuarios deshabilitados")
+    limit: int = Query(default=100, ge=1, le=1000, description="Límite de resultados por página")
 ):
     """
-    ## 📋 Listado Administrativo de Usuarios
+    ## 📋 Listado de Usuarios desde Firestore
     
-    Obtiene lista completa de usuarios con filtros avanzados y paginación.
+    Lee directamente la colección "users" de Firestore y devuelve todos los usuarios registrados.
     
-    ### ✅ Casos de uso:
-    - Dashboard administrativo
-    - Reportes de usuarios por centro
-    - Auditoría de cuentas activas/inactivas
-    
-    ### 🔧 Filtros disponibles:
-    - **Por rol**: viewer, editor, admin, super_admin
-    - **Por centro gestor**: Departamentos específicos
-    - **Estado**: Incluir/excluir usuarios deshabilitados
-    - **Paginación**: Control de resultados por página
-    
-    ### 📊 Información incluida:
-    - Datos básicos (email, nombre, teléfono)
-    - Estado de verificación y activación
-    - Último inicio de sesión
-    - Proveedores de autenticación habilitados
-    - Estadísticas de uso
+    ### � Información incluida:
+    - UID del usuario
+    - Email y nombre completo
+    - Teléfono y centro gestor
+    - Fechas de creación y actualización
+    - Estado de activación y verificación
+    - Proveedores de autenticación
+    - Estadísticas de login
     
     ### 📝 Ejemplo de uso:
     ```javascript
-    // Obtener admins activos
-    const response = await fetch('/admin/users?filter_by_role=admin&include_disabled=false');
-    
-    // Paginación
-    const nextPage = await fetch('/admin/users?page_token=next_page_123&limit=50');
+    const response = await fetch('/admin/users?limit=50');
+    const data = await response.json();
+    console.log(`Encontrados ${data.count} usuarios`);
     ```
     """
     try:
         check_user_management_availability()
         
-        # Llamar a la función list_users de forma más segura
-        try:
-            result = await list_users(
-                limit=limit,
-                page_token=page_token,
-                filter_by_role=filter_by_role,
-                filter_by_centro_gestor=filter_by_centro_gestor,
-                include_disabled=include_disabled if include_disabled is not None else False
-            )
-        except Exception as list_error:
-            print(f"Error in list_users function: {list_error}")
-            # Fallback a versión simple
-            from firebase_admin import auth as firebase_auth
-            from database.firebase_config import get_auth_client
-            
-            auth_client = get_auth_client()
-            page = auth_client.list_users(max_results=min(limit, 10))
-            
-            simple_users = []
-            for user in page.users:
-                simple_user = {
-                    "uid": user.uid,
-                    "email": user.email or "No email",
-                    "display_name": user.display_name or "Sin nombre",
-                    "disabled": user.disabled,
-                    "email_verified": user.email_verified,
-                    "creation_time": None,
-                    "last_sign_in": None,
-                    "custom_claims": user.custom_claims or {},
-                    "providers": [],
-                    "firestore_data": {}
-                }
-                simple_users.append(simple_user)
-            
-            result = {
-                "success": True,
-                "users": simple_users,
-                "count": len(simple_users),
-                "has_next_page": page.has_next_page,
-                "next_page_token": page.next_page_token,
-                "filters_applied": {
-                    "role": filter_by_role,
-                    "centro_gestor": filter_by_centro_gestor,
-                    "include_disabled": include_disabled
-                },
-                "fallback_mode": True
-            }
+        from database.firebase_config import get_firestore_client
         
-        if not result.get("success", False):
-            raise HTTPException(
-                status_code=500, 
-                detail={
-                    "success": False,
-                    "error": result.get("error", "Error obteniendo lista de usuarios"),
-                    "code": "USER_LIST_ERROR"
-                }
-            )
+        firestore_client = get_firestore_client()
         
-        return JSONResponse(
-            content={
-                "success": True,
-                "users": result.get("users", []),
-                "count": result.get("count", 0),
-                "has_next_page": result.get("has_next_page", False),
-                "next_page_token": result.get("next_page_token"),
-                "filters_applied": result.get("filters_applied", {}),
-                "timestamp": datetime.now().isoformat()
-            },
-            status_code=200,
-            headers={"Content-Type": "application/json; charset=utf-8"}
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, 
-            detail={
-                "success": False,
-                "error": "Error interno del servidor",
-                "message": "Ocurrió un error inesperado al listar usuarios",
-                "code": "INTERNAL_SERVER_ERROR"
-            }
-        )
-
-@app.get("/admin/users/simple", tags=["Administración y Control de Accesos"])
-async def simple_user_list():
-    """
-    ## 📋 Lista Simple de Usuarios
-    
-    Versión simplificada del listado de usuarios sin filtros complejos.
-    """
-    try:
-        check_user_management_availability()
-        
-        # Importar directamente las funciones necesarias
-        from firebase_admin import auth as firebase_auth
-        from database.firebase_config import get_auth_client
-        
-        auth_client = get_auth_client()
-        
-        # Obtener primeros usuarios
-        page = auth_client.list_users(max_results=5)
+        # Consultar la colección "users" directamente
+        users_ref = firestore_client.collection('users')
+        query = users_ref.limit(limit).order_by('created_at')
+        docs = query.get()
         
         users_list = []
-        for user in page.users:
-            user_info = {
-                "uid": user.uid,
-                "email": user.email or "No email",
-                "display_name": user.display_name or "Sin nombre",
-                "disabled": user.disabled,
-                "email_verified": user.email_verified
-            }
-            users_list.append(user_info)
+        for doc in docs:
+            if doc.exists:
+                user_data = doc.to_dict()
+                user_info = {
+                    "uid": doc.id,
+                    "email": user_data.get("email"),
+                    "fullname": user_data.get("fullname"),
+                    "cellphone": user_data.get("cellphone"),
+                    "nombre_centro_gestor": user_data.get("nombre_centro_gestor"),
+                    "created_at": user_data.get("created_at"),
+                    "updated_at": user_data.get("updated_at"),
+                    "is_active": user_data.get("is_active", True),
+                    "email_verified": user_data.get("email_verified", False),
+                    "can_use_google_auth": user_data.get("can_use_google_auth", False),
+                    "auth_providers": user_data.get("auth_providers", []),
+                    "last_login": user_data.get("last_login"),
+                    "login_count": user_data.get("login_count", 0)
+                }
+                users_list.append(user_info)
         
         return JSONResponse(
             content={
                 "success": True,
                 "users": users_list,
                 "count": len(users_list),
-                "has_next_page": page.has_next_page,
-                "message": "Lista simple obtenida exitosamente"
+                "collection": "users",
+                "timestamp": datetime.now().isoformat(),
+                "message": f"Se obtuvieron {len(users_list)} usuarios de la colección 'users'"
+            },
+            status_code=200,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, 
+            detail={
+                "success": False,
+                "error": str(e),
+                "message": "Error leyendo la colección 'users' de Firestore",
+                "code": "FIRESTORE_READ_ERROR"
+            }
+        )
+
+@app.get("/admin/users/simple", tags=["Administración y Control de Accesos"])
+async def simple_user_list(
+    limit: int = Query(default=10, ge=1, le=50, description="Límite de resultados")
+):
+    """
+    ## 📋 Lista Simple de Usuarios desde Firestore
+    
+    Consulta directa a la colección 'users' en Firestore.
+    Más confiable que Firebase Auth para listados básicos.
+    """
+    try:
+        check_user_management_availability()
+        
+        # Importar Firestore client
+        from database.firebase_config import get_firestore_client
+        
+        firestore_client = get_firestore_client()
+        
+        # Consultar directamente la colección 'users'
+        users_ref = firestore_client.collection('users')
+        query = users_ref.limit(limit).order_by('created_at', direction='desc')
+        docs = query.get()
+        
+        users_list = []
+        for doc in docs:
+            if doc.exists:
+                user_data = doc.to_dict()
+                user_info = {
+                    "uid": doc.id,
+                    "email": user_data.get("email", "No email"),
+                    "fullname": user_data.get("fullname", "Sin nombre"),
+                    "cellphone": user_data.get("cellphone", "Sin teléfono"),
+                    "nombre_centro_gestor": user_data.get("nombre_centro_gestor", "Sin centro gestor"),
+                    "created_at": user_data.get("created_at"),
+                    "updated_at": user_data.get("updated_at"),
+                    "is_active": user_data.get("is_active", True),
+                    "email_verified": user_data.get("email_verified", False),
+                    "can_use_google_auth": user_data.get("can_use_google_auth", False),
+                    "auth_providers": user_data.get("auth_providers", []),
+                    "last_login": user_data.get("last_login"),
+                    "login_count": user_data.get("login_count", 0)
+                }
+                users_list.append(user_info)
+        
+        return JSONResponse(
+            content={
+                "success": True,
+                "users": users_list,
+                "count": len(users_list),
+                "collection": "users",
+                "query_method": "firestore_direct",
+                "message": f"Se obtuvieron {len(users_list)} usuarios desde Firestore"
             },
             status_code=200,
             headers={"Content-Type": "application/json; charset=utf-8"}
@@ -2551,7 +2520,71 @@ async def simple_user_list():
                 "success": False,
                 "error": str(e),
                 "error_type": type(e).__name__,
-                "message": "Error obteniendo lista simple"
+                "message": "Error consultando colección users en Firestore",
+                "help": "Verifica que la colección 'users' exista en Firestore"
+            },
+            status_code=500,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
+
+@app.get("/admin/users/test", tags=["Administración y Control de Accesos"])
+async def test_users_collection():
+    """
+    ## 🧪 Test de Colección Users
+    
+    Diagnóstico de la colección 'users' en Firestore.
+    """
+    try:
+        check_user_management_availability()
+        
+        from database.firebase_config import get_firestore_client
+        
+        firestore_client = get_firestore_client()
+        
+        # Verificar que la colección existe
+        users_ref = firestore_client.collection('users')
+        
+        # Obtener solo un documento para probar
+        sample_query = users_ref.limit(1).get()
+        
+        sample_data = None
+        collection_exists = False
+        
+        for doc in sample_query:
+            if doc.exists:
+                collection_exists = True
+                sample_data = {
+                    "doc_id": doc.id,
+                    "sample_fields": list(doc.to_dict().keys()) if doc.to_dict() else []
+                }
+                break
+        
+        # Contar documentos total (limitado para rendimiento)
+        count_query = users_ref.limit(100).get()
+        total_docs = len(list(count_query))
+        
+        return JSONResponse(
+            content={
+                "success": True,
+                "collection_exists": collection_exists,
+                "sample_document": sample_data,
+                "estimated_count": total_docs,
+                "collection_name": "users",
+                "firestore_available": True,
+                "message": "Diagnóstico completado"
+            },
+            status_code=200,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
+        
+    except Exception as e:
+        return JSONResponse(
+            content={
+                "success": False,
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "firestore_available": False,
+                "message": "Error en diagnóstico de colección users"
             },
             status_code=500,
             headers={"Content-Type": "application/json; charset=utf-8"}
