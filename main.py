@@ -1721,42 +1721,13 @@ async def init_contratos_seguimiento(
 # ============================================================================
 
 def check_user_management_availability():
-    """Verificar disponibilidad de funciones de gestión de usuarios"""
-    try:
-        # Verificación más robusta con detalles específicos
-        missing_services = []
-        
-        if not USER_MANAGEMENT_AVAILABLE:
-            missing_services.append("USER_MANAGEMENT")
-        if not AUTH_OPERATIONS_AVAILABLE:
-            missing_services.append("AUTH_OPERATIONS") 
-        if not USER_MODELS_AVAILABLE:
-            missing_services.append("USER_MODELS")
-        if not FIREBASE_AVAILABLE:
-            missing_services.append("FIREBASE")
-            
-        if missing_services:
-            error_detail = {
-                "success": False,
-                "error": "Servicios de gestión de usuarios no disponibles",
-                "missing_services": missing_services,
-                "code": "SERVICES_UNAVAILABLE",
-                "environment": os.getenv("ENVIRONMENT", "development"),
-                "help": "Verifique la configuración de Firebase y las importaciones de módulos"
-            }
-            raise HTTPException(status_code=503, detail=error_detail)
-            
-    except HTTPException:
-        raise
-    except Exception as e:
-        # Error inesperado en la verificación
+    """✅ FUNCIONAL: Verificación simple sin lógica redundante"""
+    if not (FIREBASE_AVAILABLE and USER_MANAGEMENT_AVAILABLE):
         raise HTTPException(
-            status_code=500,
+            status_code=503,
             detail={
-                "success": False,
-                "error": "Error verificando servicios de usuario",
-                "details": str(e),
-                "code": "SERVICE_CHECK_ERROR"
+                "error": "Servicios no disponibles",
+                "code": "SERVICES_UNAVAILABLE"
             }
         )
 
@@ -2019,18 +1990,55 @@ async def register_health_check():
         }
         
         # Verificar configuración
+        environment = os.getenv("ENVIRONMENT", "development")
+        has_service_account = bool(os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY"))
+        
         health_status["configuration"] = {
             "project_id": PROJECT_ID,
-            "has_firebase_service_account": bool(os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY")),
-            "authorized_domain": os.getenv("AUTHORIZED_EMAIL_DOMAIN", "@cali.gov.co")
+            "environment": environment,
+            "has_firebase_service_account": has_service_account,
+            "firebase_available": FIREBASE_AVAILABLE,
+            "auth_method": "Service Account Key" if has_service_account else "Workload Identity Federation",
+            "authorized_domain": os.getenv("AUTHORIZED_EMAIL_DOMAIN", "@cali.gov.co"),
+            "deployment_ready": FIREBASE_AVAILABLE  # Lo importante es que Firebase esté disponible
         }
         
-        # Determinar estado general
-        all_services_available = all(
-            service.get("status") == "available" if isinstance(service, dict) else service
-            for service in health_status["services"].values()
-        )
-        
+        # Determinar estado general - soportar estructuras mixtas en 'services'
+        def is_service_available(svc):
+            """Evaluar si un servicio (o estructura) se considera disponible.
+
+            - Si es dict y contiene 'status', se considera disponible cuando status == 'available'.
+            - Si es dict con flags booleanos, se considera disponible cuando todos los flags booleanos son True.
+            - Si es booleano, se usa su valor.
+            - En cualquier otro caso se considera no disponible.
+            """
+            if isinstance(svc, dict):
+                # Si tiene la clave 'status' respetarla
+                if "status" in svc:
+                    return svc.get("status") == "available"
+                # Si es un diccionario de flags booleanas, todos deben ser True
+                bool_flags = [v for v in svc.values() if isinstance(v, bool)]
+                if bool_flags:
+                    return all(bool_flags)
+                # Fallback: consider available si el dict no está vacío
+                return bool(svc)
+
+            # Si es booleano, usar su valor
+            if isinstance(svc, bool):
+                return svc
+
+            # Cualquier otro tipo se considera no disponible
+            return False
+
+        # Normalizar 'imports' a un campo 'status' legible para diagnósticos si procede
+        imports_status = health_status["services"].get("imports")
+        if isinstance(imports_status, dict) and "status" not in imports_status:
+            health_status["services"]["imports"]["status"] = (
+                "available" if is_service_available(imports_status) else "unavailable"
+            )
+
+        all_services_available = all(is_service_available(service) for service in health_status["services"].values())
+
         status_code = 200 if all_services_available else 503
         health_status["overall_status"] = "healthy" if all_services_available else "unhealthy"
         
@@ -2054,178 +2062,75 @@ async def register_health_check():
 @app.post("/auth/register", tags=["Administración y Control de Accesos"], status_code=status.HTTP_201_CREATED)
 async def register_user(registration_data: UserRegistrationRequest):
     """
-    ## 👤 Registro de Usuario Nuevo para Next.js
+    ✅ **REGISTRO DE USUARIO - VERSIÓN FUNCIONAL SIMPLIFICADA**
     
-    Crea nuevas cuentas con validaciones completas y configuración automática de roles.
-    Optimizado para integración con Next.js y Firebase Auth SDK.
-    
-    ### ✅ Casos de uso:
-    - Registro de empleados nuevos desde Next.js
-    - Autoregistro con aprobación posterior
-    - Migración de usuarios existentes
-    
-    ### 🔧 Características:
-    - Validación completa de datos (email, contraseña, teléfono)
-    - Creación en Firebase Auth y Firestore  
-    - Rol por defecto: 'viewer' (modificable por administrador)
-    - Generación opcional de enlace de verificación
-    - Verificación de dominio (@cali.gov.co)
-    - Validación automática usando modelos Pydantic
-    
-    ### 📋 Requisitos:
-    - **Email**: Debe ser del dominio @cali.gov.co
-    - **Contraseña**: Mínimo 8 caracteres, mayúsculas, minúsculas, números y símbolos
-    - **Confirmar Contraseña**: Debe coincidir exactamente con la contraseña
-    - **Teléfono**: Formato colombiano válido (+57 3XX XXX XXXX)
-    - **Nombre completo**: Campo 'name' requerido (mínimo 2 palabras)
-    - **Centro gestor**: Nombre del centro gestor responsable
-    
-    ### 📝 Ejemplo de uso desde Next.js (compatible con authService):
-    ```javascript
-    const userData = {
-      name: "María González",              // Campo requerido
-      email: "maria.gonzalez@cali.gov.co",
-      password: "SecurePass123!",
-      confirmPassword: "SecurePass123!",   // Debe coincidir con password
-      cellphone: "+57 315 987 6543",
-      nombre_centro_gestor: "Secretaría de Salud"
-    };
-    
-    const response = await fetch('/auth/register', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(userData)
-    });
-    
-    const result = await response.json();
-    if (result.success) {
-        console.log('Usuario creado:', result.user);
-    }
-    ```
+    **Fail Fast**: Si no hay Service Account configurado, falla inmediatamente
+    **Sin Cache**: Cada request es independiente
+    **Funcional**: Sin efectos colaterales entre registros
     """
+    
+    # � FAIL FAST: Verificar Service Account inmediatamente
+    if not FIREBASE_AVAILABLE:
+        environment = os.getenv("ENVIRONMENT", "development")
+        if environment == "production":
+            error_msg = "Firebase Service Account no configurado en producción"
+            solution = "Configure FIREBASE_SERVICE_ACCOUNT_KEY en Railway"
+        else:
+            error_msg = "Firebase no disponible en desarrollo (requiere WIF o Service Account)"
+            solution = "Configure Workload Identity Federation o FIREBASE_SERVICE_ACCOUNT_KEY"
+        
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "success": False,
+                "error": error_msg,
+                "code": "FIREBASE_UNAVAILABLE",
+                "solution": solution,
+                "environment": environment
+            }
+        )
+    
     try:
-        # Verificación de servicios con manejo mejorado para producción
-        check_user_management_availability()
-        
-        # Log para debugging en producción (sin datos sensibles)
-        print(f"🔐 DEBUG: User registration attempt - Environment: {os.getenv('ENVIRONMENT', 'development')}")
-        
-        # Llamar a la función de creación de usuario con datos validados
+        # ✅ PROGRAMACIÓN FUNCIONAL: Una sola responsabilidad
         result = await create_user_account(
             email=registration_data.email,
             password=registration_data.password,
-            fullname=registration_data.name,  # Usar el campo 'name' directamente
+            fullname=registration_data.name,
             cellphone=registration_data.cellphone,
             nombre_centro_gestor=registration_data.nombre_centro_gestor,
             send_email_verification=True
         )
         
-        # Verificar si la creación fue exitosa
+        # ✅ FAIL FAST: Si hay error, fallar inmediatamente
         if not result.get("success", False):
-            error_code = result.get("code", "USER_CREATION_ERROR")
-            error_message = result.get("error", "Error creando cuenta de usuario")
-            
-            if error_code == "EMAIL_ALREADY_EXISTS":
-                raise HTTPException(
-                    status_code=409, 
-                    detail={
-                        "success": False,
-                        "error": error_message,
-                        "code": error_code
-                    }
-                )
-            elif error_code in ["INVALID_EMAIL_FORMAT", "EMAIL_VALIDATION_ERROR"]:
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "success": False,
-                        "error": error_message,
-                        "code": error_code
-                    }
-                )
-            elif "valid" in result and not result["valid"]:
-                # Error de validación (contraseña, teléfono, etc.)
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "success": False,
-                        "error": error_message,
-                        "code": error_code,
-                        "validation_errors": result.get("errors", [])
-                    }
-                )
-            else:
-                # Error genérico
-                raise HTTPException(
-                    status_code=500,
-                    detail={
-                        "success": False,
-                        "error": error_message,
-                        "code": error_code
-                    }
-                )
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "success": False,
+                    "error": result.get("error", "Error creando usuario"),
+                    "code": result.get("code", "USER_CREATION_ERROR")
+                }
+            )
         
-        # Si llegamos aquí, la creación fue exitosa
-        # Limpiar datos de Firebase antes de serializar
-        clean_user_data = clean_firebase_data(result.get("user", {}))
-        
-        response_data = {
+        # ✅ FUNCIONAL: Transformar datos sin mutación
+        return {
             "success": True,
-            "user": clean_user_data,
-            "message": result.get("message", "Usuario creado exitosamente"),
+            "user": clean_firebase_data(result.get("user", {})),
+            "message": "Usuario creado exitosamente",
             "timestamp": datetime.now().isoformat()
         }
         
-        # Agregar verification_link solo si existe
-        if result.get("verification_link"):
-            response_data["verification_link"] = result["verification_link"]
-        
-        return JSONResponse(
-            content=response_data,
-            status_code=201,
-            headers={"Content-Type": "application/json; charset=utf-8"}
-        )
-        
     except HTTPException:
         raise
-    except asyncio.TimeoutError:
-        # Error específico de timeout
-        raise HTTPException(
-            status_code=504,
-            detail={
-                "success": False,
-                "error": "Timeout durante el registro",
-                "message": "La operación tardó demasiado tiempo. Intente nuevamente.",
-                "code": "REGISTRATION_TIMEOUT"
-            }
-        )
     except Exception as e:
-        # Log detallado para debugging (sin datos sensibles)
-        error_msg = str(e)
-        print(f"❌ REGISTER ERROR: {error_msg}")
-        
-        # Detección de errores específicos comunes en producción
-        if "firebase" in error_msg.lower():
-            error_code = "FIREBASE_ERROR"
-            user_message = "Error de configuración del servicio de autenticación"
-        elif "network" in error_msg.lower() or "connection" in error_msg.lower():
-            error_code = "NETWORK_ERROR" 
-            user_message = "Error de conexión. Verifique su conexión a internet."
-        elif "permission" in error_msg.lower() or "access" in error_msg.lower():
-            error_code = "PERMISSION_ERROR"
-            user_message = "Error de permisos del sistema"
-        else:
-            error_code = "INTERNAL_SERVER_ERROR"
-            user_message = "Error interno del servidor. Intente nuevamente."
-            
+        # ✅ SIMPLE: Error handling directo
         raise HTTPException(
-            status_code=500, 
+            status_code=500,
             detail={
                 "success": False,
-                "error": user_message,
-                "code": error_code,
-                "timestamp": datetime.now().isoformat(),
-                "environment": os.getenv("ENVIRONMENT", "development")
+                "error": "Error interno del servidor",
+                "code": "INTERNAL_SERVER_ERROR",
+                "debug": str(e) if os.getenv("ENVIRONMENT") == "development" else None
             }
         )
 
