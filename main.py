@@ -1142,14 +1142,15 @@ async def export_geometry_for_nextjs(
     force_refresh: Optional[str] = Query(None, description="Forzar limpieza de cache (debug)")
 ):
     """
-    ## Datos Geoespaciales
+    ## Datos Geoespaciales Completos
     
-    **Propósito**: Retorna exclusivamente datos geográficos optimizados para renderizado de mapas.
+    **Propósito**: Retorna TODOS los registros de proyectos (646) en formato GeoJSON, incluyendo aquellos sin coordenadas válidas.
     
-    ### Optimización de Datos
+    ### Solución Implementada
     
-    **Campos incluidos**: upid, coordinates, coordenadas, geometry, linestring, polygon, lat, lng, latitude, longitude
-    **Campos excluidos**: Todos los atributos no geográficos para máximo rendimiento
+    **TODOS los registros incluidos**: Proyectos con y sin geometría válida
+    **Marcador de geometría**: Campo `has_valid_geometry` indica si las coordenadas son reales
+    **Coordenadas placeholder**: Registros sin geometría usan [0,0] como placeholder
     **Bounding box**: Disponible bajo demanda con `include_bbox=true`
     
     ### Estrategia de Filtrado
@@ -1177,10 +1178,10 @@ async def export_geometry_for_nextjs(
     
     ### Aplicaciones
     
-    - Mapas interactivos de alta performance
-    - Capas geográficas para análisis espacial  
-    - Integración con bibliotecas cartográficas
-    - Visualización masiva de geometrías
+    - Mapas interactivos mostrando el conteo total correcto (646 proyectos)
+    - Capas geográficas con opción de filtrar por `has_valid_geometry`
+    - Integración con bibliotecas cartográficas que manejan coordenadas [0,0]
+    - Visualización completa del portafolio de proyectos
     """
     # Verificación robusta de Firebase con reintentos
     if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:

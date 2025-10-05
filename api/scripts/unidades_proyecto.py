@@ -333,11 +333,12 @@ async def get_all_unidades_proyecto_simple(limit: Optional[int] = None) -> Dict[
 async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Obtener datos de unidades-proyecto para visualización geoespacial
-    Especializado para NextJS - Incluye TODOS los registros, tengan o no geometría
+    Especializado para NextJS - Incluye TODOS los registros (646 proyectos)
     
-    ARREGLO APLICADO: Ya no requiere campos geométricos obligatoriamente
-    - Incluye campo 'has_geometry' para indicar si tiene coordenadas válidas
-    - El frontend puede decidir cómo manejar registros sin geometría
+    SOLUCIÓN ÚNICA APLICADA: Incluye todos los registros, tengan o no geometría válida
+    - Registros sin geometría usan coordenadas [0,0] como placeholder
+    - Campo 'has_valid_geometry' indica si las coordenadas son reales
+    - El frontend puede filtrar por 'has_valid_geometry' si necesita solo registros con coordenadas
     
     Filtros soportados:
     - upid: ID específico o lista de IDs
@@ -505,68 +506,37 @@ async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = Non
                     except (ValueError, TypeError):
                         pass
                 
-                # 5. Solo incluir si tiene geometría válida (como antes)
-                if geometry_found and geometry_data_obj:
-                    # Crear registro completo con estructura GeoJSON
-                    feature = {
-                        "type": "Feature",
-                        "geometry": geometry_data_obj,
-                        "properties": {
-                            "upid": upid_value,
-                            # Campos originales
-                            "comuna_corregimiento": record.get('comuna_corregimiento') or doc_data.get('properties', {}).get('comuna_corregimiento'),
-                            "barrio_vereda": record.get('barrio_vereda') or doc_data.get('properties', {}).get('barrio_vereda'),
-                            "estado": record.get('estado') or doc_data.get('properties', {}).get('estado'),
-                            # NUEVOS CAMPOS SOLICITADOS CON CONVERSIÓN DE TIPOS
-                            "presupuesto_base": _convert_to_int(record.get('presupuesto_base') or doc_data.get('properties', {}).get('presupuesto_base')),
-                            "tipo_intervencion": record.get('tipo_intervencion') or doc_data.get('properties', {}).get('tipo_intervencion'),
-                            "avance_obra": _convert_to_float(record.get('avance_obra') or doc_data.get('properties', {}).get('avance_obra')),
-                            # Campos adicionales útiles
-                            "nombre_centro_gestor": record.get('nombre_centro_gestor') or doc_data.get('properties', {}).get('nombre_centro_gestor'),
-                        }
+                # 5. SOLUCIÓN ÚNICA: Incluir TODOS los registros, tengan o no geometría
+                # Crear geometría por defecto si no existe (punto nulo o coordenadas sintéticas)
+                if not geometry_found or not geometry_data_obj:
+                    # Si no tiene geometría, crear un punto nulo para mantener estructura GeoJSON
+                    geometry_data_obj = {
+                        "type": "Point",
+                        "coordinates": [0, 0]  # Coordenadas nulas, el frontend puede decidir cómo manejarlas
                     }
-                    geometry_data.append(feature)
-        
-        print(f"🗺️ DEBUG: Procesados {total_docs_processed} docs, incluidos {len(geometry_data)} registros con UPID")
-        
-        # TEMPORAL: Si no hay geometrías, crear datos sintéticos para debugging
-        if len(geometry_data) == 0 and total_docs_processed > 0:
-            print("⚠️ DEBUG: No se encontraron geometrías válidas. Creando datos sintéticos para debugging...")
-            
-            # Obtener algunos registros de attributes para crear geometrías sintéticas
-            try:
-                sample_docs = list(db.collection('unidades_proyecto').limit(5).stream())
                 
-                for i, doc in enumerate(sample_docs):
-                    doc_data = doc.to_dict()
-                    props = doc_data.get('properties', {})
-                    upid = props.get('upid') or doc_data.get('upid')
-                    
-                    if upid:
-                        # Crear geometría sintética (punto en Cali, Colombia)
-                        synthetic_feature = {
-                            "type": "Feature",
-                            "geometry": {
-                                "type": "Point",
-                                "coordinates": [-76.5225 + (i * 0.01), 3.4516 + (i * 0.01)]  # Coordenadas de Cali con variación
-                            },
-                            "properties": {
-                                "upid": upid,
-                                "comuna_corregimiento": props.get('comuna_corregimiento') or doc_data.get('comuna_corregimiento'),
-                                "barrio_vereda": props.get('barrio_vereda') or doc_data.get('barrio_vereda'),
-                                "estado": props.get('estado') or doc_data.get('estado'),
-                                "presupuesto_base": _convert_to_int(props.get('presupuesto_base') or doc_data.get('presupuesto_base')),
-                                "tipo_intervencion": props.get('tipo_intervencion') or doc_data.get('tipo_intervencion'),
-                                "avance_obra": _convert_to_float(props.get('avance_obra') or doc_data.get('avance_obra')),
-                                "nombre_centro_gestor": props.get('nombre_centro_gestor') or doc_data.get('nombre_centro_gestor'),
-                                "synthetic": True  # Marcar como sintético
-                            }
-                        }
-                        geometry_data.append(synthetic_feature)
-                        
-                print(f"🔧 DEBUG: Creados {len(geometry_data)} registros sintéticos")
-            except Exception as e:
-                print(f"❌ Error creando datos sintéticos: {e}")
+                # Crear registro completo con estructura GeoJSON (TODOS los registros incluidos)
+                feature = {
+                    "type": "Feature",
+                    "geometry": geometry_data_obj,
+                    "properties": {
+                        "upid": upid_value,
+                        "has_valid_geometry": geometry_found,  # Marcar si tiene geometría real
+                        # Campos originales  
+                        "comuna_corregimiento": record.get('comuna_corregimiento') or doc_data.get('properties', {}).get('comuna_corregimiento'),
+                        "barrio_vereda": record.get('barrio_vereda') or doc_data.get('properties', {}).get('barrio_vereda'),
+                        "estado": record.get('estado') or doc_data.get('properties', {}).get('estado'),
+                        # NUEVOS CAMPOS SOLICITADOS CON CONVERSIÓN DE TIPOS
+                        "presupuesto_base": _convert_to_int(record.get('presupuesto_base') or doc_data.get('properties', {}).get('presupuesto_base')),
+                        "tipo_intervencion": record.get('tipo_intervencion') or doc_data.get('properties', {}).get('tipo_intervencion'),
+                        "avance_obra": _convert_to_float(record.get('avance_obra') or doc_data.get('properties', {}).get('avance_obra')),
+                        # Campos adicionales útiles
+                        "nombre_centro_gestor": record.get('nombre_centro_gestor') or doc_data.get('properties', {}).get('nombre_centro_gestor'),
+                    }
+                }
+                geometry_data.append(feature)
+        
+        print(f"🗺️ DEBUG: Procesados {total_docs_processed} docs, incluidos {len(geometry_data)} registros totales (con y sin geometría)")
         
         # Aplicar filtros
         if filters:
