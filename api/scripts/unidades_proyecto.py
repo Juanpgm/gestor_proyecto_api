@@ -8,28 +8,11 @@ import time
 from typing import Dict, List, Any, Optional, Union
 from database.firebase_config import get_firestore_client
 
-# Cache global simplificado
-_geometry_cache = {}
-_geometry_cache_timestamp = 0
-_attributes_cache = {}
-_attributes_cache_timestamp = 0
-_filters_cache = {}
-_filters_cache_timestamp = 0
+# ✅ PROGRAMACIÓN FUNCIONAL: Sin cache global que cause problemas de estado
+# ✅ Sin variables mutables globales que persistan datos entre requests
+# ✅ Cada request es independiente y sin efectos colaterales
 
-# CACHE VALIDITY (horas)
-GEOMETRY_CACHE_HOURS = 12
-ATTRIBUTES_CACHE_HOURS = 4
-FILTERS_CACHE_HOURS = 24
-
-# INICIALIZACIÓN: Limpiar caches al cargar el módulo
-print("🔄 DEBUG: Inicializando módulo unidades_proyecto - Limpiando caches")
-print("🔧 DEBUG: GEOMETRY ARREGLADO - Ahora incluye registros sin geometría")
-_geometry_cache.clear()
-_attributes_cache.clear() 
-_filters_cache.clear()
-_geometry_cache_timestamp = 0
-_attributes_cache_timestamp = 0
-_filters_cache_timestamp = 0
+print("� Módulo unidades_proyecto inicializado sin cache (programación funcional)")
 
 
 def _convert_to_int(value) -> Optional[int]:
@@ -354,52 +337,7 @@ async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = Non
     try:
         # ============================================
         # ESTRATEGIA CACHE-FIRST (12 horas)
-        # ============================================
-        import hashlib
-        import json
-        
-        # Clave para datos completos (sin filtros)
-        base_cache_key = "geometry_all_data"
-        
-        # LÓGICA DE CACHE SIMPLIFICADA
-        cached_all_data = _get_cached_geometry(base_cache_key)
-        
-        if cached_all_data and cached_all_data.get("data"):
-            print(f"� DEBUG: Usando cache geometry ({len(cached_all_data['data'])} registros)")
-            
-            # Aplicar filtros sobre datos del cache
-            filtered_data = cached_all_data["data"]
-            
-            if filters:
-                # Filtros geográficos y de contenido
-                content_filters = {k: v for k, v in filters.items() 
-                                 if k in ['comuna_corregimiento', 'barrio_vereda', 'estado', 'tipo_intervencion', 'nombre_centro_gestor', 'presupuesto_base', 'avance_obra']}
-                if content_filters:
-                    filtered_data = apply_client_side_filters(filtered_data, content_filters)
-                    print(f"🚀 DEBUG: Filtros aplicados: {len(filtered_data)} registros")
-                
-                # Aplicar límite
-                if 'limit' in filters and filters['limit']:
-                    try:
-                        limit_value = int(filters['limit'])
-                        if limit_value > 0:
-                            filtered_data = filtered_data[:limit_value]
-                    except (ValueError, TypeError):
-                        pass
-            
-            # Respuesta desde cache en formato GeoJSON
-            geojson_response = {
-                "type": "FeatureCollection", 
-                "features": filtered_data,
-                "properties": {
-                    "success": True,
-                    "count": len(filtered_data),
-                    "filters_applied": filters or {},
-                    "cache_hit": True,
-                    "message": f"Geometrías desde cache"
-                }
-            }
-            return geojson_response
+        # ✅ PROGRAMACIÓN FUNCIONAL: Sin cache, datos frescos siempre
         
         # Cargar datos desde Firestore
         print("🔄 DEBUG: Cargando datos desde Firestore")
@@ -555,15 +493,7 @@ async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = Non
                 except (ValueError, TypeError):
                     pass
         
-        # Guardar en cache para futuros usos
-        cache_data = {
-            "success": True,
-            "data": geometry_data,
-            "count": len(geometry_data),
-            "type": "geometry"
-        }
-        _set_geometry_cache(base_cache_key, cache_data)
-        print(f"🗺️ DEBUG: Cache actualizado con {len(geometry_data)} registros")
+        # ✅ FUNCIONAL: Sin cache, datos siempre frescos
         
         # Respuesta en formato GeoJSON válido para NextJS
         geojson_response = {
@@ -573,8 +503,8 @@ async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = Non
                 "success": True,
                 "count": len(geometry_data),
                 "filters_applied": filters or {},
-                "cache_hit": False,
-                "message": f"Geometrías cargadas desde Firestore"
+                "functional_approach": True,
+                "message": f"Geometrías cargadas desde Firestore (sin cache)"
             }
         }
         
@@ -619,14 +549,7 @@ async def get_unidades_proyecto_attributes(
         import hashlib
         import json
         
-        # Generar clave de cache basada en filtros, limit y offset
-        cache_data = {"filters": filters or {}, "limit": limit, "offset": offset}
-        cache_key = hashlib.md5(json.dumps(cache_data, sort_keys=True).encode()).hexdigest()
-        
-        # Intentar obtener desde cache primero
-        cached_result = _get_cached_attributes(cache_key)
-        if cached_result:
-            return cached_result
+        # ✅ PROGRAMACIÓN FUNCIONAL: Sin cache, datos frescos siempre
             
         # ============================================
         # LÓGICA PRINCIPAL (si no hay cache)
@@ -815,8 +738,7 @@ async def get_unidades_proyecto_attributes(
             "message": f"Obtenidos {len(attributes_data)} registros de atributos ({optimization_info})"
         }
         
-        # Guardar en cache para próximas consultas (4h)
-        _set_attributes_cache(cache_key, result)
+        # ✅ FUNCIONAL: Sin cache, datos siempre frescos
         
         return result
         
@@ -1192,79 +1114,17 @@ async def validate_unidades_proyecto_collection() -> Dict[str, Any]:
 # ============================================================================
 # CÓDIGO OBSOLETO REMOVIDO - VARIABLES DE CACHE DUPLICADAS
 
-def _is_cache_valid(cache_timestamp: float, hours: int) -> bool:
-    """Verificar si un cache sigue siendo válido"""
-    return time.time() - cache_timestamp < (hours * 3600)
-
-def _get_cached_geometry(cache_key: str) -> Optional[Dict[str, Any]]:
-    """Obtener geometry desde cache si es válido"""
-    if _is_cache_valid(_geometry_cache_timestamp, GEOMETRY_CACHE_HOURS) and cache_key in _geometry_cache:
-        return _geometry_cache[cache_key].copy()
-    return None
-
-def _get_cached_attributes(cache_key: str) -> Optional[Dict[str, Any]]:
-    """Obtener attributes desde cache si es válido"""
-    if _is_cache_valid(_attributes_cache_timestamp, ATTRIBUTES_CACHE_HOURS) and cache_key in _attributes_cache:
-        return _attributes_cache[cache_key].copy()
-    return None
-
-def _get_cached_filters() -> Optional[Dict[str, Any]]:
-    """Obtener filtros desde cache si es válido"""
-    if _is_cache_valid(_filters_cache_timestamp, FILTERS_CACHE_HOURS) and _filters_cache:
-        return _filters_cache.copy()
-    return None
-
-def _set_geometry_cache(cache_key: str, data: Dict[str, Any]) -> None:
-    """Guardar geometry en cache"""
-    global _geometry_cache, _geometry_cache_timestamp
-    _geometry_cache[cache_key] = data.copy()
-    _geometry_cache_timestamp = time.time()
-    print(f"💾 DEBUG: Cache geometry actualizado ({GEOMETRY_CACHE_HOURS}h)")
-
-def _set_attributes_cache(cache_key: str, data: Dict[str, Any]) -> None:
-    """Guardar attributes en cache"""
-    global _attributes_cache, _attributes_cache_timestamp
-    _attributes_cache[cache_key] = data.copy()
-    _attributes_cache_timestamp = time.time()
-    print(f"💾 DEBUG: Cache attributes actualizado ({ATTRIBUTES_CACHE_HOURS}h)")
-
-def _set_filters_cache(data: Dict[str, Any]) -> None:
-    """Guardar filtros en cache"""
-    global _filters_cache, _filters_cache_timestamp
-    _filters_cache = data.copy()
-    _filters_cache_timestamp = time.time()
-    print(f"💾 DEBUG: Cache filtros actualizado ({FILTERS_CACHE_HOURS}h)")
-
-def _clear_all_caches() -> None:
-    """Limpiar todos los caches para reinicio completo"""
-    global _geometry_cache, _geometry_cache_timestamp, _attributes_cache, _attributes_cache_timestamp, _filters_cache, _filters_cache_timestamp
-    _geometry_cache.clear()
-    _geometry_cache_timestamp = 0
-    _attributes_cache.clear()
-    _attributes_cache_timestamp = 0
-    _filters_cache.clear()
-    _filters_cache_timestamp = 0
-    print("🗑️ DEBUG: *** TODOS LOS CACHES LIMPIADOS ***")
+# ✅ CACHE ELIMINADO - PROGRAMACIÓN FUNCIONAL
+# Las funciones de cache causaban persistencia de datos entre requests
+# Ahora cada request es independiente y sin efectos colaterales
 
 async def get_filter_options(field: Optional[str] = None, limit: Optional[int] = None) -> Dict[str, Any]:
     """
-    Obtener valores únicos para filtros usando el endpoint attributes optimizado
-    
-    ESTRATEGIA INTELIGENTE:
-    - Reutiliza el endpoint 'attributes' ya optimizado
-    - Extrae valores únicos de los datos obtenidos
-    - Cache global de 24 horas para máxima eficiencia
-    - Compatible con controles NextJS (dropdowns, autocomplete)
-    
-    Args:
-        field: Campo específico del cual obtener valores únicos (opcional)
-        limit: Límite de valores únicos a retornar (opcional, default sin límite)
-    
-    Returns:
-        Dict con valores únicos optimizado para frontend NextJS
+    ✅ PROGRAMACIÓN FUNCIONAL: Obtener valores únicos para filtros
+    Sin cache, datos siempre frescos y consistentes
     """
     try:
-        # Campos disponibles para filtros (compatibles con endpoint original)
+        # Campos disponibles
         available_fields = {
             'estados': 'estado',
             'tipos_intervencion': 'tipo_intervencion', 
@@ -1275,59 +1135,7 @@ async def get_filter_options(field: Optional[str] = None, limit: Optional[int] =
             'anos': 'ano'
         }
         
-        # Intentar obtener desde cache primero
-        cached_data = _get_cached_filters()
-        if cached_data:
-            # Si se solicita un campo específico, filtrar del cache
-            if field:
-                field_mapping = {v: k for k, v in available_fields.items()}
-                target_field_key = field_mapping.get(field, field)
-                
-                if target_field_key in cached_data:
-                    result = {target_field_key: cached_data[target_field_key]}
-                    if limit:
-                        result[target_field_key] = result[target_field_key][:limit]
-                else:
-                    result = {field: []}  # Campo no encontrado
-                
-                return {
-                    "success": True,
-                    "filters": result,
-                    "metadata": {
-                        "total_fields": len(result),
-                        "field_requested": field,
-                        "limit_applied": limit,
-                        "source": "cache_24h",
-                        "cache_hit": True,
-                        "optimized_query": True,
-                        "compatible_nextjs": True
-                    }
-                }
-            else:
-                # Retornar todos los campos desde cache
-                result = cached_data.copy()
-                if limit:
-                    for key in result:
-                        result[key] = result[key][:limit]
-                
-                return {
-                    "success": True,
-                    "filters": result,
-                    "metadata": {
-                        "total_fields": len(result),
-                        "field_requested": None,
-                        "limit_applied": limit,
-                        "source": "cache_24h",
-                        "cache_hit": True,
-                        "optimized_query": True,
-                        "compatible_nextjs": True
-                    }
-                }
-        
-        # Si no hay cache válido, obtener datos frescos usando la misma lógica de attributes
-        print("� DEBUG: Cache expirado/ausente. Generando filtros desde datos attributes...")
-        
-        # ESTRATEGIA OPTIMIZADA: Usar endpoint attributes con límite para extraer filtros
+        # ✅ FUNCIONAL: Obtener datos frescos siempre
         attributes_result = await get_unidades_proyecto_attributes(filters={}, limit=400)
         
         if not attributes_result.get("success", False):
@@ -1337,74 +1145,36 @@ async def get_filter_options(field: Optional[str] = None, limit: Optional[int] =
                 "filters": {}
             }
         
+        # ✅ INMUTABLE: Extraer valores únicos sin mutar datos
         attributes_data = attributes_result.get("data", [])
-        print(f"📊 DEBUG: Procesando {len(attributes_data)} registros para extraer filtros únicos")
-        
-        # Extraer valores únicos de forma súper eficiente con soporte UTF-8
         field_collectors = {field_key: set() for field_key in available_fields.keys()}
         
-        def clean_utf8_value(value) -> str:
-            """Limpiar y normalizar valores UTF-8 para español"""
-            if not value:
-                return ""
-            
-            # Convertir a string y limpiar espacios
-            clean_str = str(value).strip()
-            
-            # Decodificar caracteres UTF-8 mal codificados (común en bases de datos)
-            try:
-                # Intentar decodificar si está mal codificado
-                if '\\u00' in clean_str or 'Ã' in clean_str:
-                    # Corregir codificación UTF-8 mal interpretada
-                    clean_str = clean_str.encode('latin-1').decode('utf-8')
-            except (UnicodeDecodeError, UnicodeEncodeError):
-                # Si hay error, mantener el string original
-                pass
-            
-            return clean_str
-        
         for record in attributes_data:
-            # Los campos están dentro de 'properties' según la estructura real
             properties = record.get('properties', {})
             
             for field_key, field_path in available_fields.items():
-                # Buscar el valor en properties primero, luego en la raíz
                 value = properties.get(field_path) or record.get(field_path)
                 
                 if value and str(value).strip() and str(value).strip().lower() not in ['null', 'none', '']:
-                    clean_value = clean_utf8_value(value)
-                    if clean_value:  # Solo agregar si no está vacío después de limpieza
+                    clean_value = str(value).strip()
+                    if clean_value:
                         field_collectors[field_key].add(clean_value)
         
-        # Convertir a formato optimizado para NextJS
-        all_filters = {}
-        for field_key, values_set in field_collectors.items():
-            sorted_values = sorted(list(values_set))
-            all_filters[field_key] = sorted_values
-            print(f"✅ DEBUG: {field_key}: {len(sorted_values)} valores únicos extraídos")
+        # ✅ TRANSFORMACIÓN FUNCIONAL: Sin efectos colaterales
+        all_filters = {field_key: sorted(list(values_set)) 
+                      for field_key, values_set in field_collectors.items()}
         
-        # Guardar en cache para próximas consultas (24h)
-        _set_filters_cache(all_filters)
-        
-        # Preparar respuesta según parámetros
+        # ✅ RESPUESTA PURA: Basada solo en parámetros de entrada
         if field:
-            # Campo específico solicitado
             field_mapping = {v: k for k, v in available_fields.items()}
             target_field_key = field_mapping.get(field, field)
-            
-            if target_field_key in all_filters:
-                result_values = all_filters[target_field_key]
-                if limit:
-                    result_values = result_values[:limit]
-                result = {target_field_key: result_values}
-            else:
-                result = {field: []}  # Campo no encontrado
+            result = {target_field_key: all_filters.get(target_field_key, [])}
+            if limit:
+                result[target_field_key] = result[target_field_key][:limit]
         else:
-            # Todos los campos
             result = all_filters.copy()
             if limit:
-                for key in result:
-                    result[key] = result[key][:limit]
+                result = {key: values[:limit] for key, values in result.items()}
         
         return {
             "success": True,
@@ -1413,19 +1183,12 @@ async def get_filter_options(field: Optional[str] = None, limit: Optional[int] =
                 "total_fields": len(result),
                 "field_requested": field,
                 "limit_applied": limit,
-                "source": "fresh_data_cached",
-                "cache_hit": False,
-                "total_records_processed": len(attributes_data),
-                "optimized_query": True,
-                "cache_duration_hours": 24,
-                "compatible_nextjs": True
+                "functional_approach": True,
+                "fresh_data": True
             }
         }
         
     except Exception as e:
-        print(f"❌ ERROR en get_filter_options: {str(e)}")
-        import traceback
-        traceback.print_exc()
         return {
             "success": False,
             "error": f"Error obteniendo opciones de filtros: {str(e)}",

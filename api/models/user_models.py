@@ -13,13 +13,16 @@ import re
 # ============================================================================
 
 class UserRegistrationRequest(BaseModel):
-    """Registro de usuario nuevo"""
+    """✅ FUNCIONAL: Registro de usuario simplificado"""
     email: EmailStr
     password: str
-    confirmPassword: str
-    name: str  # Campo principal para compatibilidad con frontend
+    confirmPassword: str = Field(alias="confirmPassword")  # Soporte explícito para camelCase
+    name: str
     cellphone: str
     nombre_centro_gestor: str
+    
+    class Config:
+        allow_population_by_field_name = True  # Permite tanto camelCase como snake_case
     
     @validator('confirmPassword')
     def passwords_match(cls, v, values):
@@ -29,11 +32,10 @@ class UserRegistrationRequest(BaseModel):
     
     @validator('cellphone')
     def validate_cellphone(cls, v):
-        # Básica validación de formato colombiano
-        clean_phone = re.sub(r'[^\d+]', '', str(v))
-        if not clean_phone or len(clean_phone) < 10:
-            raise ValueError('Número de celular inválido')
-        return v
+        # ✅ FUNCIONAL: Validación simplificada
+        if not v or len(str(v).strip()) < 10:
+            raise ValueError('Número de celular requerido')
+        return str(v).strip()
 
 class UserLoginRequest(BaseModel):
     """Login con email y contraseña"""
