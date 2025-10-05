@@ -265,7 +265,8 @@ important_origins = [
     "https://captura-emprestito.netlify.app",
     "http://127.0.0.1:5500",
     "http://localhost:3000",
-    "http://localhost:5500"
+    "http://localhost:5500",
+    "https://gestor-proyectos-vercel.vercel.app"  # Frontend específico de Vercel
 ]
 
 # Combinar todos los orígenes
@@ -462,7 +463,7 @@ async def cors_test(request: Request):
         "server_info": {
             "environment": os.getenv("ENVIRONMENT", "development"),
             "port": os.getenv("PORT", "8000"),
-            "cors_origins_count": len(cors_origins)
+            "cors_origins_count": len(cors_allow_origins)
         }
     }
     
