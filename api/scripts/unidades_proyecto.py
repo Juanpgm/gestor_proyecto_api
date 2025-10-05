@@ -894,14 +894,24 @@ async def get_unidades_proyecto_dashboard(filters: Optional[Dict[str, Any]] = No
         geometry_result = await get_unidades_proyecto_geometry(dashboard_filters)
         attributes_result = await get_unidades_proyecto_attributes(dashboard_filters)
         
-        if not geometry_result.get("success") or not attributes_result.get("success"):
+        # Verificar resultados con diferentes formatos
+        geometry_success = (geometry_result.get("type") == "FeatureCollection" or 
+                          geometry_result.get("success") == True)
+        attributes_success = attributes_result.get("success") == True
+        
+        if not geometry_success or not attributes_success:
             return {
                 "success": False,
                 "error": "Error obteniendo datos base para dashboard",
                 "dashboard": {}
             }
         
-        geometry_data = geometry_result.get("data", [])
+        # Extraer datos según el formato de respuesta
+        if geometry_result.get("type") == "FeatureCollection":
+            geometry_data = geometry_result.get("features", [])
+        else:
+            geometry_data = geometry_result.get("data", [])
+        
         attributes_data = attributes_result.get("data", [])
         
         # USAR ATTRIBUTES COMO FUENTE PRINCIPAL para análisis de negocio

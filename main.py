@@ -1240,23 +1240,28 @@ async def export_geometry_for_nextjs(
         
         result = await get_unidades_proyecto_geometry(filters)
         
-        if not result["success"]:
+        # Manejar el formato correcto de respuesta
+        if result.get("type") == "FeatureCollection":
+            # Respuesta GeoJSON exitosa
+            if result.get("properties", {}).get("success", True):
+                return create_utf8_response(result)
+            else:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Error obteniendo geometrías: {result.get('properties', {}).get('error', 'Error desconocido')}"
+                )
+        elif result.get("success") is False:
+            # Respuesta de error
             raise HTTPException(
                 status_code=500,
                 detail=f"Error obteniendo geometrías: {result.get('error', 'Error desconocido')}"
             )
-        
-        response_data = {
-            "success": True,
-            "data": result["data"],
-            "count": result["count"],
-            "type": "geometry",
-            "collection": "unidades-proyecto",
-            "filters_applied": result.get("filters_applied", {}),
-            "timestamp": datetime.now().isoformat(),
-            "last_updated": "2025-10-02T00:00:00Z",  # Endpoint creation/update date
-            "message": result.get("message", "Geometrías obtenidas exitosamente")
-        }
+        else:
+            # Formato inesperado
+            raise HTTPException(
+                status_code=500,
+                detail="Formato de respuesta inesperado del servicio de geometrías"
+            )
         
         return create_utf8_response(response_data)
         
