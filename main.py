@@ -1722,10 +1722,42 @@ async def init_contratos_seguimiento(
 
 def check_user_management_availability():
     """Verificar disponibilidad de funciones de gestión de usuarios"""
-    if not USER_MANAGEMENT_AVAILABLE or not AUTH_OPERATIONS_AVAILABLE or not USER_MODELS_AVAILABLE:
+    try:
+        # Verificación más robusta con detalles específicos
+        missing_services = []
+        
+        if not USER_MANAGEMENT_AVAILABLE:
+            missing_services.append("USER_MANAGEMENT")
+        if not AUTH_OPERATIONS_AVAILABLE:
+            missing_services.append("AUTH_OPERATIONS") 
+        if not USER_MODELS_AVAILABLE:
+            missing_services.append("USER_MODELS")
+        if not FIREBASE_AVAILABLE:
+            missing_services.append("FIREBASE")
+            
+        if missing_services:
+            error_detail = {
+                "success": False,
+                "error": "Servicios de gestión de usuarios no disponibles",
+                "missing_services": missing_services,
+                "code": "SERVICES_UNAVAILABLE",
+                "environment": os.getenv("ENVIRONMENT", "development"),
+                "help": "Verifique la configuración de Firebase y las importaciones de módulos"
+            }
+            raise HTTPException(status_code=503, detail=error_detail)
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Error inesperado en la verificación
         raise HTTPException(
-            status_code=503, 
-            detail="Servicios de gestión de usuarios temporalmente no disponibles"
+            status_code=500,
+            detail={
+                "success": False,
+                "error": "Error verificando servicios de usuario",
+                "details": str(e),
+                "code": "SERVICE_CHECK_ERROR"
+            }
         )
 
 @app.post("/auth/validate-session", tags=["Administración y Control de Accesos"])
@@ -1952,6 +1984,73 @@ async def login_user(login_data: UserLoginRequest):
             status_code=500
         )
 
+@app.get("/auth/register/health-check", tags=["Administración y Control de Accesos"])
+async def register_health_check():
+    """
+    ## 🔍 Health Check para Registro de Usuario
+    
+    Verifica que todos los servicios necesarios para el registro estén disponibles.
+    Útil para diagnosticar problemas en producción.
+    """
+    try:
+        health_status = {
+            "timestamp": datetime.now().isoformat(),
+            "environment": os.getenv("ENVIRONMENT", "development"),
+            "services": {}
+        }
+        
+        # Verificar Firebase
+        try:
+            check_user_management_availability()
+            health_status["services"]["user_management"] = {"status": "available", "error": None}
+        except HTTPException as e:
+            health_status["services"]["user_management"] = {
+                "status": "unavailable", 
+                "error": str(e.detail)
+            }
+        
+        # Verificar importaciones
+        health_status["services"]["imports"] = {
+            "firebase_available": FIREBASE_AVAILABLE,
+            "scripts_available": SCRIPTS_AVAILABLE,
+            "user_management_available": USER_MANAGEMENT_AVAILABLE,
+            "auth_operations_available": AUTH_OPERATIONS_AVAILABLE,
+            "user_models_available": USER_MODELS_AVAILABLE
+        }
+        
+        # Verificar configuración
+        health_status["configuration"] = {
+            "project_id": PROJECT_ID,
+            "has_firebase_service_account": bool(os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY")),
+            "authorized_domain": os.getenv("AUTHORIZED_EMAIL_DOMAIN", "@cali.gov.co")
+        }
+        
+        # Determinar estado general
+        all_services_available = all(
+            service.get("status") == "available" if isinstance(service, dict) else service
+            for service in health_status["services"].values()
+        )
+        
+        status_code = 200 if all_services_available else 503
+        health_status["overall_status"] = "healthy" if all_services_available else "unhealthy"
+        
+        return JSONResponse(
+            content=health_status,
+            status_code=status_code,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
+        
+    except Exception as e:
+        return JSONResponse(
+            content={
+                "overall_status": "error",
+                "error": str(e),
+                "timestamp": datetime.now().isoformat()
+            },
+            status_code=500,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
+
 @app.post("/auth/register", tags=["Administración y Control de Accesos"], status_code=status.HTTP_201_CREATED)
 async def register_user(registration_data: UserRegistrationRequest):
     """
@@ -2005,7 +2104,11 @@ async def register_user(registration_data: UserRegistrationRequest):
     ```
     """
     try:
+        # Verificación de servicios con manejo mejorado para producción
         check_user_management_availability()
+        
+        # Log para debugging en producción (sin datos sensibles)
+        print(f"🔐 DEBUG: User registration attempt - Environment: {os.getenv('ENVIRONMENT', 'development')}")
         
         # Llamar a la función de creación de usuario con datos validados
         result = await create_user_account(
@@ -2085,14 +2188,44 @@ async def register_user(registration_data: UserRegistrationRequest):
         
     except HTTPException:
         raise
+    except asyncio.TimeoutError:
+        # Error específico de timeout
+        raise HTTPException(
+            status_code=504,
+            detail={
+                "success": False,
+                "error": "Timeout durante el registro",
+                "message": "La operación tardó demasiado tiempo. Intente nuevamente.",
+                "code": "REGISTRATION_TIMEOUT"
+            }
+        )
     except Exception as e:
+        # Log detallado para debugging (sin datos sensibles)
+        error_msg = str(e)
+        print(f"❌ REGISTER ERROR: {error_msg}")
+        
+        # Detección de errores específicos comunes en producción
+        if "firebase" in error_msg.lower():
+            error_code = "FIREBASE_ERROR"
+            user_message = "Error de configuración del servicio de autenticación"
+        elif "network" in error_msg.lower() or "connection" in error_msg.lower():
+            error_code = "NETWORK_ERROR" 
+            user_message = "Error de conexión. Verifique su conexión a internet."
+        elif "permission" in error_msg.lower() or "access" in error_msg.lower():
+            error_code = "PERMISSION_ERROR"
+            user_message = "Error de permisos del sistema"
+        else:
+            error_code = "INTERNAL_SERVER_ERROR"
+            user_message = "Error interno del servidor. Intente nuevamente."
+            
         raise HTTPException(
             status_code=500, 
             detail={
                 "success": False,
-                "error": "Error interno del servidor",
-                "message": "Ocurrió un error inesperado durante el registro",
-                "code": "INTERNAL_SERVER_ERROR"
+                "error": user_message,
+                "code": error_code,
+                "timestamp": datetime.now().isoformat(),
+                "environment": os.getenv("ENVIRONMENT", "development")
             }
         )
 

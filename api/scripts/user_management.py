@@ -6,6 +6,7 @@ Funciones administrativas para registro, validación, recuperación y administra
 Soporte completo para UTF-8 y caracteres especiales en español: ñáéíóúü
 """
 
+import os
 import logging
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timedelta
@@ -29,8 +30,8 @@ USER_ROLES = {
     "editor": "Editor de contenido"
 }
 
-# Dominio autorizado para autenticación Google
-AUTHORIZED_DOMAIN = "@cali.gov.co"
+# Dominio autorizado para autenticación Google (configurable desde env)
+AUTHORIZED_DOMAIN = os.getenv("AUTHORIZED_EMAIL_DOMAIN", "@cali.gov.co")
 
 # Configuración de contraseñas
 PASSWORD_MIN_LENGTH = 8
