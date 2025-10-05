@@ -1126,9 +1126,20 @@ async def export_geometry_for_nextjs(
     estado: Optional[str] = Query(None, description="Estado del proyecto"),
     upid: Optional[str] = Query(None, description="ID específico de unidad"),
     
+    # Filtros geográficos adicionales
+    comuna_corregimiento: Optional[str] = Query(None, description="Comuna o corregimiento específico"),
+    barrio_vereda: Optional[str] = Query(None, description="Barrio o vereda específico"),
+    
+    # Filtros de visualización y análisis
+    presupuesto_base: Optional[float] = Query(None, ge=0, description="Presupuesto mínimo del proyecto"),
+    avance_obra: Optional[float] = Query(None, ge=0, le=100, description="Porcentaje mínimo de avance de obra"),
+    
     # Configuración geográfica
     include_bbox: Optional[bool] = Query(False, description="Calcular y incluir bounding box"),
-    limit: Optional[int] = Query(None, ge=1, le=10000, description="Límite de registros")
+    limit: Optional[int] = Query(None, ge=1, le=10000, description="Límite de registros"),
+    
+    # Parámetros de mantenimiento y debug
+    force_refresh: Optional[str] = Query(None, description="Forzar limpieza de cache (debug)")
 ):
     """
     ## Datos Geoespaciales
@@ -1147,7 +1158,7 @@ async def export_geometry_for_nextjs(
     **Con filtros**: Optimización server-side en Firestore + refinamiento client-side
     
     **Server-side**: upid, estado, tipo_intervencion, nombre_centro_gestor  
-    **Client-side**: bbox, include_bbox
+    **Client-side**: comuna_corregimiento, barrio_vereda, presupuesto_base, avance_obra, bbox, include_bbox
     
     ### Parámetros
     
@@ -1157,6 +1168,10 @@ async def export_geometry_for_nextjs(
     | tipo_intervencion | Tipo de intervención |
     | estado | Estado del proyecto |
     | upid | ID específico de unidad |
+    | comuna_corregimiento | Comuna o corregimiento específico |
+    | barrio_vereda | Barrio o vereda específico |
+    | presupuesto_base | Presupuesto mínimo del proyecto |
+    | avance_obra | Porcentaje mínimo de avance de obra (0-100) |
     | include_bbox | Incluir bounding box calculado |
     | limit | Límite de resultados (1-10000) |
     
@@ -1208,10 +1223,20 @@ async def export_geometry_for_nextjs(
             filters["estado"] = estado
         if upid:
             filters["upid"] = upid
+        if comuna_corregimiento:
+            filters["comuna_corregimiento"] = comuna_corregimiento
+        if barrio_vereda:
+            filters["barrio_vereda"] = barrio_vereda
+        if presupuesto_base is not None:
+            filters["presupuesto_base"] = presupuesto_base
+        if avance_obra is not None:
+            filters["avance_obra"] = avance_obra
         if limit:
             filters["limit"] = limit
         if include_bbox:
             filters["include_bbox"] = include_bbox
+        if force_refresh:
+            filters["force_refresh"] = force_refresh
         
         result = await get_unidades_proyecto_geometry(filters)
         
@@ -1221,7 +1246,7 @@ async def export_geometry_for_nextjs(
                 detail=f"Error obteniendo geometrías: {result.get('error', 'Error desconocido')}"
             )
         
-        return {
+        response_data = {
             "success": True,
             "data": result["data"],
             "count": result["count"],
@@ -1232,6 +1257,8 @@ async def export_geometry_for_nextjs(
             "last_updated": "2025-10-02T00:00:00Z",  # Endpoint creation/update date
             "message": result.get("message", "Geometrías obtenidas exitosamente")
         }
+        
+        return create_utf8_response(response_data)
         
     except HTTPException:
         raise
@@ -1368,7 +1395,7 @@ async def export_attributes_for_nextjs(
                 detail=f"Error obteniendo atributos: {result.get('error', 'Error desconocido')}"
             )
         
-        return {
+        response_data = {
             "success": True,
             "data": result["data"],
             "count": result["count"],
@@ -1381,6 +1408,8 @@ async def export_attributes_for_nextjs(
             "last_updated": "2025-10-02T00:00:00Z",  # Endpoint creation/update date
             "message": result.get("message", "Atributos obtenidos exitosamente")
         }
+        
+        return create_utf8_response(response_data)
         
     except HTTPException:
         raise
@@ -1489,7 +1518,7 @@ async def export_dashboard_for_nextjs(
                 detail=f"Error generando dashboard: {result.get('error', 'Error desconocido')}"
             )
         
-        return {
+        response_data = {
             "success": True,
             "dashboard": result["dashboard"],
             "data_sources": result.get("data_sources", {}),
@@ -1500,6 +1529,8 @@ async def export_dashboard_for_nextjs(
             "last_updated": "2025-10-02T00:00:00Z",  # Endpoint creation/update date
             "message": result.get("message", "Dashboard generado exitosamente")
         }
+        
+        return create_utf8_response(response_data)
         
     except HTTPException:
         raise
@@ -1622,10 +1653,7 @@ async def get_filters_endpoint(
             "message": f"Filtros obtenidos exitosamente"
         }
         
-        return JSONResponse(
-            content=response_data,
-            media_type="application/json; charset=utf-8"
-        )
+        return create_utf8_response(response_data)
         
     except HTTPException:
         raise
