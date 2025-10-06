@@ -60,6 +60,29 @@ def _convert_to_float(value) -> Optional[float]:
     except (ValueError, TypeError):
         return None
 
+def _convert_bpin_to_positive_int(value) -> Optional[int]:
+    """Convertir BPIN a número entero positivo, eliminando prefijo '-'"""
+    if value is None or value == '' or str(value).strip() in ['null', 'None', 'nan', 'NaN']:
+        return None
+    try:
+        # Si es string, limpiar y convertir
+        if isinstance(value, str):
+            cleaned = value.strip()
+            # Eliminar prefijo '-' si existe
+            if cleaned.startswith('-'):
+                cleaned = cleaned[1:]
+            # Eliminar otros caracteres no numéricos comunes
+            cleaned = cleaned.replace(',', '').replace('$', '').replace(' ', '').replace('.', '')
+            if cleaned and cleaned.isdigit():
+                return int(cleaned)
+        else:
+            # Si es numérico, convertir a positivo
+            num_value = abs(int(float(value)))
+            return num_value if num_value > 0 else None
+    except (ValueError, TypeError):
+        return None
+    return None
+
 def apply_client_side_filters(data: List[Dict[str, Any]], filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     """
     Aplicar filtros del lado del cliente a los datos obtenidos de Firestore
@@ -483,6 +506,8 @@ async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = Non
                         "presupuesto_base": _convert_to_int(record.get('presupuesto_base') or doc_data.get('properties', {}).get('presupuesto_base')),
                         "tipo_intervencion": record.get('tipo_intervencion') or doc_data.get('properties', {}).get('tipo_intervencion'),
                         "avance_obra": _convert_to_float(record.get('avance_obra') or doc_data.get('properties', {}).get('avance_obra')),
+                        # BPIN convertido a entero positivo (sin prefijo '-')
+                        "bpin": _convert_bpin_to_positive_int(record.get('bpin') or doc_data.get('properties', {}).get('bpin')),
                         # Campos adicionales útiles
                         "nombre_centro_gestor": record.get('nombre_centro_gestor') or doc_data.get('properties', {}).get('nombre_centro_gestor'),
                     }
@@ -670,6 +695,8 @@ async def get_unidades_proyecto_attributes(
                         attributes_record[field] = _convert_to_int(value)
                     elif field == 'avance_obra':
                         attributes_record[field] = _convert_to_float(value)
+                    elif field == 'bpin':
+                        attributes_record[field] = _convert_bpin_to_positive_int(value)
                     else:
                         attributes_record[field] = value
             
@@ -682,6 +709,8 @@ async def get_unidades_proyecto_attributes(
                             attributes_record[field] = _convert_to_int(value)
                         elif field == 'avance_obra':
                             attributes_record[field] = _convert_to_float(value)
+                        elif field == 'bpin':
+                            attributes_record[field] = _convert_bpin_to_positive_int(value)
                         else:
                             attributes_record[field] = value
             
@@ -888,6 +917,11 @@ async def get_unidades_proyecto_dashboard(filters: Optional[Dict[str, Any]] = No
                 avance_raw = record.get('avance_obra') or properties.get('avance_obra')
                 if avance_raw is not None:
                     record['avance_obra'] = _convert_to_float(avance_raw)
+                
+                # Convertir bpin a entero positivo (sin prefijo '-')
+                bpin_raw = record.get('bpin') or properties.get('bpin')
+                if bpin_raw is not None:
+                    record['bpin'] = _convert_bpin_to_positive_int(bpin_raw)
                 
                 # Estados
                 estado = record.get('estado') or properties.get('estado')
