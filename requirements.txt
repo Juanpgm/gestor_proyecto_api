@@ -33,6 +33,10 @@ cryptography==43.0.3
 # Utilidades para autenticación
 phonenumbers==8.13.50
 
+# APIs externas para empréstito
+sodapy==1.8.1
+pandas==2.2.3
+
 # Nota: Las siguientes dependencias son parte de la librería estándar de Python
 # y no necesitan ser instaladas: asyncio, dataclasses, functools, itertools,
 # hashlib, weakref, concurrent.futures

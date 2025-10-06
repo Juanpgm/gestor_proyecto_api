@@ -100,6 +100,7 @@ try:
         # Availability flags
         USER_MANAGEMENT_AVAILABLE,
         AUTH_OPERATIONS_AVAILABLE,
+        EMPRESTITO_OPERATIONS_AVAILABLE,
     )
     SCRIPTS_AVAILABLE = True
     print(f"✅ Scripts imported successfully - SCRIPTS_AVAILABLE: {SCRIPTS_AVAILABLE}")
@@ -120,12 +121,65 @@ try:
         UserListFilters,
         StandardResponse,
         ValidationErrorResponse,
+        EmprestitoRequest,
+        EmprestitoResponse,
         USER_MODELS_AVAILABLE,
     )
     print(f"✅ User models imported successfully - USER_MODELS_AVAILABLE: {USER_MODELS_AVAILABLE}")
 except Exception as e:
     print(f"❌ Warning: User models import failed: {e}")
     USER_MODELS_AVAILABLE = False
+    
+    # Crear clases dummy para evitar errores de NameError
+    from pydantic import BaseModel
+    from typing import Optional
+    
+    class UserRegistrationRequest(BaseModel):
+        email: str
+        password: str
+        confirmPassword: str
+        name: str
+        cellphone: str
+        nombre_centro_gestor: str
+    
+    class UserLoginRequest(BaseModel):
+        email: str
+        password: str
+    
+    class PasswordUpdateRequest(BaseModel):
+        uid: str
+        new_password: str
+    
+    class GoogleAuthRequest(BaseModel):
+        id_token: str
+    
+    class SessionValidationRequest(BaseModel):
+        id_token: str
+    
+    class UserListFilters(BaseModel):
+        pass
+    
+    class StandardResponse(BaseModel):
+        success: bool
+        message: Optional[str] = None
+    
+    class ValidationErrorResponse(BaseModel):
+        success: bool = False
+        error: str
+    
+    class EmprestitoRequest(BaseModel):
+        referencia_proceso: str
+        nombre_centro_gestor: str
+        nombre_banco: str
+        bp: str
+        plataforma: str
+        nombre_resumido_proceso: Optional[str] = None
+        id_paa: Optional[str] = None
+        valor_proyectado: Optional[float] = None
+    
+    class EmprestitoResponse(BaseModel):
+        success: bool
+        message: Optional[str] = None
 
 
 
@@ -404,6 +458,10 @@ async def read_root():
             "gestion_contractual": [
                 "/contratos/init_contratos_seguimiento"
             ],
+            "gestion_emprestito": [
+                "/emprestito/cargar-proceso",
+                "/emprestito/proceso/{referencia_proceso}"
+            ],
             "administracion_usuarios": [
                 "/auth/validate-session",
                 "/auth/login", 
@@ -427,6 +485,10 @@ async def read_root():
             ],
             "dashboard": "Endpoint de dashboard con métricas agregadas y análisis estadístico",
             "workload_identity": "Autenticación automática usando Google Cloud Workload Identity Federation",
+            "emprestito_management": "Sistema de gestión de empréstito con integración SECOP y TVEC APIs",
+            "duplicate_prevention": "Validación automática de duplicados por referencia_proceso",
+            "platform_detection": "Detección automática de plataforma (SECOP/TVEC) y enrutamiento inteligente",
+            "external_apis": "Integración con APIs oficiales: SECOP (p6dx-8zbt) y TVEC (rgxm-mmea)",
             "encoding": "UTF-8 completo para español: ñáéíóúü ¡¿"
         }
     }
@@ -1686,7 +1748,8 @@ async def init_contratos_seguimiento(
     Obtiene datos de contratos desde la colección `contratos_emprestito` con filtros optimizados.
     
     **Campos retornados**: bpin, banco, nombre_centro_gestor, estado_contrato, referencia_contrato, 
-    referencia_proceso, objeto_contrato, modalidad_contratacion
+    referencia_proceso, objeto_contrato, modalidad_contratacion, fecha_inicio_contrato, fecha_firma, 
+    fecha_fin_contrato
     
     **Filtros**:
     - `referencia_contrato`: Textbox - búsqueda parcial
@@ -2589,6 +2652,347 @@ async def list_system_users(
                 "error": str(e),
                 "message": "Error leyendo la colección 'users' de Firestore",
                 "code": "FIRESTORE_READ_ERROR"
+            }
+        )
+
+# ============================================================================
+# ENDPOINTS DE GESTIÓN DE EMPRÉSTITO
+# ============================================================================
+
+# Verificar disponibilidad de operaciones de empréstito
+try:
+    from api.scripts import (
+        procesar_emprestito_completo,
+        verificar_proceso_existente,
+        eliminar_proceso_emprestito,
+        get_emprestito_operations_status,
+        EMPRESTITO_OPERATIONS_AVAILABLE
+    )
+    from api.models import EmprestitoRequest, EmprestitoResponse
+    print(f"✅ Empréstito imports successful - AVAILABLE: {EMPRESTITO_OPERATIONS_AVAILABLE}")
+except ImportError as e:
+    print(f"❌ Warning: Empréstito imports failed: {e}")
+    EMPRESTITO_OPERATIONS_AVAILABLE = False
+
+def check_emprestito_availability():
+    """Verificar disponibilidad de operaciones de empréstito"""
+    if not EMPRESTITO_OPERATIONS_AVAILABLE:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "Servicios de empréstito no disponibles",
+                "message": "Firebase o dependencias no configuradas correctamente",
+                "code": "EMPRESTITO_SERVICES_UNAVAILABLE"
+            }
+        )
+
+@app.post("/emprestito/cargar-proceso", tags=["Gestión de Empréstito"])
+async def cargar_proceso_emprestito(
+    referencia_proceso: str = Form(..., description="Referencia del proceso (obligatorio)"),
+    nombre_centro_gestor: str = Form(..., description="Centro gestor responsable (obligatorio)"),
+    nombre_banco: str = Form(..., description="Nombre del banco (obligatorio)"),
+    plataforma: str = Form(..., description="Plataforma (SECOP, TVEC) (obligatorio)"),
+    bp: Optional[str] = Form(None, description="Código BP (opcional)"),
+    nombre_resumido_proceso: Optional[str] = Form(None, description="Nombre resumido del proceso (opcional)"),
+    id_paa: Optional[str] = Form(None, description="ID PAA (opcional)"),
+    valor_proyectado: Optional[float] = Form(None, description="Valor proyectado (opcional)")
+):
+    """
+    ## 📋 Cargar Proceso de Empréstito
+    
+    Endpoint unificado para carga de procesos de empréstito con detección automática 
+    de plataforma (SECOP/TVEC) y validación de duplicados.
+    
+    ### ✅ Funcionalidades principales:
+    - **Detección automática**: Identifica si es SECOP o TVEC basado en el campo `plataforma`
+    - **Validación de duplicados**: Verifica existencia previa usando `referencia_proceso`
+    - **Integración API**: Obtiene datos completos desde APIs externas (SECOP/TVEC)
+    - **Almacenamiento inteligente**: Guarda en colección apropiada según plataforma
+    
+    ### 🔍 Detección de plataforma:
+    **SECOP**: "SECOP", "SECOP II", "SECOP I", "SECOP 2", "SECOP 1" y variantes
+    **TVEC**: "TVEC" y variantes
+    
+    ### 📊 Almacenamiento por plataforma:
+    - **SECOP** → Colección: `procesos_emprestito`
+    - **TVEC** → Colección: `ordenes_compra_emprestito`
+    
+    ### 🛡️ Validación de duplicados:
+    Busca `referencia_proceso` en ambas colecciones antes de crear nuevo registro.
+    
+    ### ⚙️ Campos obligatorios:
+    - `referencia_proceso`: Referencia del proceso
+    - `nombre_centro_gestor`: Centro gestor responsable
+    - `nombre_banco`: Nombre del banco
+    - `plataforma`: Plataforma (SECOP/TVEC)
+    
+    ### 📝 Campos opcionales:
+    - `bp`: Código BP
+    - `nombre_resumido_proceso`: Nombre resumido
+    - `id_paa`: ID PAA
+    - `valor_proyectado`: Valor proyectado
+    
+    ### 🔗 Integración con APIs:
+    **SECOP**: Obtiene datos desde API de datos abiertos (p6dx-8zbt)
+    **TVEC**: Obtiene datos desde API TVEC (rgxm-mmea)
+    
+    ### 📋 Ejemplo de request:
+    ```json
+    {
+        "referencia_proceso": "SCMGSU-CM-003-2024",
+        "nombre_centro_gestor": "Secretaría de Salud",
+        "nombre_banco": "Banco Mundial",
+        "bp": "BP-2024-001",
+        "plataforma": "SECOP II",
+        "nombre_resumido_proceso": "Suministro equipos médicos",
+        "id_paa": "PAA-2024-123",
+        "valor_proyectado": 1500000000.0
+    }
+    ```
+    """
+    try:
+        check_emprestito_availability()
+        
+        # Crear diccionario con los datos del formulario
+        datos_emprestito = {
+            "referencia_proceso": referencia_proceso,
+            "nombre_centro_gestor": nombre_centro_gestor,
+            "nombre_banco": nombre_banco,
+            "bp": bp,
+            "plataforma": plataforma,
+            "nombre_resumido_proceso": nombre_resumido_proceso,
+            "id_paa": id_paa,
+            "valor_proyectado": valor_proyectado
+        }
+        
+        # Procesar empréstito completo con todas las validaciones
+        resultado = await procesar_emprestito_completo(datos_emprestito)
+        
+        # Manejar respuesta según el resultado
+        if not resultado.get("success"):
+            # Manejar caso especial de duplicado
+            if resultado.get("duplicate"):
+                return JSONResponse(
+                    content={
+                        "success": False,
+                        "error": resultado.get("error"),
+                        "duplicate": True,
+                        "existing_data": resultado.get("existing_data"),
+                        "message": "Ya existe un proceso con esta referencia",
+                        "timestamp": datetime.now().isoformat()
+                    },
+                    status_code=409,  # Conflict
+                    headers={"Content-Type": "application/json; charset=utf-8"}
+                )
+            else:
+                # Error general
+                return JSONResponse(
+                    content={
+                        "success": False,
+                        "error": resultado.get("error"),
+                        "plataforma_detectada": resultado.get("plataforma_detectada"),
+                        "message": "Error procesando proceso de empréstito",
+                        "timestamp": datetime.now().isoformat()
+                    },
+                    status_code=400,
+                    headers={"Content-Type": "application/json; charset=utf-8"}
+                )
+        
+        # Éxito: proceso creado correctamente
+        return JSONResponse(
+            content={
+                "success": True,
+                "message": "Proceso de empréstito cargado exitosamente",
+                "data": resultado.get("data"),
+                "doc_id": resultado.get("doc_id"),
+                "coleccion": resultado.get("coleccion"),
+                "plataforma_detectada": resultado.get("plataforma_detectada"),
+                "fuente_datos": resultado.get("fuente_datos"),
+                "timestamp": datetime.now().isoformat()
+            },
+            status_code=201,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en endpoint de empréstito: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "success": False,
+                "error": "Error interno del servidor",
+                "message": "Por favor, inténtelo de nuevo más tarde",
+                "code": "INTERNAL_SERVER_ERROR"
+            }
+        )
+
+@app.get("/emprestito/proceso/{referencia_proceso}", tags=["Gestión de Empréstito"])
+async def verificar_proceso_existente_endpoint(referencia_proceso: str):
+    """
+    ## 🔍 Verificar Proceso Existente
+    
+    Verifica si ya existe un proceso con la referencia especificada en cualquiera 
+    de las colecciones de empréstito.
+    
+    ### ✅ Funcionalidades:
+    - Búsqueda en `procesos_emprestito` (SECOP)
+    - Búsqueda en `ordenes_compra_emprestito` (TVEC)
+    - Información detallada del proceso encontrado
+    
+    ### 📊 Respuesta si existe:
+    - Datos completos del proceso
+    - Colección donde se encontró
+    - ID del documento
+    
+    ### 💡 Casos de uso:
+    - Validación previa antes de crear proceso
+    - Búsqueda de procesos existentes
+    - Prevención de duplicados
+    
+    ### 📝 Ejemplo de respuesta (proceso existente):
+    ```json
+    {
+        "existe": true,
+        "coleccion": "procesos_emprestito",
+        "documento": { ... },
+        "doc_id": "xyz123",
+        "timestamp": "2025-10-06T..."
+    }
+    ```
+    """
+    try:
+        check_emprestito_availability()
+        
+        resultado = await verificar_proceso_existente(referencia_proceso)
+        
+        return JSONResponse(
+            content={
+                **resultado,
+                "referencia_proceso": referencia_proceso,
+                "timestamp": datetime.now().isoformat()
+            },
+            status_code=200,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error verificando proceso: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "success": False,
+                "error": "Error interno del servidor",
+                "message": "Error verificando proceso existente"
+            }
+        )
+
+
+@app.delete("/emprestito/proceso/{referencia_proceso}", tags=["Gestión de Empréstito"])
+async def eliminar_proceso_emprestito_endpoint(referencia_proceso: str):
+    """
+    ## 🗑️ Eliminar Proceso de Empréstito
+    
+    Elimina un proceso de empréstito específico basado en su referencia_proceso.
+    Busca automáticamente en ambas colecciones (SECOP y TVEC) y elimina el proceso encontrado.
+    
+    ### ✅ Funcionalidades principales:
+    - **Búsqueda automática**: Localiza el proceso en ambas colecciones
+    - **Eliminación segura**: Elimina únicamente el proceso especificado
+    - **Información completa**: Retorna detalles del proceso eliminado
+    - **Validación previa**: Verifica existencia antes de intentar eliminar
+    
+    ### 🔍 Colecciones de búsqueda:
+    - **procesos_emprestito** (SECOP)
+    - **ordenes_compra_emprestito** (TVEC)
+    
+    ### ⚠️ Consideraciones importantes:
+    - La eliminación es **irreversible**
+    - Solo se elimina un proceso por referencia_proceso
+    - Se requiere coincidencia exacta en referencia_proceso
+    
+    ### 📋 Respuesta exitosa:
+    ```json
+    {
+        "success": true,
+        "message": "Proceso eliminado exitosamente",
+        "referencia_proceso": "SCMGSU-CM-003-2024",
+        "coleccion": "procesos_emprestito",
+        "documento_id": "xyz123",
+        "proceso_eliminado": {
+            "referencia_proceso": "SCMGSU-CM-003-2024",
+            "nombre_centro_gestor": "Secretaría de Salud",
+            "nombre_banco": "Banco Mundial",
+            "plataforma": "SECOP II",
+            "fecha_creacion": "2025-10-06T..."
+        },
+        "timestamp": "2025-10-06T..."
+    }
+    ```
+    
+    ### 📋 Respuesta si no existe:
+    ```json
+    {
+        "success": false,
+        "error": "No se encontró ningún proceso con referencia_proceso: REFERENCIA",
+        "referencia_proceso": "REFERENCIA",
+        "colecciones_buscadas": ["procesos_emprestito", "ordenes_compra_emprestito"]
+    }
+    ```
+    """
+    try:
+        check_emprestito_availability()
+        
+        # Validar parámetro
+        if not referencia_proceso or not referencia_proceso.strip():
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "success": False,
+                    "error": "referencia_proceso es requerida",
+                    "message": "Debe proporcionar una referencia_proceso válida"
+                }
+            )
+        
+        # Eliminar proceso
+        resultado = await eliminar_proceso_emprestito(referencia_proceso.strip())
+        
+        # Manejar respuesta según el resultado
+        if not resultado.get("success"):
+            # Si no se encontró el proceso
+            if "No se encontró" in resultado.get("error", ""):
+                raise HTTPException(
+                    status_code=404,
+                    detail=resultado
+                )
+            else:
+                # Otros errores
+                raise HTTPException(
+                    status_code=500,
+                    detail=resultado
+                )
+        
+        # Respuesta exitosa
+        return JSONResponse(
+            content=resultado,
+            status_code=200,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en endpoint eliminar proceso: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "success": False,
+                "error": "Error interno del servidor",
+                "message": "Error eliminando proceso de empréstito",
+                "referencia_proceso": referencia_proceso
             }
         )
 

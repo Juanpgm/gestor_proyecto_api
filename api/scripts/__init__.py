@@ -72,6 +72,53 @@ except ImportError as e:
     async def get_contratos_init_data(filters=None):
         return {"success": False, "error": "Contratos operations not available", "data": [], "count": 0}
 
+# Importar operaciones de empréstito
+try:
+    from .emprestito_operations import (
+        verificar_proceso_existente,
+        obtener_datos_secop,
+        obtener_datos_tvec,
+        detectar_plataforma,
+        guardar_proceso_emprestito,
+        guardar_orden_compra_emprestito,
+        procesar_emprestito_completo,
+        eliminar_proceso_emprestito,
+        get_emprestito_operations_status,
+        EMPRESTITO_OPERATIONS_AVAILABLE
+    )
+    print(f"✅ Emprestito operations imported successfully - AVAILABLE: {EMPRESTITO_OPERATIONS_AVAILABLE}")
+except ImportError as e:
+    print(f"Warning: Emprestito operations not available: {e}")
+    EMPRESTITO_OPERATIONS_AVAILABLE = False
+    
+    # Crear funciones dummy para empréstito
+    async def verificar_proceso_existente(referencia_proceso: str):
+        return {"success": False, "error": "Emprestito operations not available"}
+    
+    async def obtener_datos_secop(referencia_proceso: str):
+        return {"success": False, "error": "Emprestito operations not available"}
+    
+    async def obtener_datos_tvec(referencia_proceso: str):
+        return {"success": False, "error": "Emprestito operations not available"}
+    
+    def detectar_plataforma(plataforma: str):
+        return "UNKNOWN"
+    
+    async def guardar_proceso_emprestito(datos):
+        return {"success": False, "error": "Emprestito operations not available"}
+    
+    async def guardar_orden_compra_emprestito(datos):
+        return {"success": False, "error": "Emprestito operations not available"}
+    
+    async def procesar_emprestito_completo(datos_iniciales):
+        return {"success": False, "error": "Emprestito operations not available"}
+    
+    async def eliminar_proceso_emprestito(referencia_proceso: str):
+        return {"success": False, "error": "Emprestito operations not available"}
+    
+    def get_emprestito_operations_status():
+        return {"operations_available": False, "error": "Emprestito operations not available"}
+
 # Importar operaciones de gestión de usuarios
 try:
     from .user_management import (
@@ -157,6 +204,17 @@ __all__ = [
     # Contratos operations
     "get_contratos_init_data",
     
+    # Empréstito operations
+    "verificar_proceso_existente",
+    "obtener_datos_secop",
+    "obtener_datos_tvec",
+    "detectar_plataforma",
+    "guardar_proceso_emprestito",
+    "guardar_orden_compra_emprestito",
+    "procesar_emprestito_completo",
+    "eliminar_proceso_emprestito",
+    "get_emprestito_operations_status",
+    
     # User management operations
     "validate_email",
     "validate_fullname",
@@ -194,6 +252,7 @@ __all__ = [
     "FIREBASE_OPERATIONS_AVAILABLE",
     "UNIDADES_PROYECTO_AVAILABLE",
     "CONTRATOS_OPERATIONS_AVAILABLE",
+    "EMPRESTITO_OPERATIONS_AVAILABLE",
     "USER_MANAGEMENT_AVAILABLE",
     "AUTH_OPERATIONS_AVAILABLE",
     "WORKLOAD_IDENTITY_AVAILABLE",

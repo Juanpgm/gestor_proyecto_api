@@ -52,6 +52,21 @@ def extract_contract_fields(doc_data: Dict[str, Any]) -> Dict[str, Any]:
     else:
         referencia_proceso_str = str(referencia_proceso) if referencia_proceso else ''
     
+    # Función auxiliar para obtener campos de fecha con múltiples ubicaciones posibles
+    def get_date_field(field_name: str) -> str:
+        """Buscar campo de fecha en el documento raíz o en registro_origen"""
+        # Primero buscar en el documento raíz
+        value = doc_data.get(field_name)
+        if value:
+            return clean_text_field(value)
+        
+        # Si no está en raíz, buscar en registro_origen
+        value = registro_origen.get(field_name)
+        if value:
+            return clean_text_field(value)
+        
+        return ''
+    
     return {
         'bpin': doc_data.get('bpin', 0),
         'banco': clean_text_field(registro_origen.get('banco', '')),
@@ -60,7 +75,10 @@ def extract_contract_fields(doc_data: Dict[str, Any]) -> Dict[str, Any]:
         'referencia_contrato': clean_text_field(doc_data.get('referencia_contrato', '')),
         'referencia_proceso': clean_text_field(referencia_proceso_str),
         'objeto_contrato': clean_text_field(doc_data.get('objeto_contrato', '')),
-        'modalidad_contratacion': clean_text_field(doc_data.get('modalidad_contratacion', ''))
+        'modalidad_contratacion': clean_text_field(doc_data.get('modalidad_contratacion', '')),
+        'fecha_inicio_contrato': get_date_field('fecha_inicio_contrato'),
+        'fecha_firma': get_date_field('fecha_firma'),
+        'fecha_fin_contrato': get_date_field('fecha_fin_contrato')
     }
 
 

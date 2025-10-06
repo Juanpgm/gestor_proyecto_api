@@ -16,6 +16,9 @@ try:
         SessionValidationRequest,
         TokenRevocationRequest,
         UserDeletionRequest,
+        # Empréstito models
+        EmprestitoRequest,
+        EmprestitoResponse,
         # Response models
         UserResponse,
         AuthMethodsResponse,
@@ -48,6 +51,9 @@ __all__ = [
     "SessionValidationRequest",
     "TokenRevocationRequest",
     "UserDeletionRequest",
+    # Empréstito models
+    "EmprestitoRequest",
+    "EmprestitoResponse",
     # Response models
     "UserResponse",
     "AuthMethodsResponse",

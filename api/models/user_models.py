@@ -49,6 +49,49 @@ class PasswordUpdateRequest(BaseModel):
 
 class PasswordResetRequest(BaseModel):
     """Modelo para solicitud de reseteo de contraseña"""
+    email: EmailStr
+
+# ============================================================================
+# MODELOS PARA GESTIÓN DE EMPRÉSTITO
+# ============================================================================
+
+class EmprestitoRequest(BaseModel):
+    """Modelo base para registro de empréstito"""
+    referencia_proceso: str = Field(..., min_length=1, description="Referencia del proceso (obligatorio)")
+    nombre_centro_gestor: str = Field(..., min_length=1, description="Centro gestor responsable (obligatorio)")
+    nombre_banco: str = Field(..., min_length=1, description="Nombre del banco (obligatorio)")
+    bp: str = Field(..., min_length=1, description="Código BP (obligatorio)")
+    plataforma: str = Field(..., min_length=1, description="Plataforma (SECOP, TVEC) (obligatorio)")
+    nombre_resumido_proceso: Optional[str] = Field(None, description="Nombre resumido del proceso (opcional)")
+    id_paa: Optional[str] = Field(None, description="ID PAA (opcional)")
+    valor_proyectado: Optional[float] = Field(None, ge=0, description="Valor proyectado (opcional)")
+    
+    @validator('plataforma')
+    def validate_plataforma(cls, v):
+        """Validar que la plataforma sea válida"""
+        if not v or not v.strip():
+            raise ValueError('Plataforma es requerida')
+        return v.strip()
+    
+    @validator('referencia_proceso', 'nombre_centro_gestor', 'nombre_banco', 'bp')
+    def validate_required_fields(cls, v):
+        """Validar campos obligatorios"""
+        if not v or not v.strip():
+            raise ValueError('Este campo es obligatorio')
+        return v.strip()
+
+class EmprestitoResponse(BaseModel):
+    """Respuesta para operaciones de empréstito"""
+    success: bool
+    message: Optional[str] = None
+    data: Optional[Dict[str, Any]] = None
+    doc_id: Optional[str] = None
+    coleccion: Optional[str] = None
+    plataforma_detectada: Optional[str] = None
+    fuente_datos: Optional[str] = None
+    duplicate: Optional[bool] = False
+    existing_data: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
     email: EmailStr = Field(..., description="Email del usuario")
 
 class GoogleAuthRequest(BaseModel):
