@@ -37,7 +37,22 @@ def _convert_to_float(value) -> Optional[float]:
     try:
         # Si es string, limpiar y convertir
         if isinstance(value, str):
-            cleaned = value.strip().replace(',', '').replace('%', '').replace(' ', '')
+            cleaned = value.strip().replace('%', '').replace(' ', '')
+            
+            # Manejar formato decimal europeo (coma como separador decimal)
+            # Si hay una sola coma y está en posición de decimal (ej: "50,75")
+            if ',' in cleaned and cleaned.count(',') == 1:
+                comma_pos = cleaned.find(',')
+                # Si la coma está en los últimos 3 caracteres, probablemente es decimal
+                if len(cleaned) - comma_pos <= 3:
+                    cleaned = cleaned.replace(',', '.')
+                else:
+                    # Si no, es separador de miles, remover
+                    cleaned = cleaned.replace(',', '')
+            else:
+                # Múltiples comas = separadores de miles
+                cleaned = cleaned.replace(',', '')
+            
             if cleaned:
                 return float(cleaned)
         else:
@@ -650,7 +665,25 @@ async def get_unidades_proyecto_attributes(
             for field, value in doc_data.items():
                 # Excluir campos de geometría pero incluir todo lo demás
                 if field not in geometry_fields:
-                    attributes_record[field] = value
+                    # Aplicar conversiones de tipos específicas
+                    if field == 'presupuesto_base':
+                        attributes_record[field] = _convert_to_int(value)
+                    elif field == 'avance_obra':
+                        attributes_record[field] = _convert_to_float(value)
+                    else:
+                        attributes_record[field] = value
+            
+            # También verificar y convertir campos en properties si existen
+            if 'properties' in doc_data and isinstance(doc_data['properties'], dict):
+                for field, value in doc_data['properties'].items():
+                    if field not in geometry_fields and field not in attributes_record:
+                        # Aplicar conversiones de tipos específicas
+                        if field == 'presupuesto_base':
+                            attributes_record[field] = _convert_to_int(value)
+                        elif field == 'avance_obra':
+                            attributes_record[field] = _convert_to_float(value)
+                        else:
+                            attributes_record[field] = value
             
             attributes_data.append(attributes_record)
             doc_count += 1
@@ -844,6 +877,17 @@ async def get_unidades_proyecto_dashboard(filters: Optional[Dict[str, Any]] = No
             for record in all_records:
                 # Buscar en properties si no está en el nivel raíz
                 properties = record.get('properties', {})
+                
+                # Aplicar conversiones de tipos en el registro del dashboard
+                # Convertir presupuesto_base a entero
+                presupuesto_raw = record.get('presupuesto_base') or properties.get('presupuesto_base')
+                if presupuesto_raw is not None:
+                    record['presupuesto_base'] = _convert_to_int(presupuesto_raw)
+                
+                # Convertir avance_obra a decimal
+                avance_raw = record.get('avance_obra') or properties.get('avance_obra')
+                if avance_raw is not None:
+                    record['avance_obra'] = _convert_to_float(avance_raw)
                 
                 # Estados
                 estado = record.get('estado') or properties.get('estado')
