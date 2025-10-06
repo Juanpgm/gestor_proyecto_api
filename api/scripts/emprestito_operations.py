@@ -578,6 +578,149 @@ async def eliminar_proceso_emprestito(referencia_proceso: str) -> Dict[str, Any]
         }
 
 
+async def actualizar_proceso_emprestito(
+    referencia_proceso: str, 
+    bp: Optional[str] = None,
+    nombre_resumido_proceso: Optional[str] = None,
+    id_paa: Optional[str] = None,
+    valor_proyectado: Optional[float] = None
+) -> Dict[str, Any]:
+    """
+    Actualizar campos específicos de un proceso de empréstito existente
+    
+    Args:
+        referencia_proceso (str): Referencia del proceso a actualizar
+        bp (Optional[str]): Nuevo código BP
+        nombre_resumido_proceso (Optional[str]): Nuevo nombre resumido
+        id_paa (Optional[str]): Nuevo ID PAA
+        valor_proyectado (Optional[float]): Nuevo valor proyectado
+        
+    Returns:
+        Dict[str, Any]: Resultado de la actualización
+    """
+    try:
+        if not FIRESTORE_AVAILABLE:
+            return {
+                "success": False,
+                "error": "Firestore no disponible"
+            }
+        
+        if not referencia_proceso or not referencia_proceso.strip():
+            return {
+                "success": False,
+                "error": "referencia_proceso es requerida"
+            }
+        
+        referencia_proceso = referencia_proceso.strip()
+        db = get_firestore_client()
+        
+        # Buscar el proceso en ambas colecciones
+        proceso_encontrado = None
+        coleccion_origen = None
+        doc_id = None
+        doc_ref = None
+        
+        # Buscar en procesos_emprestito (SECOP)
+        procesos_ref = db.collection('procesos_emprestito')
+        query_procesos = procesos_ref.where('referencia_proceso', '==', referencia_proceso).limit(1)
+        procesos_docs = query_procesos.get()
+        
+        if procesos_docs:
+            proceso_encontrado = procesos_docs[0].to_dict()
+            coleccion_origen = 'procesos_emprestito'
+            doc_id = procesos_docs[0].id
+            doc_ref = procesos_ref.document(doc_id)
+        else:
+            # Buscar en ordenes_compra_emprestito (TVEC)
+            ordenes_ref = db.collection('ordenes_compra_emprestito')
+            query_ordenes = ordenes_ref.where('referencia_proceso', '==', referencia_proceso).limit(1)
+            ordenes_docs = query_ordenes.get()
+            
+            if ordenes_docs:
+                proceso_encontrado = ordenes_docs[0].to_dict()
+                coleccion_origen = 'ordenes_compra_emprestito'
+                doc_id = ordenes_docs[0].id
+                doc_ref = ordenes_ref.document(doc_id)
+        
+        # Si no se encuentra el proceso
+        if not proceso_encontrado:
+            return {
+                "success": False,
+                "error": f"No se encontró ningún proceso con referencia_proceso: {referencia_proceso}",
+                "referencia_proceso": referencia_proceso,
+                "colecciones_buscadas": ["procesos_emprestito", "ordenes_compra_emprestito"]
+            }
+        
+        # Preparar campos para actualizar
+        campos_actualizacion = {}
+        campos_modificados = []
+        valores_anteriores = {}
+        
+        # Solo actualizar campos que se proporcionaron (no None)
+        if bp is not None:
+            campos_actualizacion['bp'] = bp
+            campos_modificados.append('bp')
+            valores_anteriores['bp'] = proceso_encontrado.get('bp')
+            
+        if nombre_resumido_proceso is not None:
+            campos_actualizacion['nombre_resumido_proceso'] = nombre_resumido_proceso
+            campos_modificados.append('nombre_resumido_proceso')
+            valores_anteriores['nombre_resumido_proceso'] = proceso_encontrado.get('nombre_resumido_proceso')
+            
+        if id_paa is not None:
+            campos_actualizacion['id_paa'] = id_paa
+            campos_modificados.append('id_paa')
+            valores_anteriores['id_paa'] = proceso_encontrado.get('id_paa')
+            
+        if valor_proyectado is not None:
+            campos_actualizacion['valor_proyectado'] = valor_proyectado
+            campos_modificados.append('valor_proyectado')
+            valores_anteriores['valor_proyectado'] = proceso_encontrado.get('valor_proyectado')
+        
+        # Si no hay campos para actualizar
+        if not campos_actualizacion:
+            return {
+                "success": False,
+                "error": "No se proporcionaron campos para actualizar",
+                "campos_disponibles": ["bp", "nombre_resumido_proceso", "id_paa", "valor_proyectado"],
+                "referencia_proceso": referencia_proceso
+            }
+        
+        # Agregar timestamp de actualización
+        campos_actualizacion['fecha_actualizacion'] = datetime.now().isoformat()
+        
+        # Actualizar el documento
+        doc_ref.update(campos_actualizacion)
+        
+        logger.info(f"Proceso actualizado exitosamente: {referencia_proceso} en {coleccion_origen}")
+        logger.info(f"Campos modificados: {', '.join(campos_modificados)}")
+        
+        # Obtener el documento actualizado
+        doc_actualizado = doc_ref.get().to_dict()
+        doc_actualizado_limpio = clean_firebase_data_for_json(doc_actualizado)
+        
+        return {
+            "success": True,
+            "message": "Proceso actualizado exitosamente",
+            "referencia_proceso": referencia_proceso,
+            "coleccion": coleccion_origen,
+            "documento_id": doc_id,
+            "campos_modificados": campos_modificados,
+            "valores_anteriores": valores_anteriores,
+            "valores_nuevos": {campo: campos_actualizacion[campo] for campo in campos_modificados},
+            "proceso_actualizado": doc_actualizado_limpio,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error actualizando proceso {referencia_proceso}: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "referencia_proceso": referencia_proceso
+        }
+
+
 # Funciones de disponibilidad
 def get_emprestito_operations_status() -> Dict[str, Any]:
     """Obtener estado de las operaciones de empréstito"""

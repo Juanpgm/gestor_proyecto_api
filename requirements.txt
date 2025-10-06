@@ -34,7 +34,7 @@ cryptography==43.0.3
 phonenumbers==8.13.50
 
 # APIs externas para empréstito
-sodapy==1.8.1
+sodapy==2.2.0
 pandas==2.2.3
 
 # Nota: Las siguientes dependencias son parte de la librería estándar de Python

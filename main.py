@@ -2665,6 +2665,7 @@ try:
         procesar_emprestito_completo,
         verificar_proceso_existente,
         eliminar_proceso_emprestito,
+        actualizar_proceso_emprestito,
         get_emprestito_operations_status,
         EMPRESTITO_OPERATIONS_AVAILABLE
     )
@@ -2992,6 +2993,149 @@ async def eliminar_proceso_emprestito_endpoint(referencia_proceso: str):
                 "success": False,
                 "error": "Error interno del servidor",
                 "message": "Error eliminando proceso de empréstito",
+                "referencia_proceso": referencia_proceso
+            }
+        )
+
+
+@app.put("/emprestito/proceso/{referencia_proceso}", tags=["Gestión de Empréstito"])
+async def actualizar_proceso_emprestito_endpoint(
+    referencia_proceso: str,
+    bp: Optional[str] = Form(None, description="Código BP (opcional)"),
+    nombre_resumido_proceso: Optional[str] = Form(None, description="Nombre resumido del proceso (opcional)"),
+    id_paa: Optional[str] = Form(None, description="ID PAA (opcional)"),
+    valor_proyectado: Optional[float] = Form(None, description="Valor proyectado (opcional)")
+):
+    """
+    ## ✏️ Actualizar Proceso de Empréstito
+    
+    Actualiza campos específicos de un proceso de empréstito existente sin crear registros nuevos.
+    Solo se actualizan los campos proporcionados, manteniendo los demás valores sin cambios.
+    
+    ### ✅ Funcionalidades principales:
+    - **Búsqueda automática**: Localiza el proceso en ambas colecciones
+    - **Actualización selectiva**: Solo modifica los campos proporcionados
+    - **Preservación de datos**: Mantiene los campos no especificados
+    - **Historial de cambios**: Muestra valores anteriores y nuevos
+    
+    ### 🔍 Colecciones de búsqueda:
+    - **procesos_emprestito** (SECOP)
+    - **ordenes_compra_emprestito** (TVEC)
+    
+    ### 📝 Campos actualizables:
+    - `bp`: Código BP
+    - `nombre_resumido_proceso`: Nombre resumido del proceso
+    - `id_paa`: ID PAA
+    - `valor_proyectado`: Valor proyectado (numérico)
+    
+    ### ⚙️ Comportamiento:
+    - **Campos vacíos**: Se ignoran (no se actualizan)
+    - **Campos con valor**: Se actualizan en la base de datos
+    - **Timestamp**: Se actualiza automáticamente `fecha_actualizacion`
+    - **Validación previa**: Verifica que el proceso existe
+    
+    ### 📋 Respuesta exitosa:
+    ```json
+    {
+        "success": true,
+        "message": "Proceso actualizado exitosamente",
+        "referencia_proceso": "SCMGSU-CM-003-2024",
+        "coleccion": "procesos_emprestito",
+        "documento_id": "xyz123",
+        "campos_modificados": ["bp", "valor_proyectado"],
+        "valores_anteriores": {
+            "bp": "BP-OLD-001",
+            "valor_proyectado": 1000000.0
+        },
+        "valores_nuevos": {
+            "bp": "BP-NEW-001",
+            "valor_proyectado": 1500000.0
+        },
+        "proceso_actualizado": { ... },
+        "timestamp": "2025-10-06T..."
+    }
+    ```
+    
+    ### 📋 Respuesta si no existe:
+    ```json
+    {
+        "success": false,
+        "error": "No se encontró ningún proceso con referencia_proceso: REFERENCIA",
+        "referencia_proceso": "REFERENCIA",
+        "colecciones_buscadas": ["procesos_emprestito", "ordenes_compra_emprestito"]
+    }
+    ```
+    
+    ### 📋 Respuesta sin campos:
+    ```json
+    {
+        "success": false,
+        "error": "No se proporcionaron campos para actualizar",
+        "campos_disponibles": ["bp", "nombre_resumido_proceso", "id_paa", "valor_proyectado"]
+    }
+    ```
+    """
+    try:
+        check_emprestito_availability()
+        
+        # Validar parámetro
+        if not referencia_proceso or not referencia_proceso.strip():
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "success": False,
+                    "error": "referencia_proceso es requerida",
+                    "message": "Debe proporcionar una referencia_proceso válida"
+                }
+            )
+        
+        # Actualizar proceso
+        resultado = await actualizar_proceso_emprestito(
+            referencia_proceso=referencia_proceso.strip(),
+            bp=bp,
+            nombre_resumido_proceso=nombre_resumido_proceso,
+            id_paa=id_paa,
+            valor_proyectado=valor_proyectado
+        )
+        
+        # Manejar respuesta según el resultado
+        if not resultado.get("success"):
+            # Si no se encontró el proceso
+            if "No se encontró" in resultado.get("error", ""):
+                raise HTTPException(
+                    status_code=404,
+                    detail=resultado
+                )
+            # Si no se proporcionaron campos para actualizar
+            elif "No se proporcionaron campos" in resultado.get("error", ""):
+                raise HTTPException(
+                    status_code=400,
+                    detail=resultado
+                )
+            else:
+                # Otros errores
+                raise HTTPException(
+                    status_code=500,
+                    detail=resultado
+                )
+        
+        # Respuesta exitosa
+        return JSONResponse(
+            content=resultado,
+            status_code=200,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en endpoint actualizar proceso: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "success": False,
+                "error": "Error interno del servidor",
+                "message": "Error actualizando proceso de empréstito",
                 "referencia_proceso": referencia_proceso
             }
         )

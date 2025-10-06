@@ -83,6 +83,7 @@ try:
         guardar_orden_compra_emprestito,
         procesar_emprestito_completo,
         eliminar_proceso_emprestito,
+        actualizar_proceso_emprestito,
         get_emprestito_operations_status,
         EMPRESTITO_OPERATIONS_AVAILABLE
     )
@@ -114,6 +115,9 @@ except ImportError as e:
         return {"success": False, "error": "Emprestito operations not available"}
     
     async def eliminar_proceso_emprestito(referencia_proceso: str):
+        return {"success": False, "error": "Emprestito operations not available"}
+    
+    async def actualizar_proceso_emprestito(referencia_proceso: str, bp=None, nombre_resumido_proceso=None, id_paa=None, valor_proyectado=None):
         return {"success": False, "error": "Emprestito operations not available"}
     
     def get_emprestito_operations_status():
@@ -213,6 +217,7 @@ __all__ = [
     "guardar_orden_compra_emprestito",
     "procesar_emprestito_completo",
     "eliminar_proceso_emprestito",
+    "actualizar_proceso_emprestito",
     "get_emprestito_operations_status",
     
     # User management operations
