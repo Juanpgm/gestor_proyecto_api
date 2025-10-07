@@ -5,6 +5,7 @@ Sistema de cache simplificado y optimizado
 
 import os
 import time
+from datetime import datetime
 from typing import Dict, List, Any, Optional, Union
 from database.firebase_config import get_firestore_client
 
@@ -131,6 +132,13 @@ def apply_client_side_filters(data: List[Dict[str, Any]], filters: Optional[Dict
             filtered_data = [item for item in filtered_data
                            if item.get('tipo_intervencion') == tipo_value or
                               item.get('properties', {}).get('tipo_intervencion') == tipo_value]
+        
+        # Filtro por nombre_centro_gestor
+        if 'nombre_centro_gestor' in filters and filters['nombre_centro_gestor']:
+            centro_value = filters['nombre_centro_gestor']
+            filtered_data = [item for item in filtered_data
+                           if item.get('nombre_centro_gestor') == centro_value or
+                              item.get('properties', {}).get('nombre_centro_gestor') == centro_value]
         
         # Filtro por departamento
         if 'departamento' in filters and filters['departamento']:
@@ -631,23 +639,12 @@ async def get_unidades_proyecto_attributes(
             server_side_filters_applied.append(f"upid={filters['upid']}")
             print(f"📋 DEBUG: ✅ SERVER-SIDE filtro por upid: {filters['upid']}")
         
-        # Filtro por estado (server-side)
-        if filters and 'estado' in filters and filters['estado']:
-            query = query.where('estado', '==', filters['estado'])
-            server_side_filters_applied.append(f"estado={filters['estado']}")
-            print(f"📋 DEBUG: ✅ SERVER-SIDE filtro por estado: {filters['estado']}")
+        # ✅ FILTROS MOVIDOS A CLIENT-SIDE - Los campos están siendo procesados después de la descarga
+        # Los filtros server-side de Firestore fallan porque los índices pueden no estar configurados
+        # o la estructura de datos no coincide exactamente. Usar client-side es más confiable.
         
-        # Filtro por tipo_intervencion (server-side)
-        if filters and 'tipo_intervencion' in filters and filters['tipo_intervencion']:
-            query = query.where('tipo_intervencion', '==', filters['tipo_intervencion'])
-            server_side_filters_applied.append(f"tipo_intervencion={filters['tipo_intervencion']}")
-            print(f"📋 DEBUG: ✅ SERVER-SIDE filtro por tipo_intervencion: {filters['tipo_intervencion']}")
-        
-        # Filtro por nombre_centro_gestor (server-side)
-        if filters and 'nombre_centro_gestor' in filters and filters['nombre_centro_gestor']:
-            query = query.where('nombre_centro_gestor', '==', filters['nombre_centro_gestor'])
-            server_side_filters_applied.append(f"nombre_centro_gestor={filters['nombre_centro_gestor']}")
-            print(f"📋 DEBUG: ✅ SERVER-SIDE filtro por nombre_centro_gestor: {filters['nombre_centro_gestor']}")
+        # Solo mantener filtros server-side para campos simples que sabemos que funcionan
+        # Por ahora, deshabilitar filtros server-side problemáticos
         
         print(f"📋 DEBUG: Filtros SERVER-SIDE aplicados: {server_side_filters_applied}")
         
@@ -724,36 +721,29 @@ async def get_unidades_proyecto_attributes(
         print(f"📋 DEBUG: TOTAL atributos después de filtros SERVER-SIDE: {total_docs}")
         
         # ============================================
-        # FILTROS CLIENT-SIDE ADICIONALES  
+        # FILTROS CLIENT-SIDE (TODOS LOS FILTROS)
         # ============================================
+        total_docs = doc_count
         client_side_filters_applied = []
         
         if filters:
-            # Solo aplicar client-side para filtros que no se pueden hacer server-side
+            # ✅ TODOS los filtros se procesan client-side para mayor confiabilidad
             client_side_filters = {}
-            for key, value in filters.items():
-                if key in ['search', 'comuna_corregimiento', 'barrio_vereda'] or (key == 'upid' and isinstance(value, list)):
-                    client_side_filters[key] = value
             
-            if client_side_filters:
-                attributes_data = apply_client_side_filters(attributes_data, client_side_filters)
-                client_side_filters_applied = list(client_side_filters.keys())
-                print(f"📋 DEBUG: 🔄 CLIENT-SIDE filtros aplicados: {client_side_filters_applied}")
-                print(f"📋 DEBUG: 🎯 RESULTADO FINAL - Registros después de optimización: {len(attributes_data)} de {total_docs} descargados")
-        
-        # Aplicar límite después de filtros client-side
-        original_count = len(attributes_data)
-        if limit and limit > 0:
-            attributes_data = attributes_data[:limit]
-            print(f"📋 DEBUG: Aplicando límite de {limit} registros")
-        
-        # Aplicar filtros del lado del cliente para casos especiales
-        client_side_filters = {}
-        client_side_filters_applied = []
-        total_docs = doc_count  # Guardamos el total antes de filtros client-side
-        
-        if filters:
-            # Filtros que requieren procesamiento client-side
+            # Filtros principales que antes fallaban en server-side
+            if 'estado' in filters and filters['estado']:
+                client_side_filters['estado'] = filters['estado']
+                client_side_filters_applied.append('estado')
+                
+            if 'tipo_intervencion' in filters and filters['tipo_intervencion']:
+                client_side_filters['tipo_intervencion'] = filters['tipo_intervencion']
+                client_side_filters_applied.append('tipo_intervencion')
+                
+            if 'nombre_centro_gestor' in filters and filters['nombre_centro_gestor']:
+                client_side_filters['nombre_centro_gestor'] = filters['nombre_centro_gestor']
+                client_side_filters_applied.append('nombre_centro_gestor')
+            
+            # Filtros adicionales
             if 'search' in filters and filters['search']:
                 client_side_filters['search'] = filters['search']
                 client_side_filters_applied.append('search')
@@ -770,11 +760,11 @@ async def get_unidades_proyecto_attributes(
                 client_side_filters['upid'] = filters['upid']
                 client_side_filters_applied.append('upid_multiple')
             
-            # Aplicar filtros client-side si los hay
+            # Aplicar filtros client-side
             if client_side_filters:
-                attributes_data = apply_client_side_filters(attributes_data, client_side_filters)
                 print(f"📋 DEBUG: 🔄 CLIENT-SIDE filtros aplicados: {client_side_filters_applied}")
-                print(f"📋 DEBUG: 🎯 RESULTADO FINAL - Registros después de optimización: {len(attributes_data)} de {total_docs} descargados")
+                attributes_data = apply_client_side_filters(attributes_data, client_side_filters)
+                print(f"📋 DEBUG: 🎯 RESULTADO FINAL - Registros después de filtros: {len(attributes_data)} de {total_docs} descargados")
         
         # Aplicar límite después de filtros client-side
         original_count = len(attributes_data)
@@ -819,246 +809,436 @@ async def get_unidades_proyecto_attributes(
 
 async def get_unidades_proyecto_dashboard(filters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
-    Obtener datos para dashboard de unidades de proyecto con métricas agregadas
-    Incluye estadísticas, distribuciones y datos filtrados para visualizaciones
+    🚀 DASHBOARD AVANZADO CON MÉTRICAS Y ANALÍTICAS OPTIMIZADAS
     
-    Filtros soportados:
-    - departamento: filtrar por departamento específico
-    - municipio: filtrar por municipio específico
-    - estado: filtrar por estado del proyecto
-    - tipo_intervencion: filtrar por tipo de intervención
-    - fecha_desde / fecha_hasta: rango de fechas
+    Genera análisis estadístico completo con métricas financieras, KPIs de negocio, 
+    y datos optimizados para múltiples tipos de gráficos y visualizaciones.
+    
+    ✅ MÉTRICAS INCLUIDAS:
+    - Análisis financiero con presupuesto_base
+    - Distribuciones optimizadas para gráficos
+    - KPIs de rendimiento y eficiencia
+    - Métricas temporales y geográficas
+    - Indicadores de calidad de datos
+    - Análisis comparativo por categorías
+    - Datos para heatmaps y treemaps
+    - Series temporales para líneas de tiempo
+    
+    ✅ FILTROS SOPORTADOS:
+    - estado: Estado del proyecto
+    - tipo_intervencion: Tipo de intervención
+    - nombre_centro_gestor: Centro gestor responsable
+    - comuna_corregimiento: Ubicación territorial
+    - barrio_vereda: Ubicación específica
     """
     try:
         # ============================================
-        # DETECCIÓN DE FILTROS PARA DASHBOARD
+        # 🚀 OBTENCIÓN DE DATOS COMPLETOS PARA ANÁLISIS AVANZADO
         # ============================================
         has_filters = filters and any(
             key in filters and filters[key] 
             for key in ['estado', 'tipo_intervencion', 'nombre_centro_gestor', 'comuna_corregimiento', 'barrio_vereda']
         )
         
-        print(f"📊 DEBUG: get_unidades_proyecto_dashboard - Filtros detectados: {has_filters}")
-        print(f"📊 DEBUG: Dashboard con datos completos para análisis preciso")
+        print(f"📊 DEBUG: Dashboard avanzado - Filtros aplicados: {has_filters}")
+        print(f"📊 DEBUG: Generando métricas optimizadas para dashboards y gráficos")
         
-        # Usar filtros originales sin límites automáticos
+        # Obtener datos completos sin límites para análisis preciso
         dashboard_filters = filters.copy() if filters else {}
         
-        # Obtener datos para análisis (ya optimizados por las funciones individuales)
+        # Obtener todos los datos necesarios
         geometry_result = await get_unidades_proyecto_geometry(dashboard_filters)
-        attributes_result = await get_unidades_proyecto_attributes(dashboard_filters)
+        attributes_result = await get_unidades_proyecto_attributes(dashboard_filters, limit=None)
         
-        # Verificar resultados con diferentes formatos
-        geometry_success = (geometry_result.get("type") == "FeatureCollection" or 
-                          geometry_result.get("success") == True)
+        # Verificar resultados
+        geometry_success = (geometry_result.get("type") == "FeatureCollection" or geometry_result.get("success") == True)
         attributes_success = attributes_result.get("success") == True
         
         if not geometry_success or not attributes_success:
             return {
                 "success": False,
-                "error": "Error obteniendo datos base para dashboard",
+                "error": "Error obteniendo datos base para dashboard avanzado",
                 "dashboard": {}
             }
         
-        # Extraer datos según el formato de respuesta
+        # Extraer datos
         if geometry_result.get("type") == "FeatureCollection":
             geometry_data = geometry_result.get("features", [])
         else:
             geometry_data = geometry_result.get("data", [])
         
         attributes_data = attributes_result.get("data", [])
-        
-        # USAR ATTRIBUTES COMO FUENTE PRINCIPAL para análisis de negocio
-        # Los datos de attributes contienen toda la información de negocio necesaria
         all_records = attributes_data
         total_records = len(all_records)
         
-        print(f"📊 DEBUG: Dashboard usando {total_records} registros de attributes para análisis")
+        print(f"📊 DEBUG: Procesando {total_records} registros para métricas avanzadas")
+        print(f"📊 DEBUG: Total records para metadatos: {total_records}")
         
-        # Calcular métricas avanzadas del dashboard
-        dashboard_data = {
-            "resumen_general": {
-                "total_proyectos": total_records,
-                "con_geometria": len(geometry_data),
-                "con_atributos": len(attributes_data),
-                "porcentaje_geo": round((len(geometry_data) / total_records) * 100, 1) if total_records > 0 else 0,
-                "cobertura_datos": {
-                    "completos": len([r for r in all_records if r.get('upid') and (r.get('coordinates') or r.get('lat'))]),
-                    "solo_atributos": len(attributes_data) - len(geometry_data) if len(attributes_data) > len(geometry_data) else 0,
-                    "solo_geometria": len(geometry_data) - len(attributes_data) if len(geometry_data) > len(attributes_data) else 0
+        # ============================================
+        # 💰 ANÁLISIS FINANCIERO AVANZADO
+        # ============================================
+        presupuestos_validos = []
+        avances_validos = []
+        años_disponibles = {}
+        fuentes_financiacion = {}
+        
+        # ============================================
+        # 📊 CONTADORES Y AGRUPACIONES PARA GRÁFICOS
+        # ============================================
+        estados = {}
+        tipos_intervencion = {}
+        centros_gestores = {}
+        comunas_corregimientos = {}
+        barrios_veredas = {}
+        
+        # Análisis de calidad por campo
+        completitud_campos = {}
+        campos_criticos = ['upid', 'estado', 'tipo_intervencion', 'nombre_centro_gestor', 'comuna_corregimiento', 'presupuesto_base', 'avance_obra']
+        
+        # Métricas geográficas
+        latitudes = []
+        longitudes = []
+        
+        # ============================================
+        # 🔄 PROCESAMIENTO AVANZADO DE REGISTROS
+        # ============================================
+        print(f"📊 DEBUG: Iniciando procesamiento de {total_records} registros")
+        
+        for record in all_records:
+            properties = record.get('properties', {})
+            
+            # 💰 PROCESAMIENTO FINANCIERO
+            presupuesto_raw = record.get('presupuesto_base') or properties.get('presupuesto_base')
+            if presupuesto_raw is not None:
+                presupuesto = _convert_to_int(presupuesto_raw)
+                record['presupuesto_base'] = presupuesto
+                if presupuesto > 0:
+                    presupuestos_validos.append(presupuesto)
+            
+            avance_raw = record.get('avance_obra') or properties.get('avance_obra')
+            if avance_raw is not None:
+                avance = _convert_to_float(avance_raw)
+                record['avance_obra'] = avance
+                if 0 <= avance <= 100:
+                    avances_validos.append(avance)
+            
+            # BPIN
+            bpin_raw = record.get('bpin') or properties.get('bpin')
+            if bpin_raw is not None:
+                record['bpin'] = _convert_bpin_to_positive_int(bpin_raw)
+            
+            # 📅 ANÁLISIS TEMPORAL
+            año = record.get('ano') or properties.get('ano')
+            if año:
+                try:
+                    año_int = int(año)
+                    años_disponibles[año_int] = años_disponibles.get(año_int, 0) + 1
+                except:
+                    pass
+            
+            # 💳 FUENTES DE FINANCIACIÓN
+            fuente = record.get('fuente_financiacion') or properties.get('fuente_financiacion')
+            if fuente and str(fuente).strip() and str(fuente).strip().lower() not in ['null', 'none', '', 'por definir']:
+                fuentes_financiacion[fuente] = fuentes_financiacion.get(fuente, 0) + 1
+            
+            # 📊 DISTRIBUCIONES CATEGÓRICAS
+            estado = record.get('estado') or properties.get('estado')
+            if estado and str(estado).strip():
+                estados[estado] = estados.get(estado, 0) + 1
+            
+            tipo = record.get('tipo_intervencion') or properties.get('tipo_intervencion')
+            if tipo and str(tipo).strip():
+                tipos_intervencion[tipo] = tipos_intervencion.get(tipo, 0) + 1
+            
+            centro = record.get('nombre_centro_gestor') or properties.get('nombre_centro_gestor')
+            if centro and str(centro).strip():
+                centros_gestores[centro] = centros_gestores.get(centro, 0) + 1
+            
+            comuna = record.get('comuna_corregimiento') or properties.get('comuna_corregimiento')
+            if comuna and str(comuna).strip():
+                comunas_corregimientos[comuna] = comunas_corregimientos.get(comuna, 0) + 1
+            
+            barrio = record.get('barrio_vereda') or properties.get('barrio_vereda')
+            if barrio and str(barrio).strip():
+                barrios_veredas[barrio] = barrios_veredas.get(barrio, 0) + 1
+            
+            # 🗺️ COORDENADAS GEOGRÁFICAS - ACCESO DIRECTO A GEOMETRY
+            lat = None
+            lng = None
+            
+            # 1. PRIORIDAD: Acceder directamente al campo geometry del record
+            geometry = record.get('geometry')
+            if geometry and isinstance(geometry, dict):
+                # Buscar coordinates en geometry
+                coords = geometry.get('coordinates')
+                if coords and isinstance(coords, list) and len(coords) >= 2:
+                    try:
+                        lng = float(coords[0])
+                        lat = float(coords[1])
+                    except (ValueError, TypeError, IndexError):
+                        pass
+                
+                # Si no hay coordinates, buscar lat/lng directos en geometry
+                if lat is None or lng is None:
+                    lat = lat or geometry.get('lat') or geometry.get('latitude')
+                    lng = lng or geometry.get('lng') or geometry.get('longitude') or geometry.get('lon')
+            
+            # 2. FALLBACK: Buscar en nivel raíz del record
+            if lat is None or lng is None:
+                lat_sources = [
+                    record.get('lat'), record.get('latitude'),
+                    properties.get('lat'), properties.get('latitude')
+                ]
+                
+                lng_sources = [
+                    record.get('lng'), record.get('longitude'), record.get('lon'),
+                    properties.get('lng'), properties.get('longitude'), properties.get('lon')
+                ]
+                
+                # Encontrar la primera coordenada válida
+                for lat_val in lat_sources:
+                    if lat_val is not None and str(lat_val).strip() not in ['', 'null', 'None']:
+                        try:
+                            lat = float(lat_val)
+                            break
+                        except:
+                            continue
+                
+                for lng_val in lng_sources:
+                    if lng_val is not None and str(lng_val).strip() not in ['', 'null', 'None']:
+                        try:
+                            lng = float(lng_val)
+                            break
+                        except:
+                            continue
+            
+            # 3. FALLBACK: Buscar en arrays de coordenadas alternativos
+            if lat is None or lng is None:
+                coords_arrays = [
+                    record.get('coordinates'), record.get('coordenadas'),
+                    properties.get('coordinates'), properties.get('coordenadas')
+                ]
+                
+                for coords in coords_arrays:
+                    if coords and isinstance(coords, list) and len(coords) >= 2:
+                        try:
+                            if lng is None:
+                                lng = float(coords[0])
+                            if lat is None:
+                                lat = float(coords[1])
+                            break
+                        except:
+                            continue
+            
+            # 4. VALIDAR Y AGREGAR coordenadas válidas para Colombia
+            if lat is not None and lng is not None:
+                try:
+                    lat_float = float(lat)
+                    lng_float = float(lng)
+                    # Validar coordenadas de Colombia (rangos amplios)
+                    if -10 <= lat_float <= 20 and -90 <= lng_float <= -60:
+                        latitudes.append(lat_float)
+                        longitudes.append(lng_float)
+                        # DEBUG para las primeras coordenadas encontradas
+                        if len(latitudes) <= 3:
+                            print(f"📍 DEBUG: Coordenada {len(latitudes)} - Lat: {lat_float}, Lng: {lng_float}")
+                except Exception as e:
+                    pass
+            
+            # 📋 ANÁLISIS DE COMPLETITUD
+            for campo in campos_criticos:
+                if campo not in completitud_campos:
+                    completitud_campos[campo] = 0
+                valor = record.get(campo) or properties.get(campo)
+                if valor is not None and str(valor).strip() and str(valor).strip().lower() not in ['null', 'none', '']:
+                    completitud_campos[campo] += 1
+        
+        # ============================================
+        # 💰 MÉTRICAS FINANCIERAS AVANZADAS
+        # ============================================
+        metricas_financieras = {}
+        if presupuestos_validos:
+            presupuestos_ordenados = sorted(presupuestos_validos)
+            total_presupuesto = sum(presupuestos_validos)
+            
+            metricas_financieras = {
+                "resumen": {
+                    "total_proyectos_con_presupuesto": len(presupuestos_validos),
+                    "presupuesto_total": total_presupuesto,
+                    "presupuesto_promedio": round(total_presupuesto / len(presupuestos_validos), 2),
+                    "presupuesto_mediano": presupuestos_ordenados[len(presupuestos_ordenados) // 2],
+                    "presupuesto_minimo": min(presupuestos_validos),
+                    "presupuesto_maximo": max(presupuestos_validos)
+                },
+                "distribucion_rangos": {
+                    "menos_100M": len([p for p in presupuestos_validos if p < 100_000_000]),
+                    "100M_1B": len([p for p in presupuestos_validos if 100_000_000 <= p < 1_000_000_000]),
+                    "1B_10B": len([p for p in presupuestos_validos if 1_000_000_000 <= p < 10_000_000_000]),
+                    "mas_10B": len([p for p in presupuestos_validos if p >= 10_000_000_000])
+                },
+                "percentiles": {
+                    "p25": presupuestos_ordenados[len(presupuestos_ordenados) // 4],
+                    "p50": presupuestos_ordenados[len(presupuestos_ordenados) // 2],
+                    "p75": presupuestos_ordenados[3 * len(presupuestos_ordenados) // 4],
+                    "p90": presupuestos_ordenados[9 * len(presupuestos_ordenados) // 10]
                 }
+            }
+        
+        # ============================================
+        # 📈 MÉTRICAS DE AVANCE Y RENDIMIENTO
+        # ============================================
+        metricas_avance = {}
+        if avances_validos:
+            avance_promedio = sum(avances_validos) / len(avances_validos)
+            metricas_avance = {
+                "resumen": {
+                    "proyectos_con_avance": len(avances_validos),
+                    "avance_promedio": round(avance_promedio, 1),
+                    "avance_mediano": sorted(avances_validos)[len(avances_validos) // 2]
+                },
+                "distribucion_avance": {
+                    "sin_iniciar": len([a for a in avances_validos if a == 0]),
+                    "en_progreso": len([a for a in avances_validos if 0 < a < 100]),
+                    "completados": len([a for a in avances_validos if a == 100]),
+                    "iniciados": len([a for a in avances_validos if a > 0])
+                },
+                "rangos_avance": {
+                    "0_25": len([a for a in avances_validos if 0 <= a < 25]),
+                    "25_50": len([a for a in avances_validos if 25 <= a < 50]),
+                    "50_75": len([a for a in avances_validos if 50 <= a < 75]),
+                    "75_100": len([a for a in avances_validos if 75 <= a <= 100])
+                }
+            }
+        
+        # ============================================
+        # 📊 DISTRIBUCIONES OPTIMIZADAS PARA GRÁFICOS
+        # ============================================
+        def crear_distribucion_grafico(datos_dict, max_items=15, incluir_otros=True):
+            """Optimizada para gráficos de barras, pie charts, y treemaps"""
+            if not datos_dict:
+                return {}
+            
+            total = sum(datos_dict.values())
+            items_ordenados = sorted(datos_dict.items(), key=lambda x: x[1], reverse=True)
+            
+            # Tomar los top items
+            top_items = items_ordenados[:max_items]
+            otros_count = sum(v for k, v in items_ordenados[max_items:]) if len(items_ordenados) > max_items else 0
+            
+            # Preparar datos para diferentes tipos de gráficos
+            labels = [item[0] for item in top_items]
+            valores = [item[1] for item in top_items]
+            porcentajes = [round((v/total)*100, 1) for v in valores]
+            
+            if incluir_otros and otros_count > 0:
+                labels.append("Otros")
+                valores.append(otros_count)
+                porcentajes.append(round((otros_count/total)*100, 1))
+            
+            return {
+                "chart_data": {
+                    "labels": labels,
+                    "values": valores,
+                    "percentages": porcentajes,
+                    "total": total
+                },
+                "pie_chart": [{"name": labels[i], "value": valores[i], "percentage": porcentajes[i]} for i in range(len(labels))],
+                "bar_chart": {"categories": labels, "series": [{"name": "Cantidad", "data": valores}]},
+                "treemap": [{"name": labels[i], "value": valores[i], "colorValue": porcentajes[i]} for i in range(len(labels))],
+                "summary": {
+                    "total_categories": len(datos_dict),
+                    "top_3": items_ordenados[:3],
+                    "diversity_index": len(datos_dict) / total if total > 0 else 0
+                }
+            }
+        
+        # ============================================
+        # 🏗️ ESTRUCTURA FINAL DEL DASHBOARD
+        # ============================================
+        dashboard_data = {
+            # 📋 RESUMEN EJECUTIVO
+            "resumen_ejecutivo": {
+                "total_proyectos": total_records,
+                "con_geometria": len(latitudes),
+                "con_presupuesto": len(presupuestos_validos),
+                "presupuesto_total_formateado": f"${sum(presupuestos_validos):,.0f}" if presupuestos_validos else "N/D",
+                "avance_promedio": round(sum(avances_validos) / len(avances_validos), 1) if avances_validos else 0,
+                "cobertura_territorial": len(comunas_corregimientos),
+                "centros_gestores_activos": len(centros_gestores)
             },
-            "distribuciones": {},
-            "metricas_geograficas": {},
-            "analisis_calidad": {},
-            "kpis_negocio": {},
+            
+            # 💰 ANÁLISIS FINANCIERO
+            "analisis_financiero": metricas_financieras,
+            
+            # 📈 MÉTRICAS DE RENDIMIENTO
+            "metricas_rendimiento": metricas_avance,
+            
+            # 📊 DISTRIBUCIONES PARA GRÁFICOS
+            "distribuciones_graficos": {
+                "estados": crear_distribucion_grafico(estados, 10),
+                "tipos_intervencion": crear_distribucion_grafico(tipos_intervencion, 12),
+                "centros_gestores": crear_distribucion_grafico(centros_gestores, 15),
+                "comunas_corregimientos": crear_distribucion_grafico(comunas_corregimientos, 20),
+                "fuentes_financiacion": crear_distribucion_grafico(fuentes_financiacion, 10),
+                "años": crear_distribucion_grafico(años_disponibles, 15, False)
+            },
+            
+            # 🗺️ ANÁLISIS GEOGRÁFICO
+            "analisis_geografico": {},
+            
+            # 📊 KPIs Y MÉTRICAS DE NEGOCIO
+            "kpis_negocio": {
+                "eficiencia_ejecucion": round(len([a for a in avances_validos if a > 50]) / len(avances_validos) * 100, 1) if avances_validos else 0,
+                "proyectos_completados": len([a for a in avances_validos if a == 100]),
+                "inversion_promedio_por_comuna": round(sum(presupuestos_validos) / len(comunas_corregimientos), 0) if presupuestos_validos and comunas_corregimientos else 0,
+                "diversidad_tipos": len(tipos_intervencion),
+                "cobertura_geografica": round(len(latitudes) / total_records * 100, 1) if total_records > 0 else 0,
+                "densidad_proyectos_territorial": round(total_records / len(comunas_corregimientos), 1) if comunas_corregimientos else 0
+            },
+            
+            # 📋 CALIDAD DE DATOS
+            "calidad_datos": {
+                campo: {
+                    "completitud": round((count / total_records) * 100, 1),
+                    "valores_validos": count,
+                    "valores_faltantes": total_records - count,
+                    "calidad_nivel": "Excelente" if count/total_records >= 0.95 else "Buena" if count/total_records >= 0.80 else "Regular" if count/total_records >= 0.60 else "Deficiente"
+                }
+                for campo, count in completitud_campos.items()
+            },
+            
+            # 🎯 CONFIGURACIÓN FILTROS
             "filtros_aplicados": filters or {}
         }
         
-        if total_records > 0:
-            # Inicializar contadores para análisis
-            estados = {}
-            tipos_intervencion = {}
-            centros_gestores = {}
-            comunas_corregimientos = {}
-            barrios_veredas = {}
+        # 🗺️ MÉTRICAS GEOGRÁFICAS AVANZADAS
+        if latitudes and longitudes:
+            lat_mean = sum(latitudes) / len(latitudes)
+            lng_mean = sum(longitudes) / len(longitudes)
             
-            for record in all_records:
-                # Buscar en properties si no está en el nivel raíz
-                properties = record.get('properties', {})
-                
-                # Aplicar conversiones de tipos en el registro del dashboard
-                # Convertir presupuesto_base a entero
-                presupuesto_raw = record.get('presupuesto_base') or properties.get('presupuesto_base')
-                if presupuesto_raw is not None:
-                    record['presupuesto_base'] = _convert_to_int(presupuesto_raw)
-                
-                # Convertir avance_obra a decimal
-                avance_raw = record.get('avance_obra') or properties.get('avance_obra')
-                if avance_raw is not None:
-                    record['avance_obra'] = _convert_to_float(avance_raw)
-                
-                # Convertir bpin a entero positivo (sin prefijo '-')
-                bpin_raw = record.get('bpin') or properties.get('bpin')
-                if bpin_raw is not None:
-                    record['bpin'] = _convert_bpin_to_positive_int(bpin_raw)
-                
-                # Estados
-                estado = record.get('estado') or properties.get('estado')
-                if estado:
-                    estados[estado] = estados.get(estado, 0) + 1
-                
-                # Tipos de intervención
-                tipo = record.get('tipo_intervencion') or properties.get('tipo_intervencion')
-                if tipo:
-                    tipos_intervencion[tipo] = tipos_intervencion.get(tipo, 0) + 1
-                
-                # Centros gestores
-                centro = record.get('nombre_centro_gestor') or properties.get('nombre_centro_gestor')
-                if centro:
-                    centros_gestores[centro] = centros_gestores.get(centro, 0) + 1
-                
-                # Comunas/Corregimientos
-                comuna = record.get('comuna_corregimiento') or properties.get('comuna_corregimiento')
-                if comuna:
-                    comunas_corregimientos[comuna] = comunas_corregimientos.get(comuna, 0) + 1
-                
-                # Barrios/Veredas
-                barrio = record.get('barrio_vereda') or properties.get('barrio_vereda')
-                if barrio:
-                    barrios_veredas[barrio] = barrios_veredas.get(barrio, 0) + 1
-            
-            # Calcular porcentajes y rankings
-            def calcular_distribucion(datos_dict, label):
-                total = sum(datos_dict.values())
-                return {
-                    "conteos": dict(sorted(datos_dict.items(), key=lambda x: x[1], reverse=True)[:15]),
-                    "total_categorias": len(datos_dict),
-                    "porcentajes": {k: round((v/total)*100, 1) for k, v in sorted(datos_dict.items(), key=lambda x: x[1], reverse=True)[:10]} if total > 0 else {},
-                    "top_3": list(sorted(datos_dict.items(), key=lambda x: x[1], reverse=True)[:3])
-                }
-            
-            dashboard_data["distribuciones"] = {
-                "por_estado": calcular_distribucion(estados, "Estados"),
-                "por_tipo_intervencion": calcular_distribucion(tipos_intervencion, "Tipos de Intervención"),
-                "por_centro_gestor": calcular_distribucion(centros_gestores, "Centros Gestores"),
-                "por_comuna_corregimiento": calcular_distribucion(comunas_corregimientos, "Comunas/Corregimientos"),
-                "por_barrio_vereda": calcular_distribucion(barrios_veredas, "Barrios/Veredas")
+            dashboard_data["analisis_geografico"] = {
+                "cobertura": {
+                    "puntos_validos": len(latitudes),
+                    "cobertura_porcentaje": round((len(latitudes) / total_records) * 100, 1)
+                },
+                "centro_gravedad": {"lat": round(lat_mean, 6), "lng": round(lng_mean, 6)},
+                "bounding_box": {
+                    "norte": max(latitudes), "sur": min(latitudes),
+                    "este": max(longitudes), "oeste": min(longitudes),
+                    "area_km2": round(abs(max(latitudes) - min(latitudes)) * abs(max(longitudes) - min(longitudes)) * 111.32**2, 2)
+                },
+                "densidad_geografica": round(len(latitudes) / max(1, abs(max(latitudes) - min(latitudes)) * abs(max(longitudes) - min(longitudes))), 2),
+                "heatmap_data": [{"lat": lat, "lng": lng, "intensity": 1} for lat, lng in zip(latitudes, longitudes)][:100]  # Limitar para rendimiento
             }
-            
-            # Métricas geográficas
-            if geometry_data:
-                latitudes = []
-                longitudes = []
-                
-                for record in geometry_data:
-                    lat = record.get('lat') or record.get('latitude')
-                    lng = record.get('lng') or record.get('longitude')
-                    
-                    # También buscar en coordinates array
-                    coords = record.get('coordinates') or record.get('coordenadas')
-                    if coords and isinstance(coords, list) and len(coords) >= 2:
-                        lng, lat = coords[0], coords[1]
-                    
-                    if lat is not None and lng is not None:
-                        try:
-                            latitudes.append(float(lat))
-                            longitudes.append(float(lng))
-                        except:
-                            pass
-                
-                if latitudes and longitudes:
-                    # Calcular dispersión geográfica
-                    lat_mean = sum(latitudes) / len(latitudes)
-                    lng_mean = sum(longitudes) / len(longitudes)
-                    lat_range = max(latitudes) - min(latitudes)
-                    lng_range = max(longitudes) - min(longitudes)
-                    
-                    dashboard_data["metricas_geograficas"] = {
-                        "cobertura": {
-                            "puntos_validos": len(latitudes),
-                            "porcentaje_geo": round((len(latitudes) / total_records) * 100, 1)
-                        },
-                        "bbox": {
-                            "min_lat": min(latitudes),
-                            "max_lat": max(latitudes),
-                            "min_lng": min(longitudes),
-                            "max_lng": max(longitudes),
-                            "area_grados": round(lat_range * lng_range, 4)
-                        },
-                        "centro_gravedad": {
-                            "lat": round(lat_mean, 6),
-                            "lng": round(lng_mean, 6)
-                        },
-                        "dispersion": {
-                            "rango_lat": round(lat_range, 4),
-                            "rango_lng": round(lng_range, 4),
-                            "concentracion": "Alta" if lat_range < 0.1 and lng_range < 0.1 else "Media" if lat_range < 1 and lng_range < 1 else "Amplia"
-                        }
-                    }
-            
-            # Análisis de calidad de datos
-            campos_criticos = ['upid', 'estado', 'tipo_intervencion', 'nombre_centro_gestor']
-            calidad_datos = {}
-            
-            for campo in campos_criticos:
-                valores_validos = len([r for r in all_records if r.get(campo) or r.get('properties', {}).get(campo)])
-                porcentaje_completitud = round((valores_validos / total_records) * 100, 1) if total_records > 0 else 0
-                calidad_datos[campo] = {
-                    "valores_validos": valores_validos,
-                    "valores_faltantes": total_records - valores_validos,
-                    "completitud_porcentaje": porcentaje_completitud,
-                    "calidad": "Excelente" if porcentaje_completitud >= 95 else "Buena" if porcentaje_completitud >= 80 else "Regular" if porcentaje_completitud >= 60 else "Deficiente"
-                }
-            
-            dashboard_data["analisis_calidad"] = calidad_datos
-            
-            # KPIs de negocio
-            if estados:
-                estados_activos = sum(v for k, v in estados.items() if k and 'activ' in k.lower() or 'ejecuc' in k.lower() or 'curso' in k.lower())
-                estados_finalizados = sum(v for k, v in estados.items() if k and ('final' in k.lower() or 'complet' in k.lower() or 'termin' in k.lower()))
-                
-                dashboard_data["kpis_negocio"] = {
-                    "proyectos_activos": estados_activos,
-                    "proyectos_finalizados": estados_finalizados,
-                    "tasa_completitud": round((estados_finalizados / total_records) * 100, 1) if total_records > 0 else 0,
-                    "diversidad_tipos": len(tipos_intervencion),
-                    "centros_gestores_activos": len(centros_gestores),
-                    "cobertura_territorial": {
-                        "comunas_corregimientos": len(comunas_corregimientos),
-                        "barrios_veredas": len(barrios_veredas)
-                    }
-                }
+        
+        print(f"📊 DEBUG: Procesamiento completado - Coordenadas encontradas: {len(latitudes)}")
+        print(f"📊 DEBUG: Registros financieros: {len(presupuestos_validos)}")
+        print(f"📊 DEBUG: Registros de rendimiento: {len(avances_validos)}")
         
         return {
             "success": True,
             "dashboard": dashboard_data,
-            "data_sources": {
-                "geometry_count": len(geometry_data),
-                "attributes_count": len(attributes_data),
-                "combined_count": total_records
-            },
-            "message": f"Dashboard generado con {total_records} registros"
+            "message": f"Dashboard avanzado generado con {total_records} registros, {len(latitudes)} coordenadas geográficas y métricas optimizadas"
         }
         
     except Exception as e:

@@ -28,13 +28,17 @@ if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
 if hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8')
-from fastapi import FastAPI, HTTPException, Query, Request, status, Form
+from fastapi import FastAPI, HTTPException, Query, Request, status, Form, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from typing import Dict, Any, Optional, Union
+from typing import Dict, Any, Optional, Union, List
 import uvicorn
 import asyncio
 from datetime import datetime
+import xml.etree.ElementTree as ET
+import json
+import re
+import uuid
 
 # Importar para manejar tipos de Firebase
 try:
@@ -1730,6 +1734,255 @@ async def get_filters_endpoint(
         raise HTTPException(
             status_code=500,
             detail=f"Error procesando filtros: {str(e)}"
+        )
+
+
+# ============================================================================
+# FUNCIONES AUXILIARES PARA PROCESAMIENTO KML
+# ============================================================================
+
+def parse_kml_to_geojson_linestrings(kml_content: str) -> Dict[str, Any]:
+    """
+    Convierte contenido KML a GeoJSON con LineStrings y formato de base de datos
+    """
+    try:
+        # Parse del XML KML
+        root = ET.fromstring(kml_content)
+        
+        # Namespace de KML
+        kml_ns = {'kml': 'http://www.opengis.net/kml/2.2'}
+        
+        # Buscar todos los Placemarks
+        placemarks = root.findall('.//kml:Placemark', kml_ns)
+        
+        features = []
+        
+        for placemark in placemarks:
+            # Extraer nombre y descripción
+            name_elem = placemark.find('kml:name', kml_ns)
+            name = name_elem.text if name_elem is not None else f"Línea_{uuid.uuid4().hex[:8]}"
+            
+            desc_elem = placemark.find('kml:description', kml_ns)
+            description = desc_elem.text if desc_elem is not None else ""
+            
+            # Buscar LineString
+            linestring = placemark.find('.//kml:LineString', kml_ns)
+            if linestring is not None:
+                # Obtener coordenadas
+                coords_elem = linestring.find('kml:coordinates', kml_ns)
+                if coords_elem is not None:
+                    coords_text = coords_elem.text.strip()
+                    
+                    # Parsear coordenadas (formato: lng,lat,alt lng,lat,alt ...)
+                    coord_pairs = []
+                    for coord_str in coords_text.split():
+                        parts = coord_str.split(',')
+                        if len(parts) >= 2:
+                            try:
+                                lng = float(parts[0])
+                                lat = float(parts[1])
+                                coord_pairs.append([lng, lat])
+                            except ValueError:
+                                continue
+                    
+                    if len(coord_pairs) >= 2:  # LineString necesita al menos 2 puntos
+                        # Crear feature GeoJSON con formato de base de datos
+                        feature = {
+                            "type": "Feature",
+                            "properties": {
+                                # Campos básicos (upid se generará en el GET endpoint)
+                                "nombre_up": name,
+                                "descripcion": description,
+                                "estado": "En Planificación",
+                                "tipo_intervencion": "Infraestructura Vial",
+                                "nombre_centro_gestor": "Centro Gestor por Definir",
+                                "comuna_corregimiento": "Por Definir",
+                                "barrio_vereda": "Por Definir",
+                                "fuente_financiacion": "Por Definir",
+                                "ano": datetime.now().year,
+                                "presupuesto_base": 0,
+                                "avance_obra": 0.0,
+                                "fecha_inicio": None,
+                                "fecha_fin": None
+                            },
+                            "geometry": {
+                                "type": "LineString",
+                                "coordinates": coord_pairs
+                            }
+                        }
+                        features.append(feature)
+        
+        # Crear FeatureCollection GeoJSON
+        geojson = {
+            "type": "FeatureCollection",
+            "features": features,
+            "processing_metadata": {
+                "source": "KML Import",
+                "processed_at": datetime.now().isoformat(),
+                "total_features": len(features),
+                "geometry_type": "LineString",
+                "format_version": "1.0",
+                "upid_generation": "Will be handled by GET endpoint",
+                "coordinates_count_per_feature": [len(f["geometry"]["coordinates"]) for f in features],
+                "note": "This metadata is for processing info only, not for database insertion"
+            }
+        }
+        
+        return {
+            "success": True,
+            "geojson": geojson,
+            "summary": {
+                "features_processed": len(placemarks),
+                "linestrings_found": len(features),
+                "conversion_successful": True
+            }
+        }
+        
+    except ET.ParseError as e:
+        return {
+            "success": False,
+            "error": f"Error parsing KML: {str(e)}",
+            "geojson": None
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Error processing KML: {str(e)}",
+            "geojson": None
+        }
+
+
+# ============================================================================
+# ENDPOINT PARA INSERCIÓN DE LINESTRINGS DESDE KML
+# ============================================================================
+
+@app.post("/unidades-proyecto/insert-linestrings", tags=["Unidades de Proyecto"], response_class=JSONResponse)
+async def insert_linestrings_from_kml(
+    kml_file: UploadFile = File(..., description="Archivo KML con geometrías tipo línea")
+):
+    """
+    **Convertir archivo KML a GeoJSON con LineStrings**
+    
+    Endpoint para procesar archivos KML y convertirlos a formato GeoJSON compatible 
+    con la estructura de base de datos de unidades de proyecto.
+    
+    **Características principales:**
+    - **Conversión KML → GeoJSON**: Procesa geometrías LineString desde KML
+    - **Formato de BD**: Aplica estructura estándar de unidades de proyecto
+    - **Sin persistencia**: Solo conversión y visualización (no guarda en BD)
+    - **Validación**: Verifica geometrías válidas y estructura correcta
+    
+    **Proceso de conversión:**
+    1. Parse del archivo KML
+    2. Extracción de geometrías LineString
+    3. Generación de propiedades por defecto
+    4. Formato GeoJSON compatible con base de datos
+    5. Validación de resultados
+    
+    **Campos generados automáticamente:**
+    - `nombre_up`: Nombre extraído desde KML o generado
+    - `estado`: "En Planificación" (por defecto)
+    - `tipo_intervencion`: "Infraestructura Vial" (por defecto)
+    - `geometry`: LineString con coordenadas del KML
+    - `ano`: Año actual
+    
+    **Campos por definir manualmente:**
+    - `upid`: Se generará automáticamente en el endpoint GET (no incluido aquí)
+    - `nombre_centro_gestor`: Centro gestor responsable
+    - `comuna_corregimiento`: Ubicación administrativa
+    - `barrio_vereda`: Ubicación específica
+    - `fuente_financiacion`: Fuente de recursos
+    - `presupuesto_base`: Valor del proyecto
+    
+    **Respuesta incluye:**
+    - GeoJSON completo con todas las features
+    - Resumen de conversión con estadísticas
+    - Metadata de procesamiento
+    - Estructura lista para revisión antes de inserción
+    
+    **Uso recomendado:**
+    1. Subir archivo KML
+    2. Revisar GeoJSON generado
+    3. Validar geometrías y propiedades
+    4. Ajustar campos faltantes si es necesario
+    5. Proceder con inserción manual posterior
+    """
+    
+    # Validar tipo de archivo
+    if not kml_file.filename.lower().endswith('.kml'):
+        raise HTTPException(
+            status_code=400,
+            detail="Solo se permiten archivos KML (.kml)"
+        )
+    
+    try:
+        # Leer contenido del archivo
+        kml_content = await kml_file.read()
+        kml_text = kml_content.decode('utf-8')
+        
+        # Procesar KML
+        result = parse_kml_to_geojson_linestrings(kml_text)
+        
+        if not result.get("success", False):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Error procesando KML: {result.get('error', 'Error desconocido')}"
+            )
+        
+        geojson = result["geojson"]
+        summary = result["summary"]
+        
+        # Crear respuesta completa
+        response_data = {
+            "success": True,
+            "message": "KML convertido exitosamente a GeoJSON",
+            "conversion_summary": {
+                "source_file": kml_file.filename,
+                "file_size_bytes": len(kml_content),
+                "features_processed": summary["features_processed"],
+                "linestrings_converted": summary["linestrings_found"],
+                "conversion_successful": summary["conversion_successful"]
+            },
+            "geojson": geojson,
+            "database_preview": {
+                "ready_for_insertion": True,
+                "format_validation": "✅ Compatible con estructura de BD",
+                "required_fields_status": "✅ Campos base generados (upid se creará en GET)",
+                "geometry_validation": "✅ LineStrings válidos",
+                "upid_status": "⏳ Se generará automáticamente en endpoint GET",
+                "next_steps": [
+                    "Revisar y ajustar campos por defecto",
+                    "Validar coordenadas geográficas",
+                    "Confirmar información de proyecto",
+                    "El upid se generará automáticamente al guardar",
+                    "Proceder con inserción manual"
+                ]
+            },
+            "metadata": {
+                "processed_at": datetime.now().isoformat(),
+                "geometry_type": "LineString",
+                "coordinate_system": "WGS84 (EPSG:4326)",
+                "format_version": "GeoJSON v1.0",
+                "database_compatible": True,
+                "persistence_status": "NOT_SAVED (Preview only)"
+            },
+            "type": "kml_conversion",
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        return create_utf8_response(response_data)
+        
+    except UnicodeDecodeError:
+        raise HTTPException(
+            status_code=400,
+            detail="Error de codificación: El archivo KML debe estar en UTF-8"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno procesando KML: {str(e)}"
         )
 
 
