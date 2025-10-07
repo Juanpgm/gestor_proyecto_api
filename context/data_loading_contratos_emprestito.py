@@ -1,7 +1,7 @@
 """
-Data Loading Module for Procesos Empréstito - Firebase
+Data Loading Module for Contratos Empréstito - Firebase
 
-Este módulo carga únicamente los datos de procesos de empréstito
+Este módulo carga únicamente los datos de contratos de empréstito
 desde archivos JSON transformados hacia Firebase Firestore.
 """
 
@@ -33,7 +33,7 @@ def calculate_record_hash(record: Dict[str, Any]) -> str:
         # Crear una copia limpia del registro sin campos de metadatos
         hash_data = {
             k: v for k, v in record.items() 
-            if k not in ['updated_at', 'created_at', 'data_hash', 'fecha_carga', 'origen_archivo']
+            if k not in ['updated_at', 'created_at', 'data_hash']
         }
         
         # Convertir a JSON string ordenado para hash consistente
@@ -162,10 +162,10 @@ def compare_and_filter_changes(
 
 def get_data_files() -> Dict[str, str]:
     """
-    Obtiene las rutas al archivo JSON de datos transformados de procesos.
+    Obtiene las rutas al archivo JSON de datos transformados de contratos.
     
     Returns:
-        Dict[str, str]: Diccionario con la ruta del archivo de procesos
+        Dict[str, str]: Diccionario con la ruta del archivo de contratos
     """
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     emprestito_outputs_dir = os.path.join(
@@ -176,7 +176,7 @@ def get_data_files() -> Dict[str, str]:
     )
     
     return {
-        'procesos': os.path.join(emprestito_outputs_dir, "procesos_secop_emprestito_transformed.json")
+        'contratos': os.path.join(emprestito_outputs_dir, "contratos_secop_emprestito_transformed.json")
     }
 
 
@@ -186,7 +186,7 @@ def load_json_data(file_path: str, data_type: str) -> List[Dict[str, Any]]:
     
     Args:
         file_path (str): Ruta al archivo JSON
-        data_type (str): Tipo de datos (procesos)
+        data_type (str): Tipo de datos (contratos o procesos)
         
     Returns:
         List[Dict[str, Any]]: Lista de registros
@@ -219,7 +219,7 @@ def prepare_document_for_firestore(record: Dict[str, Any], data_type: str) -> Di
     
     Args:
         record (Dict[str, Any]): Registro original
-        data_type (str): Tipo de datos (procesos)
+        data_type (str): Tipo de datos (contratos o procesos)
         
     Returns:
         Dict[str, Any]: Registro preparado para Firestore
@@ -229,11 +229,9 @@ def prepare_document_for_firestore(record: Dict[str, Any], data_type: str) -> Di
     for key, value in record.items():
         # Reemplazar valores None por valores apropiados
         if value is None:
-            if key in ['bpin', 'proceso_compra', 'valor_total_adjudicacion', 'precio_base', 'ppi']:
+            if key in ['bpin', 'proceso_compra', 'valor_contrato', 'precio_base']:
                 prepared_record[key] = 0
-            elif key in ['nombre_centro_gestor', 'referencia_proceso', 'entidad', 'nombre_procedimiento']:
-                prepared_record[key] = ""
-            elif key in ['fecha_publicacion', 'fecha_ultima_publicaci', 'fecha_recepcion', 'fecha_apertura_efectiva']:
+            elif key in ['nombre_centro_gestor', 'referencia_contrato', 'referencia_proceso']:
                 prepared_record[key] = ""
             else:
                 prepared_record[key] = ""
@@ -249,28 +247,43 @@ def prepare_document_for_firestore(record: Dict[str, Any], data_type: str) -> Di
     return prepared_record
 
 
-def generate_document_id(record: Dict[str, Any], collection_name: str) -> str:
+def generate_document_id(record: Dict[str, Any], data_type: str) -> str:
     """
-    Genera un ID único para el documento basado en la referencia del proceso.
+    Genera un ID único para el documento basado en el tipo de datos.
     
     Args:
         record (Dict[str, Any]): Registro de datos
-        collection_name (str): Nombre de la colección
+        data_type (str): Tipo de datos (contratos, procesos, contratos_emprestito, procesos_emprestito)
         
     Returns:
         str: ID único para el documento
     """
-    # Para procesos, usar referencia_proceso como identificador principal
-    if record.get('referencia_proceso'):
-        return f"PROCESO-{record['referencia_proceso']}"
-    elif record.get('proceso_compra'):
-        return f"PROCESO-{record['proceso_compra']}"
-    elif record.get('id_proceso'):
-        return f"PROCESO-{record['id_proceso']}"
-    else:
-        # Usar timestamp como fallback
-        timestamp = int(datetime.now().timestamp())
-        return f"PROCESO-{timestamp}"
+    # Normalizar el tipo de datos
+    if "contratos" in data_type.lower():
+        # Para contratos, usar referencia_contrato si existe
+        if record.get('referencia_contrato'):
+            return f"CONTRATO-{record['referencia_contrato']}"
+        elif record.get('id_contrato'):
+            return f"CONTRATO-{record['id_contrato']}"
+        else:
+            # Usar BPIN + timestamp como fallback
+            bpin = record.get('bpin', 0)
+            timestamp = int(datetime.now().timestamp())
+            return f"CONTRATO-{bpin}-{timestamp}"
+    
+    elif "procesos" in data_type.lower():
+        # Para procesos, usar referencia_proceso o proceso_compra
+        if record.get('referencia_proceso'):
+            return f"PROCESO-{record['referencia_proceso']}"
+        elif record.get('proceso_compra'):
+            return f"PROCESO-{record['proceso_compra']}"
+        else:
+            # Usar ID de proceso como fallback
+            id_proceso = record.get('id_proceso', f"PROC-{int(datetime.now().timestamp())}")
+            return f"PROCESO-{id_proceso}"
+    
+    # Fallback general
+    return f"{data_type.upper()}-{int(datetime.now().timestamp())}"
 
 
 def upload_data_to_firestore(data: List[Dict[str, Any]], 
@@ -282,7 +295,7 @@ def upload_data_to_firestore(data: List[Dict[str, Any]],
     Args:
         data (List[Dict[str, Any]]): Datos a cargar
         collection_name (str): Nombre de la colección en Firestore
-        data_type (str): Tipo de datos (procesos)
+        data_type (str): Tipo de datos (contratos o procesos)
         
     Returns:
         bool: True si la carga fue exitosa, False en caso contrario
@@ -315,7 +328,7 @@ def upload_data_to_firestore(data: List[Dict[str, Any]],
                         prepared_record = prepare_document_for_firestore(record, data_type)
                         
                         # Generar ID único para el documento
-                        doc_id = generate_document_id(record, collection_name)
+                        doc_id = generate_document_id(record, data_type)
                         doc_ref = collection_ref.document(doc_id)
                         
                         # Agregar al batch
@@ -392,12 +405,14 @@ def verify_data_upload(collection_name: str, data_type: str) -> Dict[str, Any]:
         if sample_data:
             print(f"   📋 Muestra de {data_type} (primeros 3):")
             for i, doc in enumerate(sample_data, 1):
-                ref = doc.get('referencia_proceso', 'N/A')
-                procedimiento = doc.get('nombre_procedimiento', 'N/A')[:50]
-                estado = doc.get('estado_procedimiento', 'N/A')
-                print(f"      {i}. Ref: {ref}")
-                print(f"         Procedimiento: {procedimiento}...")
-                print(f"         Estado: {estado}")
+                if data_type == "contratos":
+                    ref = doc.get('referencia_contrato', 'N/A')
+                    centro = doc.get('nombre_centro_gestor', 'N/A')
+                    print(f"      {i}. Ref: {ref} - Centro: {centro}")
+                else:  # procesos
+                    ref = doc.get('referencia_proceso', 'N/A')
+                    centro = doc.get('nombre_centro_gestor', 'N/A')
+                    print(f"      {i}. Ref: {ref} - Centro: {centro}")
         
         return verification_info
         
@@ -412,15 +427,15 @@ def verify_data_upload(collection_name: str, data_type: str) -> Dict[str, Any]:
         }
 
 
-def load_procesos_emprestito_data() -> Optional[Dict[str, Any]]:
+def load_contratos_emprestito_data() -> Optional[Dict[str, Any]]:
     """
-    Función principal para cargar datos de procesos empréstito a Firebase.
+    Función principal para cargar datos de contratos empréstito a Firebase.
     
     Returns:
         Optional[Dict[str, Any]]: Información del resultado de la carga
     """
     try:
-        print("🔥 Iniciando carga de datos de procesos empréstito a Firebase")
+        print("🔥 Iniciando carga de datos de contratos empréstito a Firebase")
         print("="*80)
         
         # Configurar y verificar conexión Firebase
@@ -455,54 +470,54 @@ def load_procesos_emprestito_data() -> Optional[Dict[str, Any]]:
         
         results = {
             "status": "success",
-            "procesos": None,
+            "contratos": None,
             "total_records": 0
         }
         
-        # Cargar procesos con verificación incremental
-        print(f"\n{'='*20} CARGANDO PROCESOS {'='*20}")
+        # Cargar contratos con verificación incremental
+        print(f"\n{'='*20} CARGANDO CONTRATOS {'='*20}")
         try:
-            procesos_data = load_json_data(data_files['procesos'], 'procesos')
-            if procesos_data:
+            contratos_data = load_json_data(data_files['contratos'], 'contratos')
+            if contratos_data:
                 # Obtener datos existentes de Firebase
-                existing_procesos = get_existing_firebase_data("procesos_emprestito")
+                existing_contratos = get_existing_firebase_data("contratos_emprestito")
                 
                 # Comparar y filtrar solo cambios
-                procesos_to_upload, procesos_changes = compare_and_filter_changes(
-                    procesos_data, 
-                    existing_procesos,
-                    "procesos_emprestito"
+                contratos_to_upload, contratos_changes = compare_and_filter_changes(
+                    contratos_data, 
+                    existing_contratos,
+                    "contratos_emprestito"
                 )
                 
                 # Cargar solo registros nuevos o modificados
-                if procesos_to_upload:
-                    procesos_success = upload_data_to_firestore(
-                        procesos_to_upload, 
-                        "procesos_emprestito", 
-                        "procesos"
+                if contratos_to_upload:
+                    contratos_success = upload_data_to_firestore(
+                        contratos_to_upload, 
+                        "contratos_emprestito", 
+                        "contratos"
                     )
                 else:
-                    print("✅ No hay procesos nuevos o modificados para cargar")
-                    procesos_success = True
+                    print("✅ No hay contratos nuevos o modificados para cargar")
+                    contratos_success = True
                 
-                procesos_verification = verify_data_upload("procesos_emprestito", "procesos")
+                contratos_verification = verify_data_upload("contratos_emprestito", "contratos")
                 
-                results["procesos"] = {
-                    "records_processed": len(procesos_data),
-                    "records_uploaded": len(procesos_to_upload),
-                    "change_summary": procesos_changes,
-                    "upload_success": procesos_success,
-                    "verification": procesos_verification
+                results["contratos"] = {
+                    "records_processed": len(contratos_data),
+                    "records_uploaded": len(contratos_to_upload),
+                    "change_summary": contratos_changes,
+                    "upload_success": contratos_success,
+                    "verification": contratos_verification
                 }
-                results["total_records"] += len(procesos_data)
+                results["total_records"] += len(contratos_data)
         except Exception as e:
-            print(f"❌ Error cargando procesos: {e}")
-            results["procesos"] = {"error": str(e)}
+            print(f"❌ Error cargando contratos: {e}")
+            results["contratos"] = {"error": str(e)}
         
-        # Determinar estado final basado solo en procesos
-        procesos_ok = results["procesos"] and results["procesos"].get("upload_success", False)
+        # Determinar estado final basado solo en contratos
+        contratos_ok = results["contratos"] and results["contratos"].get("upload_success", False)
         
-        if procesos_ok:
+        if contratos_ok:
             results["status"] = "success"
         else:
             results["status"] = "error"
@@ -520,10 +535,10 @@ def load_procesos_emprestito_data() -> Optional[Dict[str, Any]]:
 # Ejecutar carga si se ejecuta este módulo directamente
 if __name__ == "__main__":
     print("=" * 80)
-    print("🚀 CARGA DE DATOS DE PROCESOS EMPRÉSTITO A FIREBASE")
+    print("🚀 CARGA DE DATOS DE CONTRATOS EMPRÉSTITO A FIREBASE")
     print("=" * 80)
     
-    result = load_procesos_emprestito_data()
+    result = load_contratos_emprestito_data()
     
     if result:
         print("\n" + "=" * 80)
@@ -531,22 +546,22 @@ if __name__ == "__main__":
         print("=" * 80)
         print(f"Estado general: {result['status']}")
         
-        if result.get('procesos'):
-            procesos_info = result['procesos']
-            if 'records_processed' in procesos_info:
-                print(f"📦 Procesos procesados: {procesos_info['records_processed']}")
-                print(f"📤 Procesos cargados: {procesos_info.get('records_uploaded', 0)}")
-                if 'change_summary' in procesos_info:
-                    changes = procesos_info['change_summary']
+        if result.get('contratos'):
+            contratos_info = result['contratos']
+            if 'records_processed' in contratos_info:
+                print(f"📦 Contratos procesados: {contratos_info['records_processed']}")
+                print(f"📤 Contratos cargados: {contratos_info.get('records_uploaded', 0)}")
+                if 'change_summary' in contratos_info:
+                    changes = contratos_info['change_summary']
                     print(f"   ➕ Nuevos: {changes.get('new_records', 0)}")
                     print(f"   🔄 Modificados: {changes.get('modified_records', 0)}")
                     print(f"   ✅ Sin cambios: {changes.get('unchanged_records', 0)}")
-                print(f"✅ Procesos cargados: {'Sí' if procesos_info.get('upload_success') else 'No'}")
+                print(f"✅ Contratos cargados: {'Sí' if contratos_info.get('upload_success') else 'No'}")
         
         if result.get('total_records'):
             print(f"📊 Total registros: {result['total_records']}")
         
-        print(f"📋 Colección: procesos_emprestito")
+        print(f"📋 Colección: contratos_emprestito")
         print("=" * 80)
     else:
         print("\n💥 La carga de datos falló completamente")

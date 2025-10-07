@@ -1213,8 +1213,8 @@ async def get_filter_options(field: Optional[str] = None, limit: Optional[int] =
             'anos': 'ano'
         }
         
-        # ✅ FUNCIONAL: Obtener datos frescos siempre
-        attributes_result = await get_unidades_proyecto_attributes(filters={}, limit=400)
+        # ✅ FUNCIONAL: Obtener TODOS los datos frescos siempre (sin límite para filtros)
+        attributes_result = await get_unidades_proyecto_attributes(filters={}, limit=None)
         
         if not attributes_result.get("success", False):
             return {
