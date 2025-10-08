@@ -2223,56 +2223,68 @@ async def login_user(login_data: UserLoginRequest):
     try:
         check_user_management_availability()
         
-        # 🚨 SECURITY FIX: Esta función ahora siempre retorna error
+        # � AUTENTICACIÓN REAL: La función ahora valida credenciales correctamente
         result = await authenticate_email_password(login_data.email, login_data.password)
         
-        # La función SIEMPRE retorna success=False ahora (por seguridad)
-        error_code = result.get("code", "AUTH_ERROR")
-        
-        # Mapear códigos de error a respuestas HTTP apropiadas
-        if error_code == "BACKEND_AUTH_NOT_SUPPORTED":
-            # Este es el nuevo comportamiento seguro
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "success": False,
-                    "error": result["error"],
-                    "code": error_code,
-                    "security_notice": result.get("security_notice"),
-                    "recommendation": result.get("recommendation"),
-                    "user_exists": result.get("user_exists", False),
-                    "user_active": result.get("user_active", False)
-                }
-            )
-        elif error_code in ["INVALID_CREDENTIALS", "USER_NOT_FOUND", "USER_DISABLED", "ACCOUNT_INACTIVE"]:
-            raise HTTPException(
-                status_code=401,
-                detail={
-                    "success": False,
-                    "error": result["error"],
-                    "code": error_code
-                }
-            )
-        elif error_code in ["EMAIL_VALIDATION_ERROR", "INVALID_EMAIL_FORMAT"]:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "success": False,
-                    "error": result["error"],
-                    "code": error_code
-                }
+        # Verificar si la autenticación fue exitosa
+        if result.get("success"):
+            # ✅ AUTENTICACIÓN EXITOSA
+            clean_user_data = clean_firebase_data(result.get("user", {}))
+            
+            return JSONResponse(
+                content={
+                    "success": True,
+                    "user": clean_user_data,
+                    "auth_method": result.get("auth_method", "email_password"),
+                    "credentials_validated": result.get("credentials_validated", True),
+                    "message": result.get("message", "Autenticación exitosa"),
+                    "timestamp": datetime.now().isoformat()
+                },
+                status_code=200,
+                headers={"Content-Type": "application/json; charset=utf-8"}
             )
         else:
-            # Cualquier otro error
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "success": False,
-                    "error": result["error"],
-                    "code": error_code,
-                    "message": "Este endpoint no soporta autenticación backend. Use Firebase Auth SDK en el frontend."
-                }
-            )
+            # ❌ AUTENTICACIÓN FALLIDA
+            error_code = result.get("code", "AUTH_ERROR")
+            
+            # Mapear códigos de error a respuestas HTTP apropiadas
+            if error_code in ["INVALID_CREDENTIALS", "USER_NOT_FOUND"]:
+                raise HTTPException(
+                    status_code=401,
+                    detail={
+                        "success": False,
+                        "error": result["error"],
+                        "code": error_code
+                    }
+                )
+            elif error_code in ["USER_DISABLED", "ACCOUNT_INACTIVE"]:
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "success": False,
+                        "error": result["error"],
+                        "code": error_code
+                    }
+                )
+            elif error_code in ["EMAIL_VALIDATION_ERROR", "INVALID_EMAIL_FORMAT"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "success": False,
+                        "error": result["error"],
+                        "code": error_code
+                    }
+                )
+            else:
+                # Cualquier otro error
+                raise HTTPException(
+                    status_code=500,
+                    detail={
+                        "success": False,
+                        "error": result["error"],
+                        "code": error_code
+                    }
+                )
         
     except HTTPException:
         raise
