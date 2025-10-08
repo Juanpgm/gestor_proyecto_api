@@ -2172,91 +2172,107 @@ async def validate_session(
 @app.post("/auth/login", tags=["Administración y Control de Accesos"])
 async def login_user(login_data: UserLoginRequest):
     """
-    ## 🔑 Autenticación de Usuario
+    ## � ENDPOINT DE PRE-VALIDACIÓN - NO ES AUTENTICACIÓN COMPLETA
     
-    Valida credenciales de email y contraseña completas.
-    **IMPORTANTE**: La validación real de la contraseña debe hacerse en el frontend 
-    con Firebase Auth SDK. Este endpoint solo valida la existencia y estado del usuario.
+    **⚠️ SECURITY NOTICE**: Este endpoint NO valida contraseñas reales por limitaciones de Firebase Admin SDK.
+    Solo verifica la existencia y estado del usuario. La autenticación real debe hacerse en el frontend.
     
-    ### ✅ Casos de uso:
-    - Validación previa antes de autenticación frontend
-    - Verificación de estado del usuario
-    - Obtener información básica del usuario para login
+    ### 🔒 Implementación Segura Requerida:
     
-    ### 🔧 Proceso:
+    **Frontend (Requerido)**:
+    ```javascript
+    import { signInWithEmailAndPassword } from 'firebase/auth';
+    
+    // PASO 1: Autenticación real en el frontend
+    try {
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const idToken = await userCredential.user.getIdToken();
+      
+      // PASO 2: Validar token en el backend
+      const response = await fetch('/auth/validate-session', {
+        method: 'POST',
+        headers: { 
+          'Authorization': `Bearer ${idToken}`,
+          'Content-Type': 'application/json' 
+        }
+      });
+    } catch (error) {
+      console.error('Credenciales incorrectas:', error);
+    }
+    ```
+    
+    ### ❌ NO usar este endpoint para:
+    - Autenticación real de usuarios
+    - Validación de contraseñas
+    - Control de acceso de seguridad
+    
+    ### ✅ Solo usar para:
+    - Verificación previa de existencia del usuario
+    - Obtener información básica antes de autenticación
+    - Debugging y diagnóstico
+    
+    ### 🔧 Lo que este endpoint hace:
     1. Valida formato del email
     2. Verifica existencia del usuario en Firebase Auth
     3. Verifica que el usuario no esté deshabilitado
-    4. Verifica que la cuenta esté activa en Firestore
-    5. Actualiza estadísticas de login
+    4. ⚠️ **NO VALIDA LA CONTRASEÑA**
     
-    ### 📝 Ejemplo de uso desde Next.js:
-    ```javascript
-    // 1. Primero validar con nuestro endpoint
-    const preValidation = await fetch('/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password })
-    });
-    
-    if (preValidation.ok) {
-      // 2. Luego autenticar con Firebase SDK
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
-      console.log('Usuario autenticado:', userCredential.user);
-    }
-    ```
+    ### 💡 Migración recomendada:
+    Reemplace este endpoint por autenticación directa en el frontend usando Firebase Auth SDK.
     """
     try:
         check_user_management_availability()
         
-        # Usar la función de autenticación completa que ya existe
+        # 🚨 SECURITY FIX: Esta función ahora siempre retorna error
         result = await authenticate_email_password(login_data.email, login_data.password)
         
-        if not result["success"]:
-            error_code = result.get("code", "AUTH_ERROR")
-            
-            if error_code in ["USER_NOT_FOUND", "USER_DISABLED", "ACCOUNT_INACTIVE"]:
-                raise HTTPException(
-                    status_code=401,
-                    detail={
-                        "success": False,
-                        "error": result["error"],
-                        "code": error_code
-                    }
-                )
-            elif error_code in ["EMAIL_VALIDATION_ERROR", "INVALID_EMAIL_FORMAT"]:
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "success": False,
-                        "error": result["error"],
-                        "code": error_code
-                    }
-                )
-            else:
-                raise HTTPException(
-                    status_code=500,
-                    detail={
-                        "success": False,
-                        "error": result["error"],
-                        "code": error_code
-                    }
-                )
+        # La función SIEMPRE retorna success=False ahora (por seguridad)
+        error_code = result.get("code", "AUTH_ERROR")
         
-        # Limpiar datos de Firebase antes de serializar
-        clean_user_data = clean_firebase_data(result.get("user", {}))
-        
-        return JSONResponse(
-            content={
-                "success": True,
-                "user": clean_user_data,
-                "auth_method": result.get("auth_method", "email_password"),
-                "message": result.get("message", "Credenciales válidas - Proceda con autenticación en frontend"),
-                "timestamp": datetime.now().isoformat()
-            },
-            status_code=200,
-            headers={"Content-Type": "application/json; charset=utf-8"}
-        )
+        # Mapear códigos de error a respuestas HTTP apropiadas
+        if error_code == "BACKEND_AUTH_NOT_SUPPORTED":
+            # Este es el nuevo comportamiento seguro
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "success": False,
+                    "error": result["error"],
+                    "code": error_code,
+                    "security_notice": result.get("security_notice"),
+                    "recommendation": result.get("recommendation"),
+                    "user_exists": result.get("user_exists", False),
+                    "user_active": result.get("user_active", False)
+                }
+            )
+        elif error_code in ["INVALID_CREDENTIALS", "USER_NOT_FOUND", "USER_DISABLED", "ACCOUNT_INACTIVE"]:
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "success": False,
+                    "error": result["error"],
+                    "code": error_code
+                }
+            )
+        elif error_code in ["EMAIL_VALIDATION_ERROR", "INVALID_EMAIL_FORMAT"]:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "success": False,
+                    "error": result["error"],
+                    "code": error_code
+                }
+            )
+        else:
+            # Cualquier otro error
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "success": False,
+                    "error": result["error"],
+                    "code": error_code,
+                    "message": "Este endpoint no soporta autenticación backend. Use Firebase Auth SDK en el frontend."
+                }
+            )
         
     except HTTPException:
         raise

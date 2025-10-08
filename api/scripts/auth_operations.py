@@ -26,11 +26,23 @@ logger = logging.getLogger(__name__)
 
 async def authenticate_email_password(email: str, password: str) -> Dict[str, Any]:
     """
-    Validar credenciales de email y contraseña
-    Nota: La autenticación real debe hacerse en el frontend con Firebase SDK
-    Esta función valida los datos y retorna información del usuario
+    🚨 SECURITY NOTICE: Esta función NO puede validar contraseñas con Firebase Admin SDK
+    
+    Firebase Admin SDK NO proporciona un método para validar credenciales directamente.
+    La validación de contraseñas debe hacerse en el frontend usando Firebase Authentication SDK.
+    
+    ⚠️ ESTE ENDPOINT DEBE SER USADO SOLO PARA:
+    1. Validación previa del usuario (existencia, estado)
+    2. Como preparación antes de la autenticación en el frontend
+    
+    🔒 IMPLEMENTACIÓN SEGURA:
+    - Frontend: Usar signInWithEmailAndPassword() de Firebase Auth SDK
+    - Backend: Validar el ID token resultante con validate_user_session()
     """
     try:
+        # 🚨 SECURITY WARNING: No se puede validar la contraseña en el backend
+        # Esta validación es insuficiente para autenticación real
+        
         # Validar formato de email
         email_validation = validate_email(email)
         if not email_validation["valid"]:
@@ -40,6 +52,9 @@ async def authenticate_email_password(email: str, password: str) -> Dict[str, An
                 "code": email_validation.get("code", "EMAIL_VALIDATION_ERROR")
             }
         
+        # ⚠️ IMPORTANTE: Firebase Admin SDK no puede validar contraseñas
+        # Solo podemos verificar la existencia y estado del usuario
+        
         # Obtener usuario por email
         auth_client = get_auth_client()
         try:
@@ -47,8 +62,8 @@ async def authenticate_email_password(email: str, password: str) -> Dict[str, An
         except firebase_exceptions.NotFoundError:
             return {
                 "success": False,
-                "error": "Usuario no encontrado",
-                "code": "USER_NOT_FOUND"
+                "error": "Usuario no encontrado o credenciales incorrectas",
+                "code": "INVALID_CREDENTIALS"  # No revelar si es email o password
             }
         
         # Verificar que el usuario no está deshabilitado
@@ -75,24 +90,26 @@ async def authenticate_email_password(email: str, password: str) -> Dict[str, An
                     "code": "ACCOUNT_INACTIVE"
                 }
         
-        # Actualizar estadísticas de login
-        await update_user_login_stats(user_record.uid, "password")
+        # 🚨 NO actualizar estadísticas de login ya que esto no es autenticación real
+        # await update_user_login_stats(user_record.uid, "password")  # REMOVIDO
         
         return {
-            "success": True,
-            "user": {
+            "success": False,
+            "error": "Este endpoint no puede validar contraseñas. Use autenticación en el frontend.",
+            "code": "BACKEND_AUTH_NOT_SUPPORTED",
+            "user_exists": True,
+            "user_active": True,
+            "security_notice": "Firebase Admin SDK no puede validar contraseñas directamente",
+            "recommendation": {
+                "frontend_auth": "Usar signInWithEmailAndPassword() en el frontend",
+                "token_validation": "Validar el ID token resultante con /auth/validate-session"
+            },
+            "user_info": {
                 "uid": user_record.uid,
                 "email": user_record.email,
-                "display_name": user_record.display_name,
                 "email_verified": user_record.email_verified,
-                "phone_number": user_record.phone_number,
-                "custom_claims": user_record.custom_claims or {},
-                "creation_time": user_record.user_metadata.creation_timestamp.isoformat() if user_record.user_metadata.creation_timestamp and hasattr(user_record.user_metadata.creation_timestamp, 'isoformat') else None,
-                "last_sign_in": user_record.user_metadata.last_sign_in_timestamp.isoformat() if user_record.user_metadata.last_sign_in_timestamp and hasattr(user_record.user_metadata.last_sign_in_timestamp, 'isoformat') else None,
-                "firestore_data": firestore_data
-            },
-            "auth_method": "email_password",
-            "message": "Credenciales válidas - Proceda con autenticación en frontend"
+                "disabled": user_record.disabled
+            }
         }
         
     except Exception as e:
