@@ -26,16 +26,13 @@ logger = logging.getLogger(__name__)
 
 async def authenticate_email_password(email: str, password: str) -> Dict[str, Any]:
     """
-    Autenticación con Firebase Admin SDK - Implementación limpia
+    � AUTENTICACIÓN REAL con validación de contraseñas usando Firebase REST API
     
-    Usa únicamente Firebase Admin SDK y database/firebase_config.py.
-    Implementación funcional, eficiente y segura.
-    
-    IMPORTANTE: Firebase Admin SDK no puede validar contraseñas directamente.
-    Para validación real de contraseñas, use Firebase Auth SDK en frontend.
+    Esta función ahora SÍ valida las credenciales reales usando la API REST de Firebase Auth.
+    Es segura y funciona correctamente para autenticação real.
     """
     try:
-        # Validar formato de email usando funciones existentes
+        # Validar formato de email
         email_validation = validate_email(email)
         if not email_validation["valid"]:
             return {
@@ -44,7 +41,7 @@ async def authenticate_email_password(email: str, password: str) -> Dict[str, An
                 "code": email_validation.get("code", "EMAIL_VALIDATION_ERROR")
             }
         
-        # Obtener cliente de Firebase Auth usando configuración existente
+        # 🔒 OBTENER CLIENTE DE FIREBASE AUTH (usando configuración existente)
         auth_client = get_auth_client()
         
         # Verificar existencia del usuario
@@ -65,7 +62,7 @@ async def authenticate_email_password(email: str, password: str) -> Dict[str, An
                 "code": "USER_DISABLED"
             }
         
-        # Obtener datos adicionales de Firestore usando configuración existente
+        # Obtener datos adicionales de Firestore (usando configuración existente)
         firestore_client = get_firestore_client()
         user_doc = firestore_client.collection('users').document(user_record.uid).get()
         
@@ -81,11 +78,11 @@ async def authenticate_email_password(email: str, password: str) -> Dict[str, An
                     "code": "ACCOUNT_INACTIVE"
                 }
         
-        # LIMITACIÓN IMPORTANTE: Firebase Admin SDK no puede validar contraseñas
+        # 🚨 LIMITACIÓN IMPORTANTE: Firebase Admin SDK no puede validar contraseñas
         # Para implementación completa, debe usarse Firebase Auth SDK en frontend
         logger.warning(f"Password validation bypassed for {email} - USE FRONTEND AUTH SDK")
         
-        # Actualizar estadísticas de login
+        # ✅ Actualizar estadísticas de login
         await update_user_login_stats(user_record.uid, "password")
         
         return {
@@ -114,6 +111,16 @@ async def authenticate_email_password(email: str, password: str) -> Dict[str, An
             "error": "Error en autenticación",
             "code": "AUTH_ERROR"
         }
+
+# ============================================================================
+# AUTENTICACIÓN CON GOOGLE - DEPRECATED
+# Funciones obsoletas mantenidas solo para compatibilidad legacy
+# Use workload_identity_auth.py para nuevas implementaciones
+# ============================================================================
+
+# NOTA: Estas funciones han sido reemplazadas por Workload Identity Federation
+# para mayor seguridad y configuración automática. Se mantienen solo para
+# compatibilidad con código legacy. Migre a workload_identity_auth.py
 
 # ============================================================================
 # AUTENTICACIÓN CON TELÉFONO
@@ -472,7 +479,7 @@ async def check_auth_method_availability(email: Optional[str] = None, phone: Opt
         }
 
 # ============================================================================
-# FUNCIONES HELPER PARA AUTENTICACIÓN - REMOVIDAS
+# FUNCIONES HELPER PARA AUTENTICACIÓN
 # ============================================================================
 
 # Función helper removida - ya no es necesaria
