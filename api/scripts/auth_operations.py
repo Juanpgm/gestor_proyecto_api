@@ -8,6 +8,9 @@ import logging
 from typing import Dict, Any, Optional
 from datetime import datetime
 import re
+import os
+import aiohttp
+import json
 from firebase_admin import auth, exceptions as firebase_exceptions
 from database.firebase_config import get_firestore_client, get_auth_client
 from .user_management import (
@@ -21,18 +24,126 @@ from .user_management import (
 logger = logging.getLogger(__name__)
 
 # ============================================================================
+# CONFIGURACIÓN DE FIREBASE REST API
+# ============================================================================
+
+def get_firebase_web_api_key() -> Optional[str]:
+    """
+    Obtener la clave Web API de Firebase para autenticación REST.
+    Se puede configurar como variable de entorno FIREBASE_WEB_API_KEY.
+    """
+    return os.getenv("FIREBASE_WEB_API_KEY")
+
+async def validate_password_with_firebase_rest(email: str, password: str) -> Dict[str, Any]:
+    """
+    Validar contraseña usando Firebase Authentication REST API.
+    
+    Esta función realiza autenticación real con Firebase Auth REST API.
+    Requiere FIREBASE_WEB_API_KEY configurada como variable de entorno.
+    
+    Returns:
+        Dict con success=True si las credenciales son válidas, 
+        success=False si son inválidas o hay error.
+    """
+    web_api_key = get_firebase_web_api_key()
+    
+    if not web_api_key:
+        return {
+            "success": False,
+            "error": "Firebase Web API Key no configurada",
+            "code": "MISSING_WEB_API_KEY",
+            "requires_frontend_auth": True
+        }
+    
+    try:
+        # URL del endpoint de autenticación de Firebase
+        auth_url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={web_api_key}"
+        
+        # Datos de autenticación
+        auth_data = {
+            "email": email,
+            "password": password,
+            "returnSecureToken": True
+        }
+        
+        # Realizar petición HTTP a Firebase Auth REST API
+        async with aiohttp.ClientSession() as session:
+            async with session.post(auth_url, json=auth_data) as response:
+                response_data = await response.json()
+                
+                if response.status == 200:
+                    # Autenticación exitosa
+                    return {
+                        "success": True,
+                        "firebase_user_id": response_data.get("localId"),
+                        "id_token": response_data.get("idToken"),
+                        "refresh_token": response_data.get("refreshToken"),
+                        "email_verified": response_data.get("registered", False),
+                        "message": "Credenciales válidas"
+                    }
+                else:
+                    # Autenticación fallida
+                    error_message = response_data.get("error", {}).get("message", "Unknown error")
+                    
+                    # Mapear errores comunes de Firebase
+                    if "INVALID_PASSWORD" in error_message:
+                        return {
+                            "success": False,
+                            "error": "Contraseña incorrecta",
+                            "code": "INVALID_PASSWORD"
+                        }
+                    elif "EMAIL_NOT_FOUND" in error_message:
+                        return {
+                            "success": False,
+                            "error": "Usuario no encontrado",
+                            "code": "USER_NOT_FOUND"
+                        }
+                    elif "USER_DISABLED" in error_message:
+                        return {
+                            "success": False,
+                            "error": "Usuario deshabilitado",
+                            "code": "USER_DISABLED"
+                        }
+                    elif "TOO_MANY_ATTEMPTS_TRY_LATER" in error_message:
+                        return {
+                            "success": False,
+                            "error": "Demasiados intentos, intente más tarde",
+                            "code": "TOO_MANY_ATTEMPTS"
+                        }
+                    else:
+                        return {
+                            "success": False,
+                            "error": f"Error de autenticación: {error_message}",
+                            "code": "AUTH_ERROR"
+                        }
+                        
+    except aiohttp.ClientError as e:
+        logger.error(f"Error de red en autenticación Firebase REST: {e}")
+        return {
+            "success": False,
+            "error": "Error de conexión con Firebase",
+            "code": "NETWORK_ERROR"
+        }
+    except Exception as e:
+        logger.error(f"Error inesperado en autenticación Firebase REST: {e}")
+        return {
+            "success": False,
+            "error": "Error interno de autenticación",
+            "code": "INTERNAL_ERROR"
+        }
+
+# ============================================================================
 # AUTENTICACIÓN CON EMAIL Y CONTRASEÑA
 # ============================================================================
 
 async def authenticate_email_password(email: str, password: str) -> Dict[str, Any]:
     """
-    Autenticación con Firebase Admin SDK - Implementación limpia
+    Autenticación con validación real de contraseña usando Firebase REST API.
     
-    Usa únicamente Firebase Admin SDK y database/firebase_config.py.
-    Implementación funcional, eficiente y segura.
+    Valida credenciales usando Firebase Auth REST API y obtiene información
+    completa del usuario desde Firebase Admin SDK.
     
-    IMPORTANTE: Firebase Admin SDK no puede validar contraseñas directamente.
-    Para validación real de contraseñas, use Firebase Auth SDK en frontend.
+    Requiere FIREBASE_WEB_API_KEY configurada como variable de entorno.
     """
     try:
         # Validar formato de email usando funciones existentes
@@ -44,17 +155,51 @@ async def authenticate_email_password(email: str, password: str) -> Dict[str, An
                 "code": email_validation.get("code", "EMAIL_VALIDATION_ERROR")
             }
         
+        # Validar formato de contraseña básico
+        if not password or len(password) < 6:
+            return {
+                "success": False,
+                "error": "Contraseña debe tener al menos 6 caracteres",
+                "code": "PASSWORD_TOO_SHORT"
+            }
+        
+        # PASO 1: VALIDACIÓN REAL DE CONTRASEÑA usando Firebase REST API
+        password_validation = await validate_password_with_firebase_rest(
+            email_validation["email"], 
+            password
+        )
+        
+        # Si la validación de contraseña falla, rechazar inmediatamente
+        if not password_validation.get("success"):
+            if password_validation.get("requires_frontend_auth"):
+                # Falta configuración de Web API Key
+                return {
+                    "success": False,
+                    "error": "Autenticación de backend no disponible. Configure FIREBASE_WEB_API_KEY o use autenticación de frontend.",
+                    "code": "BACKEND_AUTH_UNAVAILABLE",
+                    "frontend_auth_required": True,
+                    "setup_instructions": {
+                        "environment_variable": "FIREBASE_WEB_API_KEY",
+                        "description": "Obtenga la Web API Key desde Firebase Console > Project Settings > General > Web API Key"
+                    }
+                }
+            else:
+                # Credenciales incorrectas o error de autenticación
+                return password_validation
+        
+        # PASO 2: Si la contraseña es válida, obtener datos completos del usuario
         # Obtener cliente de Firebase Auth usando configuración existente
         auth_client = get_auth_client()
         
-        # Verificar existencia del usuario
+        # Verificar existencia del usuario en Admin SDK
         try:
             user_record = auth_client.get_user_by_email(email_validation["email"])
         except firebase_exceptions.NotFoundError:
+            # Este caso es raro ya que la validación REST ya confirmó que existe
             return {
                 "success": False,
-                "error": "Credenciales incorrectas",
-                "code": "INVALID_CREDENTIALS"
+                "error": "Usuario no encontrado en el sistema",
+                "code": "USER_NOT_FOUND"
             }
         
         # Verificar estado del usuario
@@ -65,7 +210,7 @@ async def authenticate_email_password(email: str, password: str) -> Dict[str, An
                 "code": "USER_DISABLED"
             }
         
-        # Obtener datos adicionales de Firestore usando configuración existente
+        # Obtener datos adicionales de Firestore
         firestore_client = get_firestore_client()
         user_doc = firestore_client.collection('users').document(user_record.uid).get()
         
@@ -81,13 +226,10 @@ async def authenticate_email_password(email: str, password: str) -> Dict[str, An
                     "code": "ACCOUNT_INACTIVE"
                 }
         
-        # LIMITACIÓN IMPORTANTE: Firebase Admin SDK no puede validar contraseñas
-        # Para implementación completa, debe usarse Firebase Auth SDK en frontend
-        logger.warning(f"Password validation bypassed for {email} - USE FRONTEND AUTH SDK")
-        
-        # Actualizar estadísticas de login
+        # PASO 3: Actualizar estadísticas de login exitoso
         await update_user_login_stats(user_record.uid, "password")
         
+        # PASO 4: Retornar información completa del usuario autenticado
         return {
             "success": True,
             "user": {
@@ -102,16 +244,21 @@ async def authenticate_email_password(email: str, password: str) -> Dict[str, An
                 "firestore_data": firestore_data
             },
             "auth_method": "email_password",
-            "password_validated": False,
-            "security_notice": "Para validación completa de contraseñas, use Firebase Auth SDK en frontend",
-            "message": "Usuario válido - Complete autenticación en frontend"
+            "credentials_validated": True,
+            "password_validated": True,
+            "firebase_tokens": {
+                "id_token": password_validation.get("id_token"),
+                "refresh_token": password_validation.get("refresh_token")
+            },
+            "message": "Autenticación exitosa con validación completa de credenciales",
+            "authenticated_at": datetime.now().isoformat()
         }
         
     except Exception as e:
         logger.error(f"Error in email/password authentication: {e}")
         return {
             "success": False,
-            "error": "Error en autenticación",
+            "error": "Error interno en autenticación",
             "code": "AUTH_ERROR"
         }
 

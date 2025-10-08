@@ -33,6 +33,9 @@ cryptography==43.0.3
 # Utilidades para autenticación
 phonenumbers==8.13.50
 
+# Cliente HTTP para autenticación Firebase REST API
+aiohttp==3.10.11
+
 # APIs externas para empréstito
 sodapy==2.2.0
 pandas==2.2.3

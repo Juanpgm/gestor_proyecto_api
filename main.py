@@ -10,6 +10,10 @@ import os
 import sys
 import logging
 from contextlib import asynccontextmanager
+from dotenv import load_dotenv
+
+# Cargar variables de entorno desde .env
+load_dotenv()
 
 # Configurar encoding UTF-8 para todo el sistema
 if sys.platform.startswith('win'):
@@ -2172,63 +2176,35 @@ async def validate_session(
 @app.post("/auth/login", tags=["Administración y Control de Accesos"])
 async def login_user(login_data: UserLoginRequest):
     """
-    ## � ENDPOINT DE PRE-VALIDACIÓN - NO ES AUTENTICACIÓN COMPLETA
+    ## 🔐 Autenticación de Usuario con Email y Contraseña
     
-    **⚠️ SECURITY NOTICE**: Este endpoint NO valida contraseñas reales por limitaciones de Firebase Admin SDK.
-    Solo verifica la existencia y estado del usuario. La autenticación real debe hacerse en el frontend.
+    Valida credenciales de usuario usando Firebase Authentication.
+    Requiere email y contraseña válidos para permitir el acceso.
     
-    ### 🔒 Implementación Segura Requerida:
+    ### Validaciones realizadas:
+    - Formato de email válido
+    - Contraseña correcta mediante Firebase Auth REST API
+    - Usuario activo y no deshabilitado
+    - Estado de cuenta en Firestore
     
-    **Frontend (Requerido)**:
-    ```javascript
-    import { signInWithEmailAndPassword } from 'firebase/auth';
+    ### Respuesta exitosa:
+    - Información completa del usuario
+    - Tokens de Firebase para sesión
+    - Datos adicionales de Firestore
     
-    // PASO 1: Autenticación real en el frontend
-    try {
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
-      const idToken = await userCredential.user.getIdToken();
-      
-      // PASO 2: Validar token en el backend
-      const response = await fetch('/auth/validate-session', {
-        method: 'POST',
-        headers: { 
-          'Authorization': `Bearer ${idToken}`,
-          'Content-Type': 'application/json' 
-        }
-      });
-    } catch (error) {
-      console.error('Credenciales incorrectas:', error);
-    }
-    ```
-    
-    ### ❌ NO usar este endpoint para:
-    - Autenticación real de usuarios
-    - Validación de contraseñas
-    - Control de acceso de seguridad
-    
-    ### ✅ Solo usar para:
-    - Verificación previa de existencia del usuario
-    - Obtener información básica antes de autenticación
-    - Debugging y diagnóstico
-    
-    ### 🔧 Lo que este endpoint hace:
-    1. Valida formato del email
-    2. Verifica existencia del usuario en Firebase Auth
-    3. Verifica que el usuario no esté deshabilitado
-    4. ⚠️ **NO VALIDA LA CONTRASEÑA**
-    
-    ### 💡 Migración recomendada:
-    Reemplace este endpoint por autenticación directa en el frontend usando Firebase Auth SDK.
+    ### Errores comunes:
+    - 401: Credenciales incorrectas
+    - 403: Usuario deshabilitado o cuenta inactiva
+    - 400: Formato de email inválido
     """
     try:
         check_user_management_availability()
         
-        # � AUTENTICACIÓN REAL: La función ahora valida credenciales correctamente
+        # Autenticación con validación real de credenciales
         result = await authenticate_email_password(login_data.email, login_data.password)
         
         # Verificar si la autenticación fue exitosa
         if result.get("success"):
-            # ✅ AUTENTICACIÓN EXITOSA
             clean_user_data = clean_firebase_data(result.get("user", {}))
             
             return JSONResponse(
@@ -2244,7 +2220,7 @@ async def login_user(login_data: UserLoginRequest):
                 headers={"Content-Type": "application/json; charset=utf-8"}
             )
         else:
-            # ❌ AUTENTICACIÓN FALLIDA
+            # Autenticación fallida - mapear errores apropiados
             error_code = result.get("code", "AUTH_ERROR")
             
             # Mapear códigos de error a respuestas HTTP apropiadas
@@ -2289,7 +2265,7 @@ async def login_user(login_data: UserLoginRequest):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Unexpected error in login endpoint: {e}")  # Usar print para debug inmediato
+        logger.error(f"Unexpected error in login endpoint: {e}")
         return JSONResponse(
             content={
                 "error": "Internal server error",
