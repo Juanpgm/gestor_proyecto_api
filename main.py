@@ -87,7 +87,6 @@ try:
         # Unidades proyecto operations (funciones especializadas y optimizadas)
         get_unidades_proyecto_geometry,
         get_unidades_proyecto_attributes,
-        get_unidades_proyecto_dashboard,
         get_filter_options,
         validate_unidades_proyecto_collection,
         # Contratos operations
@@ -1495,128 +1494,6 @@ async def export_attributes_for_nextjs(
             status_code=500,
             detail=f"Error procesando atributos: {str(e)}"
         )
-
-@app.get("/unidades-proyecto/dashboard", tags=["Unidades de Proyecto"])
-async def export_dashboard_for_nextjs(
-    # Filtros para dashboard
-    nombre_centro_gestor: Optional[str] = Query(None, description="Centro gestor para análisis"),
-    tipo_intervencion: Optional[str] = Query(None, description="Tipo de intervención"),
-    estado: Optional[str] = Query(None, description="Estado del proyecto"),
-    comuna_corregimiento: Optional[str] = Query(None, description="Comuna o corregimiento para análisis"),
-    barrio_vereda: Optional[str] = Query(None, description="Barrio o vereda para análisis")
-):
-    """
-    ## Analytics y Métricas de Negocio
-    
-    **Propósito**: Genera análisis estadístico avanzado, KPIs y métricas agregadas para dashboards ejecutivos.
-    
-    ### Arquitectura Analítica
-    
-    **Sin filtros**: Análisis global del portafolio completo de proyectos  
-    **Con filtros**: Análisis segmentado según criterios específicos de negocio
-    
-    **Optimización**: Hereda filtrado server-side de endpoints geometry y attributes
-    
-    ### Métricas Generadas
-    
-    | Categoría | Contenido |
-    |-----------|-----------|
-    | **Resumen General** | Totales, cobertura de datos, completitud |
-    | **Distribuciones** | Rankings y porcentajes por estado, tipo, centro gestor, ubicación |
-    | **Análisis Geográfico** | Bounding box, centro de gravedad, dispersión territorial |
-    | **Calidad de Datos** | Completitud por campos críticos, análisis de integridad |
-    | **KPIs de Negocio** | Proyectos activos/finalizados, tasa completitud, cobertura territorial |
-    
-    ### Parámetros de Segmentación
-    
-    | Filtro | Aplicación |
-    |--------|------------|
-    | nombre_centro_gestor | Análisis por responsable institucional |
-    | tipo_intervencion | Segmentación por categoría de proyecto |
-    | estado | Filtrado por fase de ejecución |
-    | comuna_corregimiento | Análisis territorial nivel medio |
-    | barrio_vereda | Análisis territorial granular |
-    
-    ### Aplicaciones
-    
-    - Dashboards ejecutivos con KPIs institucionales
-    - Reportes gerenciales de seguimiento y control  
-    - Análisis de distribución y cobertura territorial
-    - Evaluación de calidad y completitud de datos
-    - Métricas para toma de decisiones estratégicas
-    """
-    # Verificación robusta de Firebase con reintentos
-    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
-        # Intentar reconfigurar Firebase como último recurso
-        try:
-            print("⚠️ Attempting Firebase reconfiguration...")
-            firebase_initialized, status = configure_firebase()
-            if firebase_initialized:
-                print("✅ Firebase reconfiguration successful")
-            else:
-                print(f"❌ Firebase reconfiguration failed: {status.get('error', 'Unknown error')}")
-                return {
-                    "success": False,
-                    "error": "Firebase not available - check Railway environment variables",
-                    "dashboard": {},
-                    "type": "dashboard",
-                    "help": "Verify FIREBASE_SERVICE_ACCOUNT_KEY or GOOGLE_APPLICATION_CREDENTIALS_JSON",
-                    "railway_fix": "Run generate_railway_fallback.py to create Service Account fallback"
-                }
-        except Exception as e:
-            return {
-                "success": False,
-                "error": f"Firebase configuration failed: {str(e)}",
-                "dashboard": {},
-                "type": "dashboard",
-                "help": "Check Railway environment variables or use Service Account fallback"
-            }
-    
-    try:
-        # Construir filtros para dashboard
-        filters = {}
-        
-        if nombre_centro_gestor:
-            filters["nombre_centro_gestor"] = nombre_centro_gestor
-        if tipo_intervencion:
-            filters["tipo_intervencion"] = tipo_intervencion
-        if estado:
-            filters["estado"] = estado
-        if comuna_corregimiento:
-            filters["comuna_corregimiento"] = comuna_corregimiento
-        if barrio_vereda:
-            filters["barrio_vereda"] = barrio_vereda
-        
-        result = await get_unidades_proyecto_dashboard(filters)
-        
-        if not result["success"]:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error generando dashboard: {result.get('error', 'Error desconocido')}"
-            )
-        
-        response_data = {
-            "success": True,
-            "dashboard": result["dashboard"],
-            "data_sources": result.get("data_sources", {}),
-            "type": "dashboard",
-            "collection": "unidades-proyecto",
-            "filters_applied": filters,
-            "timestamp": datetime.now().isoformat(),
-            "last_updated": "2025-10-02T00:00:00Z",  # Endpoint creation/update date
-            "message": result.get("message", "Dashboard generado exitosamente")
-        }
-        
-        return create_utf8_response(response_data)
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error procesando dashboard: {str(e)}"
-        )
-
 
 # ============================================================================
 # ENDPOINT PARA OPCIONES DE FILTROS

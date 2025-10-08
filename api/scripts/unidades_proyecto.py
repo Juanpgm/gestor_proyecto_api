@@ -807,29 +807,9 @@ async def get_unidades_proyecto_attributes(
         }
 
 
-async def get_unidades_proyecto_dashboard(filters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+async def get_unidades_proyecto_summary() -> Dict[str, Any]:
     """
-    🚀 DASHBOARD AVANZADO CON MÉTRICAS Y ANALÍTICAS OPTIMIZADAS
-    
-    Genera análisis estadístico completo con métricas financieras, KPIs de negocio, 
-    y datos optimizados para múltiples tipos de gráficos y visualizaciones.
-    
-    ✅ MÉTRICAS INCLUIDAS:
-    - Análisis financiero con presupuesto_base
-    - Distribuciones optimizadas para gráficos
-    - KPIs de rendimiento y eficiencia
-    - Métricas temporales y geográficas
-    - Indicadores de calidad de datos
-    - Análisis comparativo por categorías
-    - Datos para heatmaps y treemaps
-    - Series temporales para líneas de tiempo
-    
-    ✅ FILTROS SOPORTADOS:
-    - estado: Estado del proyecto
-    - tipo_intervencion: Tipo de intervención
-    - nombre_centro_gestor: Centro gestor responsable
-    - comuna_corregimiento: Ubicación territorial
-    - barrio_vereda: Ubicación específica
+    Obtener resumen simple de las unidades de proyecto
     """
     try:
         # ============================================
