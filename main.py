@@ -1943,7 +1943,7 @@ async def crear_reporte_contrato(
     alertas_tipo_alerta: str = Form(default="", description="Tipos de alerta separados por coma"),
     
     # Archivos de evidencia (carga real de archivos)
-    archivos_evidencia: List[UploadFile] = File(..., description="Archivos de evidencia (PDF, DOC, XLS, JPG, PNG)")
+    archivos_evidencia: List[UploadFile] = File(..., description="Archivos de evidencia (PDF, DOC, DOCX, XLS, XLSX, TXT, CSV, JPG, PNG, GIF)")
 ):
     """
     ## 📊 Crear Reporte de Contrato con Evidencias y Upload de Archivos
@@ -2042,6 +2042,8 @@ async def crear_reporte_contrato(
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
             'application/vnd.ms-excel': '.xls',
             'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
+            'text/plain': '.txt',
+            'text/csv': '.csv',
             'image/jpeg': '.jpg',
             'image/png': '.png',
             'image/gif': '.gif'

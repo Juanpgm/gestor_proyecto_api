@@ -241,8 +241,11 @@ def validate_uploaded_files(archivos_evidencia: List[Dict[str, Any]]) -> Tuple[b
     
     allowed_types = [
         'application/pdf',
+        'text/plain',
+        'text/csv',
         'image/jpeg',
         'image/png',
+        'image/gif',
         'application/msword',
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         'application/vnd.ms-excel',
