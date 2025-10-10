@@ -39,17 +39,17 @@ def create_drive_folder(referencia_contrato: str, archivos: List[Dict[str, Any]]
         raise Exception("Service Account no configurado - verificar variables de entorno")
     
     # Obtener configuración
-    parent_folder_id = os.getenv('GOOGLE_DRIVE_PARENT_FOLDER_ID')
     shared_drive_id = os.getenv('GOOGLE_DRIVE_SHARED_DRIVE_ID')
+    parent_folder_id = os.getenv('GOOGLE_DRIVE_PARENT_FOLDER_ID')  # Opcional
     
-    if not (parent_folder_id and shared_drive_id):
-        raise Exception("Configuración de Shared Drive incompleta")
+    if not shared_drive_id:
+        raise Exception("GOOGLE_DRIVE_SHARED_DRIVE_ID no configurado")
     
     service = build('drive', 'v3', credentials=credentials)
     
-    # Crear carpeta
+    # Crear carpeta (usar parent_folder_id si existe, sino crear en raíz del Shared Drive)
     folder_id, folder_url = create_folder_in_drive(
-        service, referencia_contrato, parent_folder_id
+        service, referencia_contrato, parent_folder_id, shared_drive_id
     )
     
     # Subir archivos
@@ -75,22 +75,37 @@ def get_drive_credentials():
         
     return None
 
-def create_folder_in_drive(service, referencia_contrato: str, parent_folder_id: str) -> Tuple[str, str]:
-    """Crear carpeta en Google Drive (funcional)"""
+def create_folder_in_drive(service, referencia_contrato: str, parent_folder_id: str = None, shared_drive_id: str = None) -> Tuple[str, str]:
+    """Crear carpeta en Google Drive (funcional) - soporta crear en raíz de Shared Drive"""
     timestamp = datetime.now().strftime('%d-%m-%Y')
     folder_name = f"{referencia_contrato}_{timestamp}"
     
+    # Configurar metadatos de la carpeta
     folder_metadata = {
         'name': folder_name,
-        'mimeType': 'application/vnd.google-apps.folder',
-        'parents': [parent_folder_id]
+        'mimeType': 'application/vnd.google-apps.folder'
     }
     
-    folder = service.files().create(
-        body=folder_metadata,
-        fields='id,webViewLink',
-        supportsAllDrives=True
-    ).execute()
+    # Si hay parent_folder_id, usar como padre; sino crear en raíz del Shared Drive
+    if parent_folder_id:
+        folder_metadata['parents'] = [parent_folder_id]
+        logger.info(f"📁 Creando carpeta en: {parent_folder_id}")
+    elif shared_drive_id:
+        # Crear en la raíz del Shared Drive
+        logger.info(f"📁 Creando carpeta en raíz del Shared Drive: {shared_drive_id}")
+    
+    # Crear la carpeta
+    create_params = {
+        'body': folder_metadata,
+        'fields': 'id,webViewLink',
+        'supportsAllDrives': True
+    }
+    
+    # Si no hay parent_folder_id, especificar el Shared Drive
+    if not parent_folder_id and shared_drive_id:
+        create_params['driveId'] = shared_drive_id
+    
+    folder = service.files().create(**create_params).execute()
     
     folder_id = folder.get('id')
     folder_url = folder.get('webViewLink', f"https://drive.google.com/drive/folders/{folder_id}")
