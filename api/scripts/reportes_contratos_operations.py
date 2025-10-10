@@ -16,7 +16,9 @@ from database.firebase_config import get_firestore_client
 # Google Drive imports con manejo de errores
 try:
     from googleapiclient.discovery import build
+    from googleapiclient.http import MediaIoBaseUpload
     from google.oauth2 import service_account
+    import io
     GOOGLE_API_AVAILABLE = True
 except ImportError:
     GOOGLE_API_AVAILABLE = False
@@ -26,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 def create_drive_folder(referencia_contrato: str, archivos: List[Dict[str, Any]]) -> Tuple[str, List[Dict[str, str]]]:
     """
-    Crear carpeta en Google Drive - Real o Simulada según configuración
+    Crear carpeta en Google Drive usando Shared Drive (solución para Service Account)
     """
     if not GOOGLE_API_AVAILABLE:
         logger.warning("🚨 Google Drive API no disponible - usando simulación")
@@ -69,15 +71,28 @@ def create_drive_folder(referencia_contrato: str, archivos: List[Dict[str, Any]]
         
         service = build('drive', 'v3', credentials=credentials)
         
-        # Verificar acceso a carpeta padre
-        if parent_folder_id:
+        # Configurar carpeta padre y Shared Drive
+        parent_folder_id = os.getenv('GOOGLE_DRIVE_PARENT_FOLDER_ID')
+        shared_drive_id = os.getenv('GOOGLE_DRIVE_SHARED_DRIVE_ID')
+        
+        # Verificar acceso a carpeta padre en Shared Drive
+        if parent_folder_id and shared_drive_id:
             try:
-                parent_folder = service.files().get(fileId=parent_folder_id).execute()
-                logger.info(f"📁 Carpeta padre accesible: {parent_folder.get('name')}")
+                parent_folder = service.files().get(
+                    fileId=parent_folder_id, 
+                    fields='id,name,driveId',
+                    supportsAllDrives=True
+                ).execute()
+                logger.info(f"📁 Carpeta padre en Shared Drive: {parent_folder.get('name')}")
+                logger.info(f"🔗 Shared Drive ID: {shared_drive_id}")
             except Exception as e:
-                logger.error(f"❌ Error accediendo carpeta padre: {e}")
-                logger.warning("🔧 Creando carpeta en la raíz del Drive del Service Account")
-                parent_folder_id = None
+                logger.error(f"❌ Error accediendo carpeta padre en Shared Drive: {e}")
+                logger.error("🔧 Configuración incorrecta de Shared Drive")
+                return create_simulated_folder(referencia_contrato, archivos)
+        else:
+            logger.error("❌ GOOGLE_DRIVE_PARENT_FOLDER_ID o GOOGLE_DRIVE_SHARED_DRIVE_ID no configurados")
+            logger.error("💡 Ejecuta 'python auto_configure_shared_drive.py' para configurar")
+            return create_simulated_folder(referencia_contrato, archivos)
         
         # Crear carpeta real con formato dd-mm-aaaa
         timestamp = datetime.now().strftime('%d-%m-%Y')
@@ -88,35 +103,64 @@ def create_drive_folder(referencia_contrato: str, archivos: List[Dict[str, Any]]
             'parents': [parent_folder_id] if parent_folder_id else []
         }
         
-        folder = service.files().create(body=folder_metadata, fields='id,name,webViewLink').execute()
+        # Crear carpeta en Shared Drive
+        folder = service.files().create(
+            body=folder_metadata, 
+            fields='id,name,webViewLink',
+            supportsAllDrives=True
+        ).execute()
         folder_id = folder.get('id')
         folder_url = folder.get('webViewLink', f"https://drive.google.com/drive/folders/{folder_id}")
         
-        # Configurar permisos para hacer la carpeta accesible
+        # Configurar permisos para hacer la carpeta accesible (opcional en Shared Drive)
         try:
             permission = {
                 'role': 'reader',
                 'type': 'anyone'
             }
-            service.permissions().create(fileId=folder_id, body=permission).execute()
-            logger.info(f"✅ Permisos configurados para carpeta: {folder_id}")
+            service.permissions().create(
+                fileId=folder_id, 
+                body=permission,
+                supportsAllDrives=True
+            ).execute()
+            logger.info(f"✅ Permisos públicos configurados para carpeta: {folder_id}")
         except Exception as e:
-            logger.warning(f"⚠️ No se pudieron configurar permisos públicos: {e}")
+            logger.warning(f"⚠️ No se pudieron configurar permisos públicos (normal en Shared Drive): {e}")
         
         logger.info(f"✅ Carpeta REAL creada y accesible: {folder_url}")
         
-        # Crear archivos placeholder reales
+        # Subir archivos reales con contenido
         archivos_info = []
         for archivo in archivos:
             try:
+                # Metadatos del archivo
                 file_metadata = {
                     'name': archivo["filename"],
                     'parents': [folder_id]
                 }
                 
-                placeholder_file = service.files().create(body=file_metadata, fields='id,webViewLink').execute()
-                file_id = placeholder_file.get('id')
-                file_url = placeholder_file.get('webViewLink', f"https://drive.google.com/file/d/{file_id}/view")
+                # Crear media upload con el contenido real del archivo
+                # Crear un objeto de bytes desde el contenido del archivo
+                file_content = io.BytesIO(archivo["content"])
+                media = MediaIoBaseUpload(
+                    file_content,
+                    mimetype=archivo["content_type"],
+                    resumable=True
+                )
+                
+                # Subir archivo real con contenido a Shared Drive
+                uploaded_file = service.files().create(
+                    body=file_metadata,
+                    media_body=media,
+                    fields='id,webViewLink,size',
+                    supportsAllDrives=True
+                ).execute()
+                
+                file_id = uploaded_file.get('id')
+                # Generar tanto URL de vista como de descarga directa
+                file_url = uploaded_file.get('webViewLink', f"https://drive.google.com/file/d/{file_id}/view")
+                download_url = f"https://drive.google.com/uc?id={file_id}&export=download"
+                uploaded_size = uploaded_file.get('size', archivo["size"])
                 
                 # Configurar permisos para el archivo
                 try:
@@ -124,30 +168,37 @@ def create_drive_folder(referencia_contrato: str, archivos: List[Dict[str, Any]]
                         'role': 'reader',
                         'type': 'anyone'
                     }
-                    service.permissions().create(fileId=file_id, body=permission).execute()
+                    service.permissions().create(
+                        fileId=file_id, 
+                        body=permission,
+                        supportsAllDrives=True
+                    ).execute()
+                    logger.info(f"✅ Permisos públicos configurados para archivo: {file_id}")
                 except Exception as perm_error:
-                    logger.warning(f"⚠️ No se pudieron configurar permisos para archivo: {perm_error}")
+                    logger.warning(f"⚠️ No se pudieron configurar permisos públicos (normal en Shared Drive): {perm_error}")
                 
                 archivos_info.append({
                     "name": archivo["filename"],
-                    "size": archivo["size"],
+                    "size": uploaded_size,
                     "type": archivo["content_type"],
                     "drive_id": file_id,
                     "url": file_url,
-                    "status": "placeholder_created"
+                    "download_url": download_url,
+                    "status": "uploaded_successfully"
                 })
                 
-                logger.info(f"📄 Archivo placeholder creado: {archivo['filename']} -> {file_id}")
+                logger.info(f"📄✅ Archivo REAL subido: {archivo['filename']} -> {file_id} ({uploaded_size} bytes)")
                 
             except Exception as file_error:
-                logger.error(f"❌ Error creando archivo {archivo['filename']}: {file_error}")
+                logger.error(f"❌ Error subiendo archivo {archivo['filename']}: {file_error}")
                 archivos_info.append({
                     "name": archivo["filename"],
                     "size": archivo["size"],
                     "type": archivo["content_type"],
                     "drive_id": f"error_{uuid.uuid4()}",
                     "url": "#error",
-                    "status": "error"
+                    "download_url": "#error",
+                    "status": "upload_failed"
                 })
         
         return folder_url, archivos_info
@@ -172,6 +223,7 @@ def create_simulated_folder(referencia_contrato: str, archivos: List[Dict[str, A
             "type": archivo["content_type"],
             "drive_id": file_id,
             "url": f"https://drive.google.com/file/d/{file_id}/view",
+            "download_url": f"https://drive.google.com/uc?id={file_id}&export=download",
             "status": "simulated"
         })
     

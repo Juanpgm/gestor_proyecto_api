@@ -1951,10 +1951,10 @@ async def crear_reporte_contrato(
     **Propósito**: Endpoint unificado para crear reportes de seguimiento de contratos 
     con carga de archivos y estructura de carpetas organizada.
     
-    ### ⚠️ IMPORTANTE - Google Drive:
-    - **Estado actual**: SIMULACIÓN - URLs generadas NO funcionan
-    - **Para producción**: Requiere configuración de Google Drive API real
-    - **Ver**: `GOOGLE_DRIVE_REAL_SETUP.md` para implementación completa
+    ### ✅ IMPORTANTE - Google Drive:
+    - **Estado actual**: PRODUCCIÓN - Subida real de archivos funcionando
+    - **Configuración**: Google Drive API con Service Account y Shared Drive
+    - **Archivos**: Se suben realmente y son accesibles desde Google Drive
     
     ### ✅ Características principales:
     - **Carga de archivos**: Upload directo de archivos de evidencia
