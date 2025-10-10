@@ -103,6 +103,7 @@ celerybeat.pid
 
 # Environments
 .env
+.env.*
 .env.local
 .env.railway
 .venv
@@ -201,6 +202,13 @@ railway-service-account-key.json
 .env.railway*
 .env.production*
 .env.secrets*
+
+# Google Drive Service Account - NUNCA SUBIR ESTOS ARCHIVOS
+credentials/
+credentials/**
+unidad-cumplimiento-drive.json
+*-drive.json
+google-service-account-*.json
 
 # Railway configuration files with real values
 railway-config-summary.txt

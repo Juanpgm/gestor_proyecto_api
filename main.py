@@ -15,6 +15,9 @@ from dotenv import load_dotenv
 # Cargar variables de entorno desde .env
 load_dotenv()
 
+# Configurar logger
+logger = logging.getLogger(__name__)
+
 # Configurar encoding UTF-8 para todo el sistema
 if sys.platform.startswith('win'):
     # En Windows, asegurar UTF-8
@@ -91,6 +94,11 @@ try:
         validate_unidades_proyecto_collection,
         # Contratos operations
         get_contratos_init_data,
+        # Reportes contratos operations
+        create_reporte_contrato,
+        get_reportes_contratos,
+        get_reporte_contrato_by_id,
+        setup_google_drive_service,
         # User management operations
         validate_email,
         validate_fullname,
@@ -108,6 +116,7 @@ try:
         USER_MANAGEMENT_AVAILABLE,
         AUTH_OPERATIONS_AVAILABLE,
         EMPRESTITO_OPERATIONS_AVAILABLE,
+        REPORTES_CONTRATOS_AVAILABLE,
     )
     SCRIPTS_AVAILABLE = True
     print(f"✅ Scripts imported successfully - SCRIPTS_AVAILABLE: {SCRIPTS_AVAILABLE}")
@@ -131,6 +140,10 @@ try:
         EmprestitoRequest,
         EmprestitoResponse,
         USER_MODELS_AVAILABLE,
+        # Reportes contratos models
+        ReporteContratoRequest,
+        ReporteContratoResponse,
+        REPORTE_MODELS_AVAILABLE,
     )
     print(f"✅ User models imported successfully - USER_MODELS_AVAILABLE: {USER_MODELS_AVAILABLE}")
 except Exception as e:
@@ -467,7 +480,8 @@ async def read_root():
             ],
             "gestion_emprestito": [
                 "/emprestito/cargar-proceso",
-                "/emprestito/proceso/{referencia_proceso}"
+                "/emprestito/proceso/{referencia_proceso}",
+                "/emprestito/obtener-contratos-secop"
             ],
             "administracion_usuarios": [
                 "/auth/validate-session",
@@ -1913,6 +1927,307 @@ async def init_contratos_seguimiento(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error procesando contratos: {str(e)}")
 
+@app.post("/reportes_contratos/", tags=["Interoperabilidad con Artefacto de Seguimiento"])
+async def crear_reporte_contrato(
+    # Información básica del reporte
+    referencia_contrato: str = Form(..., min_length=1, description="Referencia del contrato"),
+    observaciones: str = Form(..., description="Observaciones del reporte"),
+    
+    # Avances del proyecto (soporte para decimales)
+    avance_fisico: float = Form(..., ge=0, le=100, description="Porcentaje de avance físico (0-100, decimales permitidos)"),
+    avance_financiero: float = Form(..., ge=0, le=100, description="Porcentaje de avance financiero (0-100, decimales permitidos)"),
+    
+    # Información de alertas
+    alertas_descripcion: str = Form(..., description="Descripción de la alerta"),
+    alertas_es_alerta: bool = Form(..., description="Indica si es una alerta activa"),
+    alertas_tipo_alerta: str = Form(default="", description="Tipos de alerta separados por coma"),
+    
+    # Archivos de evidencia (carga real de archivos)
+    archivos_evidencia: List[UploadFile] = File(..., description="Archivos de evidencia (PDF, DOC, XLS, JPG, PNG)")
+):
+    """
+    ## 📊 Crear Reporte de Contrato con Evidencias y Upload de Archivos
+    
+    **Propósito**: Endpoint unificado para crear reportes de seguimiento de contratos 
+    con carga de archivos y estructura de carpetas organizada.
+    
+    ### ⚠️ IMPORTANTE - Google Drive:
+    - **Estado actual**: SIMULACIÓN - URLs generadas NO funcionan
+    - **Para producción**: Requiere configuración de Google Drive API real
+    - **Ver**: `GOOGLE_DRIVE_REAL_SETUP.md` para implementación completa
+    
+    ### ✅ Características principales:
+    - **Carga de archivos**: Upload directo de archivos de evidencia
+    - **Estructura automática**: Carpetas organizadas por contrato y fecha  
+    - **Firebase**: Almacenamiento en colección `reportes_contratos`
+    - **Timestamp automático**: Fecha de reporte generada automáticamente
+    - **Decimales**: Soporte para avances con decimales (ej: 75.5)
+    
+    ### 📋 Parámetros (Form Data):
+    - **referencia_contrato**: Referencia del contrato (obligatorio)
+    - **observaciones**: Descripción detallada del avance (obligatorio)
+    - **avance_fisico**: Porcentaje de avance físico 0-100 con decimales (obligatorio)
+    - **avance_financiero**: Porcentaje de avance financiero 0-100 con decimales (obligatorio)
+    - **alertas_descripcion**: Descripción de la alerta (obligatorio)
+    - **alertas_es_alerta**: Booleano si es alerta activa (obligatorio)
+    - **alertas_tipo_alerta**: Tipos de alerta separados por coma (opcional)
+    - **archivos_evidencia**: Archivos de evidencia para subir (obligatorio, múltiples archivos)
+    
+    ### 📁 Estructura de carpetas en Google Drive:
+    ```
+    📁 CONTRATOS_REPORTES/
+      📁 {referencia_contrato}/
+        📁 REPORTE_{YYYY-MM-DD}_{HH-MM-SS}_{UUID}/
+          📄 evidencia1.pdf
+          📄 evidencia2.jpg
+          📄 ...
+    ```
+    
+    ### 🔒 Validaciones aplicadas:
+    - **Archivos**: Tipos permitidos (PDF, DOC, DOCX, XLS, XLSX, JPG, PNG, GIF)
+    - **Tamaño**: Máximo 10MB por archivo
+    - **Cantidad**: Al menos 1 archivo requerido
+    - **Avances**: Rango 0-100 con decimales (ej: 75.5)
+    - **Nombres**: Caracteres especiales manejados automáticamente
+    
+    ### 🚀 Proceso automático:
+    1. Validar archivos subidos
+    2. Crear/verificar carpeta del contrato
+    3. Crear carpeta única para este reporte
+    4. Subir archivos a Google Drive
+    5. Guardar metadata en Firebase con timestamp actual
+    6. Retornar URLs y confirmación
+    
+    ### � Ejemplo de uso con HTML Form:
+    ```html
+    <form method="POST" enctype="multipart/form-data">
+        <input name="referencia_contrato" value="CONTRATO-2025-001" required>
+        <textarea name="observaciones" required>Avance del proyecto...</textarea>
+        <input name="avance_fisico" type="number" step="0.1" min="0" max="100" required>
+        <input name="avance_financiero" type="number" step="0.1" min="0" max="100" required>
+        <textarea name="alertas_descripcion" required>Descripción de alerta...</textarea>
+        <input name="alertas_es_alerta" type="checkbox">
+        <input name="alertas_tipo_alerta" value="logistica,cronograma">
+        <input name="archivos_evidencia" type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.png,.gif" required>
+        <button type="submit">Crear Reporte</button>
+    </form>
+    ```
+    """
+    # Verificar disponibilidad de servicios
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(
+            status_code=503, 
+            detail="Servicios no disponibles: Firebase o scripts requeridos"
+        )
+    
+    if not REPORTES_CONTRATOS_AVAILABLE:
+        raise HTTPException(
+            status_code=503,
+            detail="Operaciones de reportes de contratos no disponibles"
+        )
+    
+    try:
+        # Validar archivos subidos
+        if not archivos_evidencia:
+            raise HTTPException(
+                status_code=400,
+                detail="Se requiere al menos un archivo de evidencia"
+            )
+        
+        # Validar cada archivo subido
+        archivos_validados = []
+        tipos_permitidos = {
+            'application/pdf': '.pdf',
+            'application/msword': '.doc',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+            'application/vnd.ms-excel': '.xls',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
+            'image/jpeg': '.jpg',
+            'image/png': '.png',
+            'image/gif': '.gif'
+        }
+        
+        max_size = 10 * 1024 * 1024  # 10MB
+        
+        for archivo in archivos_evidencia:
+            # Validar tamaño
+            if archivo.size > max_size:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Archivo {archivo.filename} excede el tamaño máximo de 10MB"
+                )
+            
+            # Validar tipo de archivo
+            if archivo.content_type not in tipos_permitidos:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Tipo de archivo no permitido: {archivo.content_type} para {archivo.filename}"
+                )
+            
+            # Leer contenido del archivo
+            contenido = await archivo.read()
+            await archivo.seek(0)  # Reset para lectura posterior si es necesario
+            
+            archivo_info = {
+                "filename": archivo.filename,
+                "content_type": archivo.content_type,
+                "size": archivo.size,
+                "content": contenido
+            }
+            archivos_validados.append(archivo_info)
+        
+        # Construir datos optimizados para Firebase
+        reporte_dict = {
+            "referencia_contrato": referencia_contrato.strip(),
+            "observaciones": observaciones.strip(),
+            "avance_fisico": float(avance_fisico),
+            "avance_financiero": float(avance_financiero),
+            "alertas": {
+                "descripcion": alertas_descripcion.strip(),
+                "es_alerta": alertas_es_alerta,
+                "tipos": [tipo.strip() for tipo in alertas_tipo_alerta.split(",") if tipo.strip()] if alertas_tipo_alerta else []
+            },
+            "archivos_evidencia": archivos_validados
+        }
+        
+        # Crear el reporte usando la función del script
+        result = await create_reporte_contrato(reporte_dict)
+        
+        if not result["success"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Error creando reporte: {result.get('error', 'Error desconocido')}"
+            )
+        
+        # Respuesta optimizada sin redundancias
+        response_data = {
+            "success": True,
+            "message": result["message"],
+            "doc_id": result["doc_id"],
+            "url_carpeta_drive": result["url_carpeta_drive"],
+            "archivos_count": len(archivos_validados)
+        }
+        
+        # Agregar información de configuración si es simulación
+        if "drive.google.com" in result["url_carpeta_drive"] and "LOCAL_SIMULATION" not in result["url_carpeta_drive"]:
+            # Es simulación con URL falsa
+            response_data["configuracion"] = {
+                "google_drive_status": "simulation_mode",
+                "nota": "URLs simuladas - Para subida real configura Service Account",
+                "documentacion": "Ver GOOGLE_DRIVE_CONFIG.md para setup completo"
+            }
+        
+        return create_utf8_response(response_data)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en endpoint crear_reporte_contrato: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno del servidor: {str(e)}"
+        )
+
+@app.get("/reportes_contratos/", tags=["Interoperabilidad con Artefacto de Seguimiento"])
+async def obtener_reportes_contratos(
+    referencia_contrato: Optional[str] = Query(None, description="Filtrar por referencia de contrato"),
+    usuario_reporte: Optional[str] = Query(None, description="Filtrar por usuario reportante")
+):
+    """
+    ## 📋 Obtener Reportes de Contratos
+    
+    **Propósito**: Obtener listado de reportes de contratos con filtros opcionales.
+    Replica la funcionalidad de `getReportesContratos` del frontend JavaScript.
+    
+    ### 🔍 Filtros disponibles:
+    - **referencia_contrato**: Filtro exacto por referencia de contrato
+    - **usuario_reporte**: Filtro exacto por usuario reportante
+    
+    ### 📊 Ordenamiento:
+    Los resultados se ordenan por `fecha_reporte` descendente (más recientes primero).
+    
+    ### 💡 Casos de uso:
+    - Consultar historial de reportes de un contrato específico
+    - Ver reportes creados por un usuario específico
+    - Obtener listado completo para dashboard de seguimiento
+    """
+    # Verificar disponibilidad de servicios
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE or not REPORTES_CONTRATOS_AVAILABLE:
+        return {
+            "success": False, 
+            "error": "Servicios no disponibles", 
+            "data": [], 
+            "count": 0
+        }
+    
+    try:
+        # Preparar filtros
+        filtros = {}
+        if referencia_contrato:
+            filtros["referencia_contrato"] = referencia_contrato
+        if usuario_reporte:
+            filtros["usuario_reporte"] = usuario_reporte
+        
+        # Obtener reportes
+        result = await get_reportes_contratos(filtros)
+        
+        if not result["success"]:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error obteniendo reportes: {result.get('error', 'Error desconocido')}"
+            )
+        
+        return create_utf8_response(result)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error procesando consulta de reportes: {str(e)}"
+        )
+
+@app.get("/reportes_contratos/{reporte_id}", tags=["Interoperabilidad con Artefacto de Seguimiento"])
+async def obtener_reporte_contrato_por_id(reporte_id: str):
+    """
+    ## 🎯 Obtener Reporte Específico por ID
+    
+    **Propósito**: Obtener los detalles completos de un reporte específico.
+    Replica la funcionalidad de `getReporteContrato` del frontend JavaScript.
+    
+    ### 📄 Información incluida:
+    - Todos los campos del reporte
+    - Archivos de evidencia con URLs
+    - Información de alertas
+    - Timestamps y metadatos
+    """
+    # Verificar disponibilidad de servicios
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE or not REPORTES_CONTRATOS_AVAILABLE:
+        return {
+            "success": False,
+            "error": "Servicios no disponibles",
+            "data": None
+        }
+    
+    try:
+        result = await get_reporte_contrato_by_id(reporte_id)
+        
+        if not result["success"]:
+            if "no encontrado" in result.get("error", "").lower():
+                raise HTTPException(status_code=404, detail=result["error"])
+            else:
+                raise HTTPException(status_code=500, detail=result.get("error", "Error desconocido"))
+        
+        return create_utf8_response(result)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error obteniendo reporte: {str(e)}"
+        )
+
 
 # ============================================================================
 # ENDPOINTS DE ADMINISTRACIÓN Y CONTROL DE ACCESOS
@@ -2800,6 +3115,9 @@ try:
         verificar_proceso_existente,
         eliminar_proceso_emprestito,
         actualizar_proceso_emprestito,
+        obtener_codigos_contratos,
+        buscar_y_poblar_contratos_secop,
+        obtener_contratos_desde_proceso_contractual,
         get_emprestito_operations_status,
         EMPRESTITO_OPERATIONS_AVAILABLE
     )
@@ -3273,6 +3591,149 @@ async def actualizar_proceso_emprestito_endpoint(
                 "referencia_proceso": referencia_proceso
             }
         )
+
+
+@app.post("/emprestito/obtener-contratos-secop", tags=["Gestión de Empréstito"])
+async def obtener_contratos_secop_endpoint():
+    """
+    ## 🔍 Obtener Contratos de SECOP desde Todos los Procesos de Empréstito
+    
+    Procesa TODOS los registros de la colección 'procesos_emprestito', busca contratos en SECOP 
+    para cada proceso y guarda los resultados en la nueva colección 'contratos_emprestito'.
+    
+    ### 📝 No requiere parámetros:
+    Este endpoint procesa automáticamente todos los registros existentes en 'procesos_emprestito'.
+    
+    ### 📤 Envío:
+    ```http
+    POST /emprestito/obtener-contratos-secop
+    ```
+    **No es necesario enviar ningún cuerpo JSON**.
+    
+    ### 🔄 Proceso:
+    1. Leer TODOS los registros de la colección 'procesos_emprestito'
+    2. Para cada proceso, extraer referencia_proceso y proceso_contractual
+    3. Conectar con la API de SECOP (www.datos.gov.co) para cada proceso
+    4. Buscar contratos que contengan el proceso_contractual y NIT = 890399011
+    5. Transformar los datos al esquema de la colección 'contratos_emprestito'
+    6. Verificar duplicados y actualizar/crear registros en Firebase
+    7. Retornar resumen completo del procesamiento masivo
+    
+    ### ✅ Respuesta exitosa:
+    ```json
+    {
+        "success": true,
+        "message": "Se procesaron 5 procesos de empréstito. Contratos: 12 total (8 nuevos, 3 actualizados, 1 ignorados)",
+        "resumen_procesamiento": {
+            "total_procesos": 5,
+            "procesos_procesados": 4,
+            "procesos_sin_contratos": 1,
+            "procesos_con_errores": 0
+        },
+        "criterios_busqueda": {
+            "coleccion_origen": "procesos_emprestito",
+            "filtro_secop": "nit_entidad = '890399011'"
+        },
+        "resultados_secop": {
+            "total_contratos_encontrados": 12,
+            "total_contratos_procesados": 12
+        },
+        "firebase_operacion": {
+            "documentos_nuevos": 8,
+            "documentos_actualizados": 3,
+            "duplicados_ignorados": 1
+        },
+        "contratos_guardados": [
+            {
+                "referencia_proceso": "4151.010.32.1.0575-2025",
+                "proceso_contractual": "CO1.REQ.8485621",
+                "referencia_contrato": "CONT-001-2025",
+                "estado_del_contrato": "Activo",
+                "valor_del_contrato": "150000000",
+                "fecha_firma_contrato": "2025-01-15",
+                "entidad_contratante": "MUNICIPIO DE SANTIAGO DE CALI",
+                "contratista": "EMPRESA XYZ LTDA",
+                "nit_entidad": "890399011",
+                "fuente_datos": "SECOP_API",
+                "fecha_guardado": "2025-10-09T..."
+            }
+        ],
+        "procesos_sin_contratos": [],
+        "procesos_con_errores": [],
+        "timestamp": "2025-10-09T..."
+    }
+    ```
+    
+    ### 📋 Respuesta sin procesos:
+    ```json
+    {
+        "success": false,
+        "error": "No se encontraron procesos en la colección procesos_emprestito",
+        "timestamp": "2025-10-09T..."
+    }
+    ```
+    
+    ### 🗄️ Esquema de la colección 'contratos_emprestito':
+    **🔄 Campos heredados desde procesos_emprestito:**
+    - **referencia_proceso**: Heredado desde procesos_emprestito
+    - **proceso_contractual**: Heredado desde procesos_emprestito
+    - **banco**: Heredado desde 'nombre_banco' de procesos_emprestito
+    - **bp**: Heredado desde procesos_emprestito
+    - **nombre_centro_gestor**: Heredado desde procesos_emprestito
+    
+    **📊 Campos desde SECOP API:**
+    - **referencia_contrato**: referencia_del_contrato desde SECOP
+    - **id_contrato**: Desde SECOP
+    - **nombre_del_procedimiento**: Desde SECOP
+    - **estado_del_contrato**: Desde SECOP
+    - **valor_contrato**: Desde SECOP (campo único, sin duplicados)
+    - **bpin**: Mapeado desde 'c_digo_bpin' de SECOP
+    - **fecha_firma_contrato**: Desde SECOP
+    - **objeto_contrato**: Desde SECOP
+    - **modalidad_contratacion**: Desde SECOP
+    - **entidad_contratante**: Desde SECOP
+    - **contratista**: Desde SECOP
+    - **nit_entidad**: Desde SECOP (filtrado por 890399011)
+    - **nit_contratista**: Desde SECOP
+    
+    **🔧 Metadatos:**
+    - **fecha_guardado**: Timestamp de cuando se guardó en Firebase
+    - **fuente_datos**: "SECOP_API"
+    - **version_esquema**: "1.1"
+    
+    ### 🔗 Integración SECOP:
+    - **API**: www.datos.gov.co
+    - **Dataset**: jbjy-vk9h (Contratos)
+    - **Filtros**: proceso_de_compra LIKE '%{proceso_contractual}%' AND nit_entidad = '890399011'
+    - **Límite**: 2000 registros por consulta
+    """
+    try:
+        check_emprestito_availability()
+        
+        # Ejecutar procesamiento completo de todos los procesos de empréstito
+        resultado = await obtener_contratos_desde_proceso_contractual()
+        
+        # Retornar resultado
+        return JSONResponse(
+            content=resultado,
+            status_code=200 if resultado.get("success") else 404,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en endpoint obtener contratos SECOP: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "success": False,
+                "error": "Error interno del servidor",
+                "message": "Error obteniendo contratos de SECOP",
+                "detalles": str(e)
+            }
+        )
+
 
 # ============================================================================
 # SERVIDOR

@@ -1,6 +1,132 @@
 # Changelog - API Gestión de Proyectos
 
-## [2025-10-04] - Versión Actual
+## [2025-10-10] - Versión Actual
+
+### ✨ Nueva Funcionalidad - Reportes de Contratos con Google Drive
+
+- **Nuevo endpoint POST `/reportes_contratos/`**
+
+  - **Tag**: "Interoperabilidad con Artefacto de Seguimiento"
+  - **Funcionalidad**: Subida de archivos con integración completa a Google Drive
+  - **Parámetros individuales**: Validación granular con Form parameters
+  - **Tipos soportados**: `.pdf`, `.doc`, `.docx`, `.xls`, `.xlsx`
+  - **Límite de tamaño**: 10MB por archivo
+
+- **Integración Real con Google Drive API**
+
+  - **Service Account authentication**: Credenciales seguras para producción
+  - **Creación automática de carpetas**: Estructura `referencia_contrato_dd-mm-yyyy`
+  - **Dual authentication mode**: Archivo local + Railway JSON support
+  - **Permisos configurados**: Editor access para Service Account
+  - **URLs de descarga**: Links directos a archivos subidos
+
+- **Optimización de Firebase**
+
+  - **Eliminación de redundancia**: No más duplicación de data en `alertas`
+  - **Estructura optimizada**: Solo metadatos esenciales en Firestore
+  - **Performance mejorado**: Menos writes, consultas más eficientes
+  - **Timestamps automáticos**: `created_at` y `updated_at` server-side
+
+- **Configuración Railway Production**
+
+  - **Variables de entorno**: `GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON`
+  - **Service Account seguro**: JSON credentials en base64
+  - **Parent folder configurado**: ID de carpeta raíz en Google Drive
+  - **Error handling**: Fallbacks y mensajes informativos
+
+- **Búsqueda Inteligente de Contratos SECOP**
+  - **Funcionalidad**: Búsqueda automática en datos SECOP usando `proceso_contractual`
+  - **Algoritmo de coincidencia**: Búsqueda por ID de proceso en campo `ID_PROCESO`
+  - **Extracción de datos**: 26+ campos relevantes de contratos SECOP
+  - **Mapeo de campos**: Conversión automática de estructura SECOP a formato API
+  - **Performance**: Búsqueda eficiente en dataset de 65,000+ registros
+  - **Validación**: Verificación de existencia de proceso antes de crear reporte
+
+### 🔐 Medidas de Seguridad Implementadas
+
+- **Service Account Protection**
+
+  - **Archivo .gitignore actualizado**: Protección completa de credenciales
+  - **Carpeta credentials/ ignorada**: Nunca se suben archivos sensibles
+  - **Variables de entorno**: Solo referencias, nunca valores literales
+  - **Validación automática**: Scripts de verificación de seguridad
+
+- **Google Drive Security**
+  - **Service Account dedicado**: `unidad-cumplimiento-drive@unidad-cumplimiento-aa245.iam.gserviceaccount.com`
+  - **Permisos mínimos**: Solo acceso a carpeta específica
+  - **Autenticación robusta**: OAuth2 con refresh tokens automáticos
+  - **Logging seguro**: Sin exposición de credenciales en logs
+
+### 🛠️ Arquitectura y Desarrollo
+
+- **Nuevos modelos Pydantic**:
+
+  - `ReporteContratosRequest`: Modelo de entrada optimizado
+  - `ReporteContratosResponse`: Respuesta con URLs y metadatos
+  - `AlertaReporte`: Estructura simplificada para alertas
+
+- **Nuevo módulo especializado**:
+
+  - `api/scripts/reportes_contratos_operations.py`: Lógica completa
+  - `api/models/reporte_models.py`: Modelos de datos
+  - Separación clara de responsabilidades
+
+- **Integración con datos SECOP**:
+
+  - **Archivo fuente**: `secop_fields_4151_010_32_1_0575_2025.json`
+  - **Función `find_contract_in_secop()`**: Búsqueda optimizada por proceso_contractual
+  - **Función `extract_secop_data()`**: Extracción de 26 campos estructurados
+  - **Mapeo inteligente**: Conversión de formato SECOP a estructura API estándar
+  - **Campos extraídos**: objeto_contractual, valor_contrato, plazo_ejecucion, entidad_contratante, etc.
+  - **Validación robusta**: Verificación de tipos de datos y formato de campos
+
+- **Dependencies actualizadas**:
+  - `google-api-python-client==2.149.0`: Google Drive API
+  - `google-auth-httplib2==0.2.0`: HTTP transport
+  - `google-auth-oauthlib==1.2.1`: OAuth2 authentication
+
+### 🧹 Limpieza de Código
+
+- **Eliminación de archivos temporales**:
+
+  - Scripts de testing y debugging removidos
+  - Archivos de configuración temporal eliminados
+  - Service Account helpers removidos después de setup
+  - Documentación duplicada limpiada
+
+- **Optimización de imports**:
+  - Imports condicionales para Railway compatibility
+  - Error handling mejorado para dependencias faltantes
+  - Estructura modular optimizada
+
+### 📊 Validación y Testing
+
+- **Endpoint completamente funcional**:
+
+  - ✅ Validación de parámetros con FastAPI Form
+  - ✅ Subida real de archivos a Google Drive
+  - ✅ Creación automática de carpetas con nombres únicos
+  - ✅ Respuesta optimizada sin redundancia de datos
+  - ✅ Error handling comprehensivo
+
+- **Búsqueda SECOP validada**:
+
+  - ✅ Búsqueda exitosa por `proceso_contractual` en dataset completo
+  - ✅ Extracción correcta de 26 campos de contratos
+  - ✅ Mapeo verificado de estructura SECOP a formato API
+  - ✅ Manejo de casos donde no existe el proceso contractual
+  - ✅ Validación de tipos de datos en campos extraídos
+  - ✅ Performance optimizada para dataset de 65,000+ registros
+
+- **Railway deployment ready**:
+  - ✅ Variables de entorno configuradas
+  - ✅ Service Account JSON support
+  - ✅ Fallback mechanisms implementados
+  - ✅ Production logging configurado
+
+---
+
+## [2025-10-04] - Versión Anterior
 
 ### � Restauración Completa de Endpoints "Unidades de Proyecto"
 

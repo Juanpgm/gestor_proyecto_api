@@ -71,6 +71,32 @@ except ImportError as e:
     async def get_contratos_init_data(filters=None):
         return {"success": False, "error": "Contratos operations not available", "data": [], "count": 0}
 
+# Importar operaciones de reportes de contratos
+try:
+    from .reportes_contratos_operations import (
+        create_reporte_contrato,
+        get_reportes_contratos,
+        get_reporte_contrato_by_id,
+        setup_google_drive_service,
+    )
+    REPORTES_CONTRATOS_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Reportes contratos operations not available: {e}")
+    REPORTES_CONTRATOS_AVAILABLE = False
+    
+    # Crear funciones dummy para reportes contratos
+    async def create_reporte_contrato(reporte_data):
+        return {"success": False, "error": "Reportes contratos operations not available"}
+    
+    async def get_reportes_contratos(filtros=None):
+        return {"success": False, "error": "Reportes contratos operations not available", "data": [], "count": 0}
+    
+    async def get_reporte_contrato_by_id(reporte_id):
+        return {"success": False, "error": "Reportes contratos operations not available", "data": None}
+    
+    def setup_google_drive_service():
+        return False
+
 # Importar operaciones de empréstito
 try:
     from .emprestito_operations import (
@@ -83,6 +109,9 @@ try:
         procesar_emprestito_completo,
         eliminar_proceso_emprestito,
         actualizar_proceso_emprestito,
+        obtener_codigos_contratos,
+        buscar_y_poblar_contratos_secop,
+        obtener_contratos_desde_proceso_contractual,
         get_emprestito_operations_status,
         EMPRESTITO_OPERATIONS_AVAILABLE
     )
@@ -117,6 +146,15 @@ except ImportError as e:
         return {"success": False, "error": "Emprestito operations not available"}
     
     async def actualizar_proceso_emprestito(referencia_proceso: str, bp=None, nombre_resumido_proceso=None, id_paa=None, valor_proyectado=None):
+        return {"success": False, "error": "Emprestito operations not available"}
+    
+    async def obtener_codigos_contratos(referencia_proceso: str, proceso_contractual: str):
+        return {"success": False, "error": "Emprestito operations not available"}
+    
+    async def buscar_y_poblar_contratos_secop(referencia_proceso: str, proceso_contractual: str):
+        return {"success": False, "error": "Emprestito operations not available"}
+    
+    async def obtener_contratos_desde_proceso_contractual():
         return {"success": False, "error": "Emprestito operations not available"}
     
     def get_emprestito_operations_status():
@@ -206,6 +244,12 @@ __all__ = [
     # Contratos operations
     "get_contratos_init_data",
     
+    # Reportes contratos operations
+    "create_reporte_contrato",
+    "get_reportes_contratos",
+    "get_reporte_contrato_by_id",
+    "setup_google_drive_service",
+    
     # Empréstito operations
     "verificar_proceso_existente",
     "obtener_datos_secop",
@@ -216,6 +260,9 @@ __all__ = [
     "procesar_emprestito_completo",
     "eliminar_proceso_emprestito",
     "actualizar_proceso_emprestito",
+    "obtener_codigos_contratos",
+    "buscar_y_poblar_contratos_secop",
+    "obtener_contratos_desde_proceso_contractual",
     "get_emprestito_operations_status",
     
     # User management operations
@@ -255,6 +302,7 @@ __all__ = [
     "FIREBASE_OPERATIONS_AVAILABLE",
     "UNIDADES_PROYECTO_AVAILABLE",
     "CONTRATOS_OPERATIONS_AVAILABLE",
+    "REPORTES_CONTRATOS_AVAILABLE",
     "EMPRESTITO_OPERATIONS_AVAILABLE",
     "USER_MANAGEMENT_AVAILABLE",
     "AUTH_OPERATIONS_AVAILABLE",
