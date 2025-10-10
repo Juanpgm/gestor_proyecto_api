@@ -222,6 +222,21 @@ except ImportError as e:
     print(f"Warning: Workload Identity operations not available: {e}")
     WORKLOAD_IDENTITY_AVAILABLE = False
 
+# Importar operaciones de proyectos presupuestales
+try:
+    from .proyectos_presupuestales_operations import (
+        process_proyectos_presupuestales_json,
+        PROYECTOS_PRESUPUESTALES_OPERATIONS_AVAILABLE
+    )
+    print(f"✅ Proyectos presupuestales operations imported successfully - AVAILABLE: {PROYECTOS_PRESUPUESTALES_OPERATIONS_AVAILABLE}")
+except ImportError as e:
+    print(f"Warning: Proyectos presupuestales operations not available: {e}")
+    PROYECTOS_PRESUPUESTALES_OPERATIONS_AVAILABLE = False
+    
+    # Crear función dummy para proyectos presupuestales
+    async def process_proyectos_presupuestales_json(proyectos_data, update_mode="merge"):
+        return {"success": False, "error": "Proyectos presupuestales operations not available"}
+
 __all__ = [
     # Firebase operations
     "get_collections_info",
@@ -298,6 +313,9 @@ __all__ = [
     "generate_google_signin_config_automatic",
     "setup_workload_identity",
     
+    # Proyectos presupuestales operations
+    "process_proyectos_presupuestales_json",
+    
     # Availability flags
     "FIREBASE_OPERATIONS_AVAILABLE",
     "UNIDADES_PROYECTO_AVAILABLE",
@@ -307,4 +325,5 @@ __all__ = [
     "USER_MANAGEMENT_AVAILABLE",
     "AUTH_OPERATIONS_AVAILABLE",
     "WORKLOAD_IDENTITY_AVAILABLE",
+    "PROYECTOS_PRESUPUESTALES_OPERATIONS_AVAILABLE",
 ]

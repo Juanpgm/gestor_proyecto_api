@@ -52,6 +52,17 @@ except ImportError as e:
     print(f"Warning: Reporte models not available: {e}")
     REPORTE_MODELS_AVAILABLE = False
 
+try:
+    from .proyectos_presupuestales_models import (
+        # Constants only
+        PROYECTOS_PRESUPUESTALES_MODELS_AVAILABLE,
+        DEFAULT_COLLECTION_NAME,
+    )
+    PROYECTOS_PRESUPUESTALES_MODELS_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Proyectos presupuestales models not available: {e}")
+    PROYECTOS_PRESUPUESTALES_MODELS_AVAILABLE = False
+
 __all__ = [
     # Request models
     "UserRegistrationRequest",
@@ -86,7 +97,10 @@ __all__ = [
     "ArchivoEvidencia",
     "ReporteContratoRequest",
     "ReporteContratoResponse",
+    # Proyectos presupuestales constants
+    "DEFAULT_COLLECTION_NAME",
     # Availability flags
     "USER_MODELS_AVAILABLE",
     "REPORTE_MODELS_AVAILABLE",
+    "PROYECTOS_PRESUPUESTALES_MODELS_AVAILABLE",
 ]

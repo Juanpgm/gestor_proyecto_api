@@ -112,11 +112,14 @@ try:
         # Auth operations
         authenticate_email_password,
         validate_user_session,
+        # Proyectos presupuestales operations
+        process_proyectos_presupuestales_json,
         # Availability flags
         USER_MANAGEMENT_AVAILABLE,
         AUTH_OPERATIONS_AVAILABLE,
         EMPRESTITO_OPERATIONS_AVAILABLE,
         REPORTES_CONTRATOS_AVAILABLE,
+        PROYECTOS_PRESUPUESTALES_OPERATIONS_AVAILABLE,
     )
     SCRIPTS_AVAILABLE = True
     print(f"✅ Scripts imported successfully - SCRIPTS_AVAILABLE: {SCRIPTS_AVAILABLE}")
@@ -144,6 +147,8 @@ try:
         ReporteContratoRequest,
         ReporteContratoResponse,
         REPORTE_MODELS_AVAILABLE,
+        # Proyectos presupuestales models
+        PROYECTOS_PRESUPUESTALES_MODELS_AVAILABLE,
     )
     print(f"✅ User models imported successfully - USER_MODELS_AVAILABLE: {USER_MODELS_AVAILABLE}")
 except Exception as e:
@@ -467,7 +472,8 @@ async def read_root():
                 "/proyectos-presupuestales/all",
                 "/proyectos-presupuestales/bpin/{bpin}",
                 "/proyectos-presupuestales/bp/{bp}",
-                "/proyectos-presupuestales/centro-gestor/{nombre_centro_gestor}"
+                "/proyectos-presupuestales/centro-gestor/{nombre_centro_gestor}",
+                "/proyectos-presupuestales/cargar-json (POST)"
             ],
             "unidades_proyecto": [
                 "/unidades-proyecto/geometry", 
@@ -1197,6 +1203,122 @@ async def get_proyectos_by_centro_gestor(nombre_centro_gestor: str):
             status_code=500,
             detail=f"Error procesando consulta por centro gestor: {str(e)}"
         )
+
+@app.post("/proyectos-presupuestales/cargar-json", tags=["Proyectos de Inversión"])
+async def cargar_proyectos_presupuestales_json(
+    archivo_json: UploadFile = File(..., description="Archivo JSON con proyectos presupuestales"),
+    update_mode: str = Form(default="merge", description="Modo de actualización: merge, replace, append")
+):
+    """
+    ## 📊 Cargar Proyectos Presupuestales desde Archivo JSON
+    
+    Endpoint POST para subir un archivo JSON con información de proyectos presupuestales 
+    y cargarlo en la colección "proyectos_presupuestales".
+    
+    ### 📁 Archivo JSON esperado:
+    ```json
+    [
+        {
+            "nombre_proyecto": "Construcción de Puente",
+            "bpin": "2023000123456",
+            "bp": "BP-2023-001", 
+            "nombre_centro_gestor": "Secretaría de Infraestructura",
+            "valor_proyecto": 500000000
+        },
+        {
+            "nombre_proyecto": "Otro Proyecto",
+            "bpin": "2023000789012"
+        }
+    ]
+    ```
+    
+    ### 🔧 Modos de actualización:
+    - **merge**: Actualiza existentes y crea nuevos (por defecto)
+    - **replace**: Reemplaza toda la colección
+    - **append**: Solo agrega nuevos
+    
+    ### 🎯 Cómo usar:
+    1. Haz clic en "Choose File" 
+    2. Selecciona tu archivo .json
+    3. Selecciona el modo de actualización
+    4. Haz clic en "Execute"
+    
+    ### ✅ Validaciones:
+    - Solo archivos .json
+    - Cada proyecto debe tener "nombre_proyecto"
+    - Tamaño máximo: 10MB
+    """
+    # Verificar disponibilidad de servicios
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase o scripts no disponibles")
+    
+    if not PROYECTOS_PRESUPUESTALES_OPERATIONS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Operaciones de proyectos presupuestales no disponibles")
+    
+    # Validar modo de actualización
+    if update_mode not in ["merge", "replace", "append"]:
+        raise HTTPException(status_code=400, detail="update_mode debe ser: merge, replace o append")
+    
+    # Validar tipo de archivo
+    if not archivo_json.filename.lower().endswith('.json'):
+        raise HTTPException(status_code=400, detail="Solo se permiten archivos JSON (.json)")
+    
+    # Validar tamaño del archivo (10MB máximo)
+    max_size = 10 * 1024 * 1024  # 10MB
+    if archivo_json.size and archivo_json.size > max_size:
+        raise HTTPException(status_code=400, detail="El archivo no puede exceder 10MB")
+    
+    try:
+        # Leer el contenido del archivo
+        contenido = await archivo_json.read()
+        
+        # Decodificar como JSON
+        try:
+            json_data = json.loads(contenido.decode('utf-8'))
+        except json.JSONDecodeError as e:
+            raise HTTPException(status_code=400, detail=f"Error al leer JSON: {str(e)}")
+        except UnicodeDecodeError:
+            raise HTTPException(status_code=400, detail="El archivo debe estar codificado en UTF-8")
+        
+        # Validar que sea una lista
+        if not isinstance(json_data, list):
+            raise HTTPException(status_code=400, detail="El JSON debe ser una lista de proyectos")
+        
+        if len(json_data) == 0:
+            raise HTTPException(status_code=400, detail="La lista no puede estar vacía")
+        
+        # Validar que cada proyecto tenga nombre_proyecto
+        for i, proyecto in enumerate(json_data):
+            if not isinstance(proyecto, dict):
+                raise HTTPException(status_code=400, detail=f"El elemento {i} debe ser un objeto")
+            if not proyecto.get("nombre_proyecto"):
+                raise HTTPException(status_code=400, detail=f"El proyecto {i} debe tener 'nombre_proyecto'")
+        
+        # Procesar proyectos
+        result = await process_proyectos_presupuestales_json(
+            proyectos_data=json_data,
+            update_mode=update_mode
+        )
+        
+        if not result["success"]:
+            raise HTTPException(status_code=400, detail=result.get('error', 'Error desconocido'))
+        
+        # Agregar información del archivo procesado
+        result["archivo_info"] = {
+            "nombre_archivo": archivo_json.filename,
+            "tamaño_bytes": len(contenido),
+            "proyectos_en_archivo": len(json_data),
+            "update_mode_usado": update_mode
+        }
+        
+        return create_utf8_response(result)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+
 
 # ============================================================================
 # ENDPOINTS DE UNIDADES DE PROYECTO
