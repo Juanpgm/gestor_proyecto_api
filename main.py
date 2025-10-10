@@ -98,6 +98,8 @@ try:
         create_reporte_contrato,
         get_reportes_contratos,
         get_reporte_contrato_by_id,
+        get_reportes_by_centro_gestor,
+        get_reportes_by_referencia_contrato,
         setup_google_drive_service,
         # User management operations
         validate_email,
@@ -2246,27 +2248,20 @@ async def crear_reporte_contrato(
         )
 
 @app.get("/reportes_contratos/", tags=["Interoperabilidad con Artefacto de Seguimiento"])
-async def obtener_reportes_contratos(
-    referencia_contrato: Optional[str] = Query(None, description="Filtrar por referencia de contrato"),
-    usuario_reporte: Optional[str] = Query(None, description="Filtrar por usuario reportante")
-):
+async def obtener_reportes_contratos():
     """
-    ## 📋 Obtener Reportes de Contratos
+    ## 📋 Obtener Todos los Reportes de Contratos
     
-    **Propósito**: Obtener listado de reportes de contratos con filtros opcionales.
-    Replica la funcionalidad de `getReportesContratos` del frontend JavaScript.
-    
-    ### 🔍 Filtros disponibles:
-    - **referencia_contrato**: Filtro exacto por referencia de contrato
-    - **usuario_reporte**: Filtro exacto por usuario reportante
+    **Propósito**: Obtener listado completo de todos los reportes de contratos almacenados en Firebase.
+    Muestra todos los registros de la colección `reportes_contratos`.
     
     ### 📊 Ordenamiento:
     Los resultados se ordenan por `fecha_reporte` descendente (más recientes primero).
     
     ### 💡 Casos de uso:
-    - Consultar historial de reportes de un contrato específico
-    - Ver reportes creados por un usuario específico
     - Obtener listado completo para dashboard de seguimiento
+    - Vista general de todos los reportes generados
+    - Administración y auditoría de reportes
     """
     # Verificar disponibilidad de servicios
     if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE or not REPORTES_CONTRATOS_AVAILABLE:
@@ -2278,15 +2273,8 @@ async def obtener_reportes_contratos(
         }
     
     try:
-        # Preparar filtros
-        filtros = {}
-        if referencia_contrato:
-            filtros["referencia_contrato"] = referencia_contrato
-        if usuario_reporte:
-            filtros["usuario_reporte"] = usuario_reporte
-        
-        # Obtener reportes
-        result = await get_reportes_contratos(filtros)
+        # Obtener todos los reportes (sin filtros)
+        result = await get_reportes_contratos(None)
         
         if not result["success"]:
             raise HTTPException(
@@ -2304,36 +2292,42 @@ async def obtener_reportes_contratos(
             detail=f"Error procesando consulta de reportes: {str(e)}"
         )
 
-@app.get("/reportes_contratos/{reporte_id}", tags=["Interoperabilidad con Artefacto de Seguimiento"])
-async def obtener_reporte_contrato_por_id(reporte_id: str):
+@app.get("/reportes_contratos/centro_gestor/{nombre_centro_gestor}", tags=["Interoperabilidad con Artefacto de Seguimiento"])
+async def obtener_reportes_por_centro_gestor(nombre_centro_gestor: str):
     """
-    ## 🎯 Obtener Reporte Específico por ID
+    ## � Obtener Reportes por Centro Gestor
     
-    **Propósito**: Obtener los detalles completos de un reporte específico.
-    Replica la funcionalidad de `getReporteContrato` del frontend JavaScript.
+    **Propósito**: Obtener reportes filtrados por nombre del centro gestor.
+    Los resultados se ordenan por fecha de reporte descendente.
     
-    ### 📄 Información incluida:
-    - Todos los campos del reporte
-    - Archivos de evidencia con URLs
-    - Información de alertas
-    - Timestamps y metadatos
+    ### 📋 Parámetros:
+    - **nombre_centro_gestor**: Nombre del centro gestor para filtrar reportes
+    
+    ### � Ordenamiento:
+    Los resultados se ordenan por `fecha_reporte` descendente (más recientes primero).
+    
+    ### 💡 Casos de uso:
+    - Consultar reportes específicos de un centro gestor
+    - Dashboard por centro de responsabilidad
+    - Seguimiento por área organizacional
     """
     # Verificar disponibilidad de servicios
     if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE or not REPORTES_CONTRATOS_AVAILABLE:
         return {
             "success": False,
             "error": "Servicios no disponibles",
-            "data": None
+            "data": [],
+            "count": 0
         }
     
     try:
-        result = await get_reporte_contrato_by_id(reporte_id)
+        result = await get_reportes_by_centro_gestor(nombre_centro_gestor)
         
         if not result["success"]:
-            if "no encontrado" in result.get("error", "").lower():
-                raise HTTPException(status_code=404, detail=result["error"])
-            else:
-                raise HTTPException(status_code=500, detail=result.get("error", "Error desconocido"))
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error obteniendo reportes: {result.get('error', 'Error desconocido')}"
+            )
         
         return create_utf8_response(result)
         
@@ -2342,7 +2336,54 @@ async def obtener_reporte_contrato_por_id(reporte_id: str):
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Error obteniendo reporte: {str(e)}"
+            detail=f"Error obteniendo reportes por centro gestor: {str(e)}"
+        )
+
+@app.get("/reportes_contratos/referencia/{referencia_contrato}", tags=["Interoperabilidad con Artefacto de Seguimiento"])
+async def obtener_reportes_por_referencia_contrato(referencia_contrato: str):
+    """
+    ## 📄 Obtener Reportes por Referencia de Contrato
+    
+    **Propósito**: Obtener reportes específicos de un contrato usando su referencia.
+    Los resultados se ordenan por fecha de reporte descendente.
+    
+    ### 📋 Parámetros:
+    - **referencia_contrato**: Referencia específica del contrato
+    
+    ### 📊 Ordenamiento:
+    Los resultados se ordenan por `fecha_reporte` descendente (más recientes primero).
+    
+    ### 💡 Casos de uso:
+    - Historial completo de reportes de un contrato específico
+    - Seguimiento detallado por contrato
+    - Auditoría de reportes por referencia
+    """
+    # Verificar disponibilidad de servicios
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE or not REPORTES_CONTRATOS_AVAILABLE:
+        return {
+            "success": False,
+            "error": "Servicios no disponibles",
+            "data": [],
+            "count": 0
+        }
+    
+    try:
+        result = await get_reportes_by_referencia_contrato(referencia_contrato)
+        
+        if not result["success"]:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error obteniendo reportes: {result.get('error', 'Error desconocido')}"
+            )
+        
+        return create_utf8_response(result)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error obteniendo reportes por referencia: {str(e)}"
         )
 
 

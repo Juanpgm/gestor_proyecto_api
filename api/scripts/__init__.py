@@ -77,6 +77,8 @@ try:
         create_reporte_contrato,
         get_reportes_contratos,
         get_reporte_contrato_by_id,
+        get_reportes_by_centro_gestor,
+        get_reportes_by_referencia_contrato,
         setup_google_drive_service,
     )
     REPORTES_CONTRATOS_AVAILABLE = True
@@ -93,6 +95,12 @@ except ImportError as e:
     
     async def get_reporte_contrato_by_id(reporte_id):
         return {"success": False, "error": "Reportes contratos operations not available", "data": None}
+    
+    async def get_reportes_by_centro_gestor(nombre_centro_gestor):
+        return {"success": False, "error": "Reportes contratos operations not available", "data": [], "count": 0}
+    
+    async def get_reportes_by_referencia_contrato(referencia_contrato):
+        return {"success": False, "error": "Reportes contratos operations not available", "data": [], "count": 0}
     
     def setup_google_drive_service():
         return False
@@ -263,6 +271,8 @@ __all__ = [
     "create_reporte_contrato",
     "get_reportes_contratos",
     "get_reporte_contrato_by_id",
+    "get_reportes_by_centro_gestor",
+    "get_reportes_by_referencia_contrato",
     "setup_google_drive_service",
     
     # Empréstito operations

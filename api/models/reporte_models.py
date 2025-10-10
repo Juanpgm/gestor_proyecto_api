@@ -33,6 +33,7 @@ class ReporteContratoRequest(BaseModel):
     avance_financiero: int = Field(..., ge=0, le=100, description="Porcentaje de avance financiero (0-100)")
     avance_fisico: int = Field(..., ge=0, le=100, description="Porcentaje de avance físico (0-100)")
     fecha_reporte: str = Field(..., description="Fecha del reporte (ISO format)")
+    nombre_centro_gestor: Optional[str] = Field(None, description="Nombre del centro gestor responsable")
     observaciones: str = Field(..., description="Observaciones del reporte")
     referencia_contrato: str = Field(..., min_length=1, description="Referencia del contrato")
     url_carpeta_drive: str = Field(..., description="URL de la carpeta en Google Drive")

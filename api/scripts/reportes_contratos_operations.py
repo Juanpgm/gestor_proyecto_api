@@ -13,6 +13,15 @@ from typing import Dict, Any, List, Tuple, Optional
 # Firebase imports
 from database.firebase_config import get_firestore_client
 
+# Intentar importar DatetimeWithNanoseconds, con fallback seguro
+try:
+    from google.cloud.firestore_v1._helpers import DatetimeWithNanoseconds
+    FIREBASE_DATETIME_AVAILABLE = True
+except ImportError:
+    # Si no se puede importar, crear un tipo placeholder
+    DatetimeWithNanoseconds = type('DatetimeWithNanoseconds', (), {})
+    FIREBASE_DATETIME_AVAILABLE = False
+
 # Google Drive imports con manejo de errores
 try:
     from googleapiclient.discovery import build
@@ -25,6 +34,39 @@ except ImportError:
 
 # Configurar logger
 logger = logging.getLogger(__name__)
+
+def convert_firebase_timestamps(doc_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Convertir timestamps de Firebase a strings serializables
+    """
+    converted_data = {}
+    for key, value in doc_data.items():
+        # Verificar si el valor tiene el método isoformat (datetime-like)
+        if hasattr(value, 'isoformat') and callable(getattr(value, 'isoformat')):
+            # Convertir a ISO string
+            converted_data[key] = value.isoformat()
+        elif isinstance(value, datetime):
+            # Convertir datetime regular a ISO string
+            converted_data[key] = value.isoformat()
+        elif isinstance(value, dict):
+            # Recursivamente convertir diccionarios anidados
+            converted_data[key] = convert_firebase_timestamps(value)
+        elif isinstance(value, list):
+            # Convertir listas que pueden contener objetos con fechas
+            converted_list = []
+            for item in value:
+                if isinstance(item, dict):
+                    converted_list.append(convert_firebase_timestamps(item))
+                elif hasattr(item, 'isoformat') and callable(getattr(item, 'isoformat')):
+                    converted_list.append(item.isoformat())
+                elif isinstance(item, datetime):
+                    converted_list.append(item.isoformat())
+                else:
+                    converted_list.append(item)
+            converted_data[key] = converted_list
+        else:
+            converted_data[key] = value
+    return converted_data
 
 def create_drive_folder(referencia_contrato: str, archivos: List[Dict[str, Any]]) -> Tuple[str, List[Dict[str, str]]]:
     """
@@ -225,6 +267,7 @@ async def create_reporte_contrato(reporte_data: Dict[str, Any]) -> Dict[str, Any
         # Datos para Firebase
         doc_data = {
             'referencia_contrato': reporte_data['referencia_contrato'],
+            'nombre_centro_gestor': reporte_data.get('nombre_centro_gestor', ''),
             'observaciones': reporte_data['observaciones'],
             'avance_fisico': reporte_data['avance_fisico'],
             'avance_financiero': reporte_data['avance_financiero'],
@@ -283,9 +326,12 @@ async def get_reportes_contratos(filtros: Optional[Dict[str, Any]] = None) -> Di
         
         reportes = []
         for doc in docs:
+            doc_data = doc.to_dict()
+            # Convertir timestamps de Firebase a strings serializables
+            converted_data = convert_firebase_timestamps(doc_data)
             reporte_data = {
                 'id': doc.id,
-                **doc.to_dict()
+                **converted_data
             }
             reportes.append(reporte_data)
         
@@ -326,9 +372,12 @@ async def get_reporte_contrato_by_id(reporte_id: str) -> Dict[str, Any]:
                 "data": None
             }
         
+        doc_data = doc.to_dict()
+        # Convertir timestamps de Firebase a strings serializables
+        converted_data = convert_firebase_timestamps(doc_data)
         reporte_data = {
             'id': doc.id,
-            **doc.to_dict()
+            **converted_data
         }
         
         return {
@@ -343,6 +392,96 @@ async def get_reporte_contrato_by_id(reporte_id: str) -> Dict[str, Any]:
             "success": False,
             "error": f"Error obteniendo reporte: {str(e)}",
             "data": None
+        }
+
+async def get_reportes_by_centro_gestor(nombre_centro_gestor: str) -> Dict[str, Any]:
+    """
+    Obtener reportes filtrados por nombre_centro_gestor
+    """
+    try:
+        db = get_firestore_client()
+        if db is None:
+            return {
+                "success": False,
+                "error": "No se pudo conectar a Firestore",
+                "data": []
+            }
+        
+        # Buscar reportes por nombre_centro_gestor
+        docs = db.collection('reportes_contratos')\
+                .where('nombre_centro_gestor', '==', nombre_centro_gestor)\
+                .order_by('fecha_reporte', direction='DESCENDING')\
+                .stream()
+        
+        reportes = []
+        for doc in docs:
+            doc_data = doc.to_dict()
+            # Convertir timestamps de Firebase a strings serializables
+            converted_data = convert_firebase_timestamps(doc_data)
+            reporte_data = {
+                'id': doc.id,
+                **converted_data
+            }
+            reportes.append(reporte_data)
+        
+        return {
+            "success": True,
+            "data": reportes,
+            "count": len(reportes),
+            "message": f"Reportes obtenidos para centro gestor: {nombre_centro_gestor}"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error obteniendo reportes por centro gestor: {str(e)}")
+        return {
+            "success": False,
+            "error": f"Error obteniendo reportes: {str(e)}",
+            "data": []
+        }
+
+async def get_reportes_by_referencia_contrato(referencia_contrato: str) -> Dict[str, Any]:
+    """
+    Obtener reportes filtrados por referencia_contrato específica
+    """
+    try:
+        db = get_firestore_client()
+        if db is None:
+            return {
+                "success": False,
+                "error": "No se pudo conectar a Firestore",
+                "data": []
+            }
+        
+        # Buscar reportes por referencia_contrato
+        docs = db.collection('reportes_contratos')\
+                .where('referencia_contrato', '==', referencia_contrato)\
+                .order_by('fecha_reporte', direction='DESCENDING')\
+                .stream()
+        
+        reportes = []
+        for doc in docs:
+            doc_data = doc.to_dict()
+            # Convertir timestamps de Firebase a strings serializables
+            converted_data = convert_firebase_timestamps(doc_data)
+            reporte_data = {
+                'id': doc.id,
+                **converted_data
+            }
+            reportes.append(reporte_data)
+        
+        return {
+            "success": True,
+            "data": reportes,
+            "count": len(reportes),
+            "message": f"Reportes obtenidos para contrato: {referencia_contrato}"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error obteniendo reportes por referencia contrato: {str(e)}")
+        return {
+            "success": False,
+            "error": f"Error obteniendo reportes: {str(e)}",
+            "data": []
         }
 
 def setup_google_drive_service():
