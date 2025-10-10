@@ -2110,14 +2110,7 @@ async def crear_reporte_contrato(
             "archivos_count": len(archivos_validados)
         }
         
-        # Agregar información de configuración si es simulación
-        if "drive.google.com" in result["url_carpeta_drive"] and "LOCAL_SIMULATION" not in result["url_carpeta_drive"]:
-            # Es simulación con URL falsa
-            response_data["configuracion"] = {
-                "google_drive_status": "simulation_mode",
-                "nota": "URLs simuladas - Para subida real configura Service Account",
-                "documentacion": "Ver GOOGLE_DRIVE_CONFIG.md para setup completo"
-            }
+
         
         return create_utf8_response(response_data)
         
