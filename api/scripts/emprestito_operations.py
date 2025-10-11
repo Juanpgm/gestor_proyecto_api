@@ -181,7 +181,6 @@ def transformar_contrato_secop(contrato, proceso_data, referencia_proceso, proce
     return {
         # Campos heredados del proceso de empréstito
         "referencia_proceso": referencia_proceso,
-        "proceso_contractual": proceso_contractual,
         "nombre_centro_gestor": proceso_data.get('nombre_centro_gestor', ''),
         "banco": proceso_data.get('nombre_banco', ''),  # CORREGIDO: heredar desde 'nombre_banco'
         "bp": proceso_data.get('bp', ''),  # AGREGADO: heredar campo bp
@@ -189,31 +188,35 @@ def transformar_contrato_secop(contrato, proceso_data, referencia_proceso, proce
         # Campos principales del contrato desde SECOP
         "referencia_contrato": contrato.get("referencia_del_contrato", ""),
         "id_contrato": contrato.get("id_contrato", ""),
-        # ELIMINADO: "proceso_de_compra" - redundante con "proceso_contractual"
-        "nombre_del_procedimiento": contrato.get("nombre_del_procedimiento", ""),
-        "descripcion_proceso": contrato.get("descripci_n_del_procedimiento", ""),
+        "proceso_contractual": contrato.get("proceso_de_compra", ""),  # Cambio: proceso_de_compra -> proceso_contractual (sobrescribe el heredado)
+        "sector": contrato.get("sector", ""),  # Nuevo campo: sector desde SECOP
+        "nombre_procedimiento": contrato.get("nombre_del_procedimiento", ""),
+        "descripcion_proceso": contrato.get("descripcion_del_proceso", ""),  # Unificado: descripcion_del_proceso -> descripcion_proceso
         "objeto_contrato": contrato.get("objeto_del_contrato", ""),
         
         # Estado y modalidad
-        "estado_del_contrato": contrato.get("estado_del_contrato", ""),
+        "estado_contrato": contrato.get("estado_contrato", ""),  # Corregido: estado_contrato en SECOP
         "modalidad_contratacion": contrato.get("modalidad_de_contratacion", ""),
         "tipo_contrato": contrato.get("tipo_de_contrato", ""),
         
         # Valores monetarios
         # ELIMINADO: "valor_del_contrato" - redundante con "valor_contrato"
         "valor_contrato": valor_contrato,
+        "valor_pagado": contrato.get("valor_pagado", ""),
+        
+        # Personal y responsables
+        "representante_legal": contrato.get("nombre_representante_legal", ""),  # Limpio: nombre_representante_legal -> representante_legal
+        "ordenador_gasto": contrato.get("nombre_ordenador_del_gasto", ""),  # Limpio: nombre_ordenador_del_gasto -> ordenador_gasto
+        "supervisor": contrato.get("nombre_supervisor", ""),  # Limpio: nombre_supervisor -> supervisor
         
         # Fechas en formato ISO 8601
         "fecha_firma_contrato": process_date("fecha_de_firma_del_contrato"),
-        "fecha_firma": process_date("fecha_de_firma_del_contrato"),  # Alias
         "fecha_inicio_contrato": process_date("fecha_de_inicio_del_contrato"),
         "fecha_fin_contrato": process_date("fecha_de_fin_del_contrato"),
         
         # Entidades participantes
         "entidad_contratante": contrato.get("nombre_entidad", ""),
-        "nombre_entidad": contrato.get("nombre_entidad", ""),  # Alias
-        "contratista": contrato.get("nombre_del_contratista", ""),
-        "nombre_del_contratista": contrato.get("nombre_del_contratista", ""),  # Alias
+        "nombre_contratista": contrato.get("nombre_del_contratista", ""),
         
         # NITs
         "nit_entidad": contrato.get("nit_entidad", ""),
@@ -221,11 +224,9 @@ def transformar_contrato_secop(contrato, proceso_data, referencia_proceso, proce
         
         # BPIN (código BPIN mapeado correctamente)
         "bpin": bpin_value,
-        "codigo_bpin": bpin_value,  # Alias para compatibilidad
         
         # URLs y enlaces
         "urlproceso": contrato.get("urlproceso", ""),
-        "link_proceso": contrato.get("urlproceso", ""),  # Alias
         
         # Metadatos de guardado
         "fecha_guardado": datetime.now(),

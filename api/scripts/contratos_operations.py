@@ -5,7 +5,36 @@ Función optimizada para el endpoint init_contratos_seguimiento
 
 import re
 from typing import Dict, List, Any, Optional
+from datetime import datetime
 from database.firebase_config import get_firestore_client
+
+# Importar para manejar tipos de Firebase
+try:
+    from google.cloud.firestore_v1._helpers import DatetimeWithNanoseconds
+    FIREBASE_TYPES_AVAILABLE = True
+except ImportError:
+    FIREBASE_TYPES_AVAILABLE = False
+    DatetimeWithNanoseconds = None
+
+
+def clean_firebase_data(data):
+    """
+    Limpia datos de Firebase para serialización JSON
+    Convierte DatetimeWithNanoseconds y otros tipos no serializables
+    """
+    if isinstance(data, dict):
+        cleaned = {}
+        for key, value in data.items():
+            cleaned[key] = clean_firebase_data(value)
+        return cleaned
+    elif isinstance(data, list):
+        return [clean_firebase_data(item) for item in data]
+    elif FIREBASE_TYPES_AVAILABLE and isinstance(data, DatetimeWithNanoseconds):
+        return data.isoformat()
+    elif isinstance(data, datetime):
+        return data.isoformat()
+    else:
+        return data
 
 
 def clean_text_field(text: Any) -> str:
@@ -122,6 +151,118 @@ async def get_contratos_init_data(filters: Optional[Dict[str, Any]] = None) -> D
         return {
             "success": False, 
             "error": f"Error obteniendo contratos: {str(e)}",
+            "data": [],
+            "count": 0
+        }
+
+
+async def get_contratos_emprestito_all() -> Dict[str, Any]:
+    """Obtener todos los registros de la colección contratos_emprestito"""
+    try:
+        db = get_firestore_client()
+        if db is None:
+            return {"success": False, "error": "No se pudo conectar a Firestore", "data": [], "count": 0}
+        
+        collection_ref = db.collection('contratos_emprestito')
+        docs = collection_ref.stream()
+        contratos_data = []
+        
+        for doc in docs:
+            doc_data = doc.to_dict()
+            doc_data['id'] = doc.id  # Agregar ID del documento
+            # Limpiar datos de Firebase para serialización JSON
+            doc_data_clean = clean_firebase_data(doc_data)
+            contratos_data.append(doc_data_clean)
+        
+        return {
+            "success": True,
+            "data": contratos_data,
+            "count": len(contratos_data),
+            "collection": "contratos_emprestito",
+            "timestamp": datetime.now().isoformat(),
+            "message": f"Se obtuvieron {len(contratos_data)} contratos de empréstito exitosamente"
+        }
+        
+    except Exception as e:
+        return {
+            "success": False, 
+            "error": f"Error obteniendo todos los contratos de empréstito: {str(e)}",
+            "data": [],
+            "count": 0
+        }
+
+
+async def get_contratos_emprestito_by_referencia(referencia_contrato: str) -> Dict[str, Any]:
+    """Obtener contratos de empréstito por referencia_contrato"""
+    try:
+        db = get_firestore_client()
+        if db is None:
+            return {"success": False, "error": "No se pudo conectar a Firestore", "data": [], "count": 0}
+        
+        collection_ref = db.collection('contratos_emprestito')
+        query = collection_ref.where('referencia_contrato', '==', referencia_contrato)
+        docs = query.stream()
+        contratos_data = []
+        
+        for doc in docs:
+            doc_data = doc.to_dict()
+            doc_data['id'] = doc.id  # Agregar ID del documento
+            # Limpiar datos de Firebase para serialización JSON
+            doc_data_clean = clean_firebase_data(doc_data)
+            contratos_data.append(doc_data_clean)
+        
+        return {
+            "success": True,
+            "data": contratos_data,
+            "count": len(contratos_data),
+            "collection": "contratos_emprestito",
+            "filter": {"referencia_contrato": referencia_contrato},
+            "timestamp": datetime.now().isoformat(),
+            "message": f"Se encontraron {len(contratos_data)} contratos con referencia '{referencia_contrato}'"
+        }
+        
+    except Exception as e:
+        return {
+            "success": False, 
+            "error": f"Error obteniendo contratos por referencia: {str(e)}",
+            "data": [],
+            "count": 0
+        }
+
+
+async def get_contratos_emprestito_by_centro_gestor(nombre_centro_gestor: str) -> Dict[str, Any]:
+    """Obtener contratos de empréstito por nombre_centro_gestor"""
+    try:
+        db = get_firestore_client()
+        if db is None:
+            return {"success": False, "error": "No se pudo conectar a Firestore", "data": [], "count": 0}
+        
+        collection_ref = db.collection('contratos_emprestito')
+        query = collection_ref.where('nombre_centro_gestor', '==', nombre_centro_gestor)
+        docs = query.stream()
+        contratos_data = []
+        
+        for doc in docs:
+            doc_data = doc.to_dict()
+            doc_data['id'] = doc.id  # Agregar ID del documento
+            # Limpiar datos de Firebase para serialización JSON
+            doc_data_clean = clean_firebase_data(doc_data)
+            contratos_data.append(doc_data_clean)
+        
+        return {
+            "success": True,
+            "data": contratos_data,
+            "count": len(contratos_data),
+            "collection": "contratos_emprestito",
+            "filter": {"nombre_centro_gestor": nombre_centro_gestor},
+            "timestamp": datetime.now().isoformat(),
+            "message": f"Se encontraron {len(contratos_data)} contratos para el centro gestor '{nombre_centro_gestor}'"
+        }
+        
+    except Exception as e:
+        return {
+            "success": False, 
+            "error": f"Error obteniendo contratos por centro gestor: {str(e)}",
             "data": [],
             "count": 0
         }

@@ -61,14 +61,26 @@ except ImportError as e:
 try:
     from .contratos_operations import (
         get_contratos_init_data,
+        get_contratos_emprestito_all,
+        get_contratos_emprestito_by_referencia,
+        get_contratos_emprestito_by_centro_gestor,
     )
     CONTRATOS_OPERATIONS_AVAILABLE = True
 except ImportError as e:
     print(f"Warning: Contratos operations not available: {e}")
     CONTRATOS_OPERATIONS_AVAILABLE = False
     
-    # Crear función dummy para contratos
+    # Crear funciones dummy para contratos
     async def get_contratos_init_data(filters=None):
+        return {"success": False, "error": "Contratos operations not available", "data": [], "count": 0}
+    
+    async def get_contratos_emprestito_all():
+        return {"success": False, "error": "Contratos operations not available", "data": [], "count": 0}
+    
+    async def get_contratos_emprestito_by_referencia(referencia_contrato):
+        return {"success": False, "error": "Contratos operations not available", "data": [], "count": 0}
+    
+    async def get_contratos_emprestito_by_centro_gestor(nombre_centro_gestor):
         return {"success": False, "error": "Contratos operations not available", "data": [], "count": 0}
 
 # Importar operaciones de reportes de contratos

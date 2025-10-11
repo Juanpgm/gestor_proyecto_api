@@ -309,7 +309,8 @@ async def get_reportes_contratos(filtros: Optional[Dict[str, Any]] = None) -> Di
             return {
                 "success": False,
                 "error": "No se pudo conectar a Firestore",
-                "data": []
+                "data": [],
+                "count": 0
             }
         
         collection_ref = db.collection('reportes_contratos')
@@ -321,24 +322,43 @@ async def get_reportes_contratos(filtros: Optional[Dict[str, Any]] = None) -> Di
             if 'estado_reporte' in filtros:
                 collection_ref = collection_ref.where('estado_reporte', '==', filtros['estado_reporte'])
         
-        # Ordenar por fecha
-        docs = collection_ref.order_by('fecha_reporte', direction='DESCENDING').stream()
+        # Obtener documentos sin ordenar para evitar errores con campos faltantes
+        try:
+            docs = collection_ref.order_by('fecha_reporte', direction='DESCENDING').stream()
+        except Exception as order_error:
+            logger.warning(f"Error ordenando por fecha_reporte, obteniendo sin ordenar: {order_error}")
+            # Si falla el order_by, obtener sin ordenar
+            docs = collection_ref.stream()
         
         reportes = []
         for doc in docs:
-            doc_data = doc.to_dict()
-            # Convertir timestamps de Firebase a strings serializables
-            converted_data = convert_firebase_timestamps(doc_data)
-            reporte_data = {
-                'id': doc.id,
-                **converted_data
-            }
-            reportes.append(reporte_data)
+            try:
+                doc_data = doc.to_dict()
+                if doc_data:  # Verificar que el documento no esté vacío
+                    # Convertir timestamps de Firebase a strings serializables
+                    converted_data = convert_firebase_timestamps(doc_data)
+                    reporte_data = {
+                        'id': doc.id,
+                        **converted_data
+                    }
+                    reportes.append(reporte_data)
+            except Exception as doc_error:
+                logger.warning(f"Error procesando documento {doc.id}: {doc_error}")
+                continue
+        
+        # Ordenar manualmente por fecha_reporte si existe el campo
+        try:
+            reportes.sort(key=lambda x: x.get('fecha_reporte', ''), reverse=True)
+        except Exception as sort_error:
+            logger.warning(f"Error ordenando reportes manualmente: {sort_error}")
         
         return {
             "success": True,
             "data": reportes,
-            "count": len(reportes)
+            "count": len(reportes),
+            "collection": "reportes_contratos",
+            "timestamp": datetime.now().isoformat(),
+            "message": f"Se obtuvieron {len(reportes)} reportes de contratos exitosamente"
         }
         
     except Exception as e:
@@ -346,7 +366,8 @@ async def get_reportes_contratos(filtros: Optional[Dict[str, Any]] = None) -> Di
         return {
             "success": False,
             "error": f"Error obteniendo reportes: {str(e)}",
-            "data": []
+            "data": [],
+            "count": 0
         }
 
 async def get_reporte_contrato_by_id(reporte_id: str) -> Dict[str, Any]:

@@ -94,6 +94,9 @@ try:
         validate_unidades_proyecto_collection,
         # Contratos operations
         get_contratos_init_data,
+        get_contratos_emprestito_all,
+        get_contratos_emprestito_by_referencia,
+        get_contratos_emprestito_by_centro_gestor,
         # Reportes contratos operations
         create_reporte_contrato,
         get_reportes_contratos,
@@ -489,7 +492,10 @@ async def read_root():
             "gestion_emprestito": [
                 "/emprestito/cargar-proceso",
                 "/emprestito/proceso/{referencia_proceso}",
-                "/emprestito/obtener-contratos-secop"
+                "/emprestito/obtener-contratos-secop",
+                "/contratos_emprestito_all",
+                "/contratos_emprestito/referencia/{referencia_contrato}",
+                "/contratos_emprestito/centro-gestor/{nombre_centro_gestor}"
             ],
             "administracion_usuarios": [
                 "/auth/validate-session",
@@ -3805,12 +3811,18 @@ async def obtener_contratos_secop_endpoint():
             {
                 "referencia_proceso": "4151.010.32.1.0575-2025",
                 "proceso_contractual": "CO1.REQ.8485621",
+                "sector": "Educación",
                 "referencia_contrato": "CONT-001-2025",
-                "estado_del_contrato": "Activo",
-                "valor_del_contrato": "150000000",
+                "descripcion_proceso": "Descripción detallada del proceso contractual",
+                "estado_contrato": "Activo",
+                "valor_contrato": 150000000,
+                "valor_pagado": "75000000",
+                "representante_legal": "Juan Pérez García",
+                "ordenador_gasto": "María López Silva",
+                "supervisor": "Carlos Rodríguez Mesa",
                 "fecha_firma_contrato": "2025-01-15",
                 "entidad_contratante": "MUNICIPIO DE SANTIAGO DE CALI",
-                "contratista": "EMPRESA XYZ LTDA",
+                "nombre_contratista": "EMPRESA XYZ LTDA",
                 "nit_entidad": "890399011",
                 "fuente_datos": "SECOP_API",
                 "fecha_guardado": "2025-10-09T..."
@@ -3834,7 +3846,6 @@ async def obtener_contratos_secop_endpoint():
     ### 🗄️ Esquema de la colección 'contratos_emprestito':
     **🔄 Campos heredados desde procesos_emprestito:**
     - **referencia_proceso**: Heredado desde procesos_emprestito
-    - **proceso_contractual**: Heredado desde procesos_emprestito
     - **banco**: Heredado desde 'nombre_banco' de procesos_emprestito
     - **bp**: Heredado desde procesos_emprestito
     - **nombre_centro_gestor**: Heredado desde procesos_emprestito
@@ -3842,15 +3853,22 @@ async def obtener_contratos_secop_endpoint():
     **📊 Campos desde SECOP API:**
     - **referencia_contrato**: referencia_del_contrato desde SECOP
     - **id_contrato**: Desde SECOP
-    - **nombre_del_procedimiento**: Desde SECOP
-    - **estado_del_contrato**: Desde SECOP
+    - **proceso_contractual**: Mapeado desde 'proceso_de_compra' de SECOP (sobrescribe el heredado)
+    - **sector**: Desde SECOP
+    - **nombre_procedimiento**: Mapeado desde 'nombre_del_procedimiento' de SECOP
+    - **descripcion_proceso**: Mapeado desde 'descripcion_del_proceso' de SECOP
+    - **estado_contrato**: Mapeado desde 'estado_contrato' de SECOP
     - **valor_contrato**: Desde SECOP (campo único, sin duplicados)
+    - **valor_pagado**: Desde SECOP
+    - **representante_legal**: Mapeado desde 'nombre_representante_legal' de SECOP
+    - **ordenador_gasto**: Mapeado desde 'nombre_ordenador_del_gasto' de SECOP
+    - **supervisor**: Mapeado desde 'nombre_supervisor' de SECOP
     - **bpin**: Mapeado desde 'c_digo_bpin' de SECOP
     - **fecha_firma_contrato**: Desde SECOP
     - **objeto_contrato**: Desde SECOP
     - **modalidad_contratacion**: Desde SECOP
     - **entidad_contratante**: Desde SECOP
-    - **contratista**: Desde SECOP
+    - **nombre_contratista**: Mapeado desde 'nombre_del_contratista' de SECOP
     - **nit_entidad**: Desde SECOP (filtrado por 890399011)
     - **nit_contratista**: Desde SECOP
     
@@ -3863,6 +3881,8 @@ async def obtener_contratos_secop_endpoint():
     - **API**: www.datos.gov.co
     - **Dataset**: jbjy-vk9h (Contratos)
     - **Filtros**: proceso_de_compra LIKE '%{proceso_contractual}%' AND nit_entidad = '890399011'
+    - **Mapeo**: proceso_de_compra → proceso_contractual (sobrescribe valor heredado)
+    - **Nuevos campos**: sector desde SECOP
     - **Límite**: 2000 registros por consulta
     """
     try:
@@ -3890,6 +3910,228 @@ async def obtener_contratos_secop_endpoint():
                 "message": "Error obteniendo contratos de SECOP",
                 "detalles": str(e)
             }
+        )
+
+@app.get("/contratos_emprestito_all", tags=["Gestión de Empréstito"])
+async def obtener_todos_contratos_emprestito():
+    """
+    ## 📋 Obtener Todos los Contratos de Empréstito
+    
+    **Propósito**: Retorna todos los registros de la colección "contratos_emprestito".
+    
+    ### ✅ Casos de uso:
+    - Obtener listado completo de contratos de empréstito
+    - Exportación de datos para análisis
+    - Integración con sistemas externos
+    - Reportes y dashboards de contratos
+    
+    ### 📊 Información incluida:
+    - Todos los campos disponibles en la colección
+    - ID del documento para referencia
+    - Conteo total de registros
+    - Timestamp de la consulta
+    
+    ### 🗄️ Campos principales:
+    - **referencia_contrato**: Referencia del contrato
+    - **referencia_proceso**: Proceso de origen
+    - **nombre_centro_gestor**: Entidad responsable
+    - **banco**: Entidad bancaria
+    - **estado_contrato**: Estado actual del contrato
+    - **valor_contrato**: Valor del contrato
+    - **fecha_firma_contrato**: Fecha de firma
+    - **objeto_contrato**: Descripción del objeto
+    - **modalidad_contratacion**: Modalidad de contratación
+    - **entidad_contratante**: Entidad que contrata
+    - **contratista**: Empresa contratista
+    
+    ### 📝 Ejemplo de uso:
+    ```javascript
+    const response = await fetch('/contratos_emprestito_all');
+    const data = await response.json();
+    if (data.success) {
+        console.log('Contratos encontrados:', data.count);
+        console.log('Datos:', data.data);
+    }
+    ```
+    """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
+    
+    try:
+        result = await get_contratos_emprestito_all()
+        
+        if not result["success"]:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error obteniendo contratos de empréstito: {result.get('error', 'Error desconocido')}"
+            )
+        
+        return create_utf8_response({
+            "success": True,
+            "data": result["data"],
+            "count": result["count"],
+            "collection": result["collection"],
+            "timestamp": datetime.now().isoformat(),
+            "last_updated": "2025-10-10T00:00:00Z",
+            "message": result["message"]
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error procesando contratos de empréstito: {str(e)}"
+        )
+
+@app.get("/contratos_emprestito/referencia/{referencia_contrato}", tags=["Gestión de Empréstito"])
+async def obtener_contratos_por_referencia(referencia_contrato: str):
+    """
+    ## 🔍 Obtener Contratos de Empréstito por Referencia
+    
+    **Propósito**: Retorna contratos de empréstito filtrados por referencia_contrato específica.
+    
+    ### ✅ Casos de uso:
+    - Búsqueda de contratos por referencia específica
+    - Consulta de detalles de contrato individual
+    - Validación de existencia de contrato
+    - Integración con sistemas de seguimiento contractual
+    
+    ### 🔍 Filtrado:
+    - **Campo**: `referencia_contrato` (coincidencia exacta)
+    - **Tipo**: String - Referencia única del contrato
+    - **Sensible a mayúsculas**: Sí
+    
+    ### 📊 Información incluida:
+    - Todos los campos del contrato que coincida con la referencia
+    - ID del documento para referencia
+    - Conteo de registros encontrados
+    - Información del filtro aplicado
+    
+    ### 📝 Ejemplo de uso:
+    ```javascript
+    const referencia = "CONT-001-2025";
+    const response = await fetch(`/contratos_emprestito/${referencia}`);
+    const data = await response.json();
+    if (data.success && data.count > 0) {
+        console.log('Contrato encontrado:', data.data[0]);
+    } else {
+        console.log('No se encontró contrato con referencia:', referencia);
+    }
+    ```
+    
+    ### 💡 Notas:
+    - Si no se encuentra ningún contrato, retorna array vacío
+    - La referencia debe ser exacta (sin espacios adicionales)
+    - Puede retornar múltiples contratos si hay duplicados
+    """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
+    
+    try:
+        result = await get_contratos_emprestito_by_referencia(referencia_contrato)
+        
+        if not result["success"]:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error obteniendo contratos por referencia: {result.get('error', 'Error desconocido')}"
+            )
+        
+        return create_utf8_response({
+            "success": True,
+            "data": result["data"],
+            "count": result["count"],
+            "collection": result["collection"],
+            "filter": result["filter"],
+            "timestamp": datetime.now().isoformat(),
+            "last_updated": "2025-10-10T00:00:00Z",
+            "message": result["message"]
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error procesando consulta por referencia de contrato: {str(e)}"
+        )
+
+@app.get("/contratos_emprestito/centro-gestor/{nombre_centro_gestor}", tags=["Gestión de Empréstito"])
+async def obtener_contratos_por_centro_gestor(nombre_centro_gestor: str):
+    """
+    ## 🏢 Obtener Contratos de Empréstito por Centro Gestor
+    
+    **Propósito**: Retorna contratos de empréstito filtrados por nombre del centro gestor específico.
+    
+    ### ✅ Casos de uso:
+    - Consulta de contratos por dependencia responsable
+    - Reportes por entidad gestora
+    - Dashboard por centro de responsabilidad
+    - Análisis de distribución institucional
+    - Seguimiento de contratos por secretaría/departamento
+    
+    ### 🔍 Filtrado:
+    - **Campo**: `nombre_centro_gestor` (coincidencia exacta)
+    - **Tipo**: String - Nombre completo del centro gestor
+    - **Sensible a mayúsculas**: Sí
+    - **Espacios**: Sensible a espacios adicionales
+    
+    ### 📊 Información incluida:
+    - Todos los campos de los contratos del centro gestor
+    - ID del documento para referencia
+    - Conteo de registros encontrados
+    - Información del filtro aplicado
+    
+    ### 📝 Ejemplo de uso:
+    ```javascript
+    const centroGestor = "Secretaría de Salud";
+    const response = await fetch(`/contratos_emprestito/${encodeURIComponent(centroGestor)}`);
+    const data = await response.json();
+    if (data.success && data.count > 0) {
+        console.log(`${data.count} contratos encontrados para:`, centroGestor);
+        const valorTotal = data.data.reduce((sum, c) => sum + (parseFloat(c.valor_contrato) || 0), 0);
+        console.log('Valor total:', valorTotal);
+    }
+    ```
+    
+    ### 💡 Notas:
+    - Típicamente retorna múltiples contratos por centro gestor
+    - El nombre debe ser exacto (use `/centros-gestores/nombres-unicos` para obtener nombres válidos)
+    - Para nombres con espacios, usar `encodeURIComponent()` en el frontend
+    - Si no se encuentra ningún contrato, retorna array vacío
+    
+    ### 🔗 Endpoint relacionado:
+    - `GET /centros-gestores/nombres-unicos` - Para obtener lista de centros gestores válidos
+    """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
+    
+    try:
+        result = await get_contratos_emprestito_by_centro_gestor(nombre_centro_gestor)
+        
+        if not result["success"]:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error obteniendo contratos por centro gestor: {result.get('error', 'Error desconocido')}"
+            )
+        
+        return create_utf8_response({
+            "success": True,
+            "data": result["data"],
+            "count": result["count"],
+            "collection": result["collection"],
+            "filter": result["filter"],
+            "timestamp": datetime.now().isoformat(),
+            "last_updated": "2025-10-10T00:00:00Z",
+            "message": result["message"]
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error procesando consulta por centro gestor: {str(e)}"
         )
 
 
