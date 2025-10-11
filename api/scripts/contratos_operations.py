@@ -74,8 +74,11 @@ def extract_contract_fields(doc_data: Dict[str, Any]) -> Dict[str, Any]:
     """Extraer solo los campos requeridos para el endpoint con texto limpio"""
     registro_origen = doc_data.get('registro_origen', {})
     
-    # Normalizar referencia_proceso
-    referencia_proceso = registro_origen.get('referencia_proceso', [])
+    # Obtener banco - primero del documento raíz, luego de registro_origen
+    banco = doc_data.get('banco', '') or registro_origen.get('banco', '')
+    
+    # Obtener referencia_proceso - primero del documento raíz, luego de registro_origen
+    referencia_proceso = doc_data.get('referencia_proceso', '') or registro_origen.get('referencia_proceso', [])
     if isinstance(referencia_proceso, list):
         referencia_proceso_str = ', '.join(referencia_proceso) if referencia_proceso else ''
     else:
@@ -98,7 +101,7 @@ def extract_contract_fields(doc_data: Dict[str, Any]) -> Dict[str, Any]:
     
     return {
         'bpin': doc_data.get('bpin', 0),
-        'banco': clean_text_field(registro_origen.get('banco', '')),
+        'banco': clean_text_field(banco),
         'nombre_centro_gestor': clean_text_field(doc_data.get('nombre_centro_gestor', '')),
         'estado_contrato': clean_text_field(doc_data.get('estado_contrato', '')),
         'referencia_contrato': clean_text_field(doc_data.get('referencia_contrato', '')),
