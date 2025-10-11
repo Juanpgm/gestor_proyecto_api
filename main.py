@@ -97,6 +97,8 @@ try:
         get_contratos_emprestito_all,
         get_contratos_emprestito_by_referencia,
         get_contratos_emprestito_by_centro_gestor,
+        # Bancos operations
+        get_bancos_emprestito_all,
         # Reportes contratos operations
         create_reporte_contrato,
         get_reportes_contratos,
@@ -495,7 +497,8 @@ async def read_root():
                 "/emprestito/obtener-contratos-secop",
                 "/contratos_emprestito_all",
                 "/contratos_emprestito/referencia/{referencia_contrato}",
-                "/contratos_emprestito/centro-gestor/{nombre_centro_gestor}"
+                "/contratos_emprestito/centro-gestor/{nombre_centro_gestor}",
+                "/bancos_emprestito_all"
             ],
             "administracion_usuarios": [
                 "/auth/validate-session",
@@ -4132,6 +4135,87 @@ async def obtener_contratos_por_centro_gestor(nombre_centro_gestor: str):
         raise HTTPException(
             status_code=500,
             detail=f"Error procesando consulta por centro gestor: {str(e)}"
+        )
+
+@app.get("/bancos_emprestito_all", tags=["Gestión de Empréstito"])
+async def get_all_bancos_emprestito():
+    """
+    ## Obtener Todos los Bancos de Empréstito
+    
+    **Propósito**: Retorna todos los bancos disponibles en la colección "bancos_emprestito".
+    
+    ### ✅ Casos de uso:
+    - Poblar dropdowns y selectores en formularios de empréstito
+    - Obtener listado completo de bancos para validación
+    - Integración con sistemas de gestión de procesos
+    - Reportes y dashboards de bancos disponibles
+    
+    ### 📊 Información incluida:
+    - Todos los campos disponibles de cada banco
+    - ID del documento para referencia
+    - Conteo total de bancos disponibles
+    - Lista ordenada por nombre de banco
+    
+    ### 📝 Ejemplo de uso:
+    ```javascript
+    const response = await fetch('/bancos_emprestito_all');
+    const data = await response.json();
+    if (data.success) {
+        console.log('Bancos disponibles:', data.count);
+        const bancoOptions = data.data.map(banco => ({
+            value: banco.nombre_banco,
+            label: banco.nombre_banco
+        }));
+    }
+    ```
+    
+    ### 💡 Características:
+    - **Ordenamiento**: Lista alfabética por nombre de banco
+    - **Validación**: Datos limpios y serializados correctamente
+    - **Compatibilidad**: UTF-8 completo para nombres con caracteres especiales
+    - **Performance**: Optimizado para carga rápida de opciones
+    
+    ### 🔗 Endpoints relacionados:
+    - `POST /emprestito/cargar-proceso` - Para crear nuevos procesos de empréstito usando estos bancos
+    - `GET /contratos_emprestito_all` - Para consultar contratos por banco
+    """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
+    
+    if not EMPRESTITO_OPERATIONS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Emprestito operations not available")
+    
+    try:
+        result = await get_bancos_emprestito_all()
+        
+        if not result["success"]:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error obteniendo bancos de empréstito: {result.get('error', 'Error desconocido')}"
+            )
+        
+        return create_utf8_response({
+            "success": True,
+            "data": result["data"],
+            "count": result["count"],
+            "collection": result["collection"],
+            "timestamp": result["timestamp"],
+            "last_updated": "2025-10-11T00:00:00Z",  # Endpoint creation date
+            "message": result["message"],
+            "metadata": {
+                "sorted": True,
+                "utf8_enabled": True,
+                "spanish_support": True,
+                "purpose": "Banco selection for emprestito processes"
+            }
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error procesando consulta de bancos: {str(e)}"
         )
 
 

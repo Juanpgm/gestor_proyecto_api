@@ -1,490 +1,261 @@
-# -*- coding: utf-8 -*-
 """
-Operaciones de Empréstito - Version Limpia
-Funciones para manejo de datos de empréstito con Firebase y SECOP
+Scripts para manejo de Procesos de Empréstito - Versión Limpia
+Solo funcionalidades esenciales habilitadas
 """
 
-import traceback
-import json
-import re
-import os
-import time
-import asyncio
-from typing import Dict, Any, List, Optional, Union
+import logging
+from typing import Dict, List, Any, Optional
 from datetime import datetime
-import pandas as pd
-from sodapy import Socrata
+from database.firebase_config import get_firestore_client
+
+# Configurar logging
+logger = logging.getLogger(__name__)
+
+# Variables de disponibilidad
+FIRESTORE_AVAILABLE = True
+try:
+    from database.firebase_config import get_firestore_client
+    get_firestore_client()
+except Exception as e:
+    FIRESTORE_AVAILABLE = False
+    logger.warning(f"Firebase no disponible: {e}")
+
+async def get_procesos_emprestito_all() -> Dict[str, Any]:
+    """Obtener todos los registros de la colección procesos_emprestito"""
+    try:
+        if not FIRESTORE_AVAILABLE:
+            return {"success": False, "error": "Firebase no disponible", "data": [], "count": 0}
+        
+        db = get_firestore_client()
+        if db is None:
+            return {"success": False, "error": "No se pudo conectar a Firestore", "data": [], "count": 0}
+        
+        collection_ref = db.collection('procesos_emprestito')
+        docs = collection_ref.stream()
+        procesos_data = []
+        
+        for doc in docs:
+            doc_data = doc.to_dict()
+            doc_data['id'] = doc.id  # Agregar ID del documento
+            # Limpiar datos de Firebase para serialización JSON
+            doc_data_clean = serialize_datetime_objects(doc_data)
+            procesos_data.append(doc_data_clean)
+        
+        return {
+            "success": True,
+            "data": procesos_data,
+            "count": len(procesos_data),
+            "collection": "procesos_emprestito",
+            "timestamp": datetime.now().isoformat(),
+            "message": f"Se obtuvieron {len(procesos_data)} procesos de empréstito exitosamente"
+        }
+        
+    except Exception as e:
+        return {
+            "success": False, 
+            "error": f"Error obteniendo todos los procesos de empréstito: {str(e)}",
+            "data": [],
+            "count": 0
+        }
 
 def serialize_datetime_objects(obj):
-    """
-    Convierte objetos datetime a strings ISO para serialización JSON
-    """
+    """Serializar objetos datetime para JSON"""
     if isinstance(obj, dict):
         return {key: serialize_datetime_objects(value) for key, value in obj.items()}
     elif isinstance(obj, list):
         return [serialize_datetime_objects(item) for item in obj]
+    elif hasattr(obj, 'timestamp'):  # Firebase Timestamp
+        return obj.strftime('%Y-%m-%d %H:%M:%S')
     elif isinstance(obj, datetime):
-        return obj.isoformat()
+        return obj.strftime('%Y-%m-%d %H:%M:%S')
     else:
         return obj
 
-async def procesar_proceso_individual(db_client, proceso_data, referencia_proceso, proceso_contractual, contratos_ref):
+async def restaurar_procesos_emprestito_usando_post() -> Dict[str, Any]:
     """
-    Procesa un proceso individual de empréstito:
-    1. Busca contratos en SECOP
-    2. Los transforma y guarda en contratos_emprestito
-    3. Retorna resultado del procesamiento
+    FUNCIÓN PARA RESTAURAR PROCESOS USANDO EL POST /emprestito/cargar-proceso
+    
+    Esta función toma todos los procesos existentes en la colección procesos_emprestito,
+    extrae los campos que necesita el POST /emprestito/cargar-proceso, y los procesa
+    usando la función procesar_emprestito_completo para restaurarlos a su formato original.
+    
+    Campos extraídos para el POST:
+    - referencia_proceso (obligatorio)
+    - nombre_centro_gestor (obligatorio) 
+    - nombre_banco (obligatorio)
+    - plataforma (obligatorio)
+    - bp (opcional)
+    - nombre_resumido_proceso (opcional)
+    - id_paa (opcional)
+    - valor_proyectado (opcional)
     """
-    resultado = {
-        "exito": False,
-        "contratos_encontrados": 0,
-        "documentos_nuevos": 0,
-        "documentos_actualizados": 0,
-        "contratos_guardados": [],
-        "error": None
-    }
+    logger.info("🔄 Iniciando restauración de procesos usando POST /emprestito/cargar-proceso...")
     
     try:
-        logger.info(f"🔍 Buscando contratos en SECOP para proceso: {proceso_contractual}")
+        if not FIRESTORE_AVAILABLE:
+            return {"success": False, "error": "Firebase no disponible"}
         
-        # Buscar contratos que contengan el proceso_contractual y el NIT específico
-        where_clause = f"proceso_de_compra LIKE '%{proceso_contractual}%' AND nit_entidad = '890399011'"
+        db = get_firestore_client()
+        if db is None:
+            return {"success": False, "error": "No se pudo conectar a Firestore"}
         
-        with Socrata("www.datos.gov.co", None) as client:
-            contratos_secop = client.get("jbjy-vk9h", limit=100, where=where_clause)
-            
-        resultado["contratos_encontrados"] = len(contratos_secop)
-        logger.info(f"📊 Encontrados {len(contratos_secop)} contratos en SECOP para {proceso_contractual}")
-        
-        if not contratos_secop:
-            resultado["exito"] = True  # No es error, simplemente no hay contratos
-            logger.info(f"ℹ️  No se encontraron contratos para el proceso {proceso_contractual}")
-            return resultado
-        
-        # Procesar cada contrato encontrado
-        for j, contrato in enumerate(contratos_secop, 1):
-            try:
-                logger.info(f"🔄 Procesando contrato {j}/{len(contratos_secop)}: {contrato.get('referencia_del_contrato', 'N/A')}")
-                
-                # Validar datos mínimos requeridos
-                if not contrato.get("referencia_del_contrato") and not contrato.get("id_contrato"):
-                    logger.warning(f"⚠️ Contrato sin referencia válida, saltando...")
-                    continue
-                
-                # Transformar contrato usando la lógica existente
-                contrato_transformado = transformar_contrato_secop(contrato, proceso_data, referencia_proceso, proceso_contractual)
-                
-                # Verificar si ya existe este contrato usando campos únicos
-                referencia_contrato = contrato_transformado.get("referencia_contrato", "")
-                id_contrato = contrato_transformado.get("id_contrato", "")
-                
-                # Buscar duplicados por referencia_contrato o id_contrato + proceso_contractual
-                existing_query = None
-                if referencia_contrato:
-                    existing_query = contratos_ref.where('referencia_contrato', '==', referencia_contrato).where('proceso_contractual', '==', proceso_contractual)
-                elif id_contrato:
-                    existing_query = contratos_ref.where('id_contrato', '==', id_contrato).where('proceso_contractual', '==', proceso_contractual)
-                
-                existing_docs = []
-                if existing_query:
-                    existing_docs = list(existing_query.limit(1).stream())
-                
-                if existing_docs:
-                    # Actualizar documento existente
-                    existing_doc = existing_docs[0]
-                    contrato_transformado["fecha_actualizacion"] = datetime.now()
-                    existing_doc.reference.update(contrato_transformado)
-                    
-                    resultado["documentos_actualizados"] += 1
-                    logger.info(f"🔄 Contrato actualizado: {referencia_contrato or id_contrato}")
-                else:
-                    # Crear nuevo documento con UID automático de Firebase (como procesos_emprestito)
-                    doc_ref = contratos_ref.add(contrato_transformado)
-                    
-                    resultado["documentos_nuevos"] += 1
-                    logger.info(f"✅ Nuevo contrato guardado: {referencia_contrato or id_contrato}")
-                
-                # Agregar a resultados (serializado para JSON)
-                contrato_serializable = serialize_datetime_objects(contrato_transformado)
-                resultado["contratos_guardados"].append(contrato_serializable)
-                
-            except Exception as e:
-                logger.error(f"❌ Error procesando contrato individual: {e}")
-                continue
-        
-        resultado["exito"] = True
-        logger.info(f"✅ Proceso individual completado: {resultado['contratos_encontrados']} encontrados, {resultado['documentos_nuevos']} nuevos, {resultado['documentos_actualizados']} actualizados")
-        
-    except Exception as e:
-        resultado["error"] = str(e)
-        logger.error(f"💥 Error en procesamiento individual de {referencia_proceso}: {e}")
-    
-    return resultado
-
-def transformar_contrato_secop(contrato, proceso_data, referencia_proceso, proceso_contractual):
-    """
-    Transforma un contrato de SECOP al esquema de contratos_emprestito
-    """
-    # Convertir BPIN desde c_digo_bpin
-    bpin_value = None
-    if contrato.get("c_digo_bpin"):
-        try:
-            bpin_str = str(contrato["c_digo_bpin"]).replace(',', '').replace(' ', '').strip()
-            if bpin_str and bpin_str != 'null' and bpin_str.lower() != 'none':
-                bpin_value = int(float(bpin_str))
-                logger.debug(f"✅ BPIN convertido: {contrato['c_digo_bpin']} → {bpin_value}")
-        except (ValueError, TypeError) as e:
-            logger.warning(f"⚠️ Error convertiendo BPIN '{contrato['c_digo_bpin']}': {e}")
-            bpin_value = None
-    
-    # Convertir valor del contrato a entero
-    valor_contrato = 0
-    if contrato.get("valor_del_contrato"):
-        try:
-            valor_str = str(contrato["valor_del_contrato"]).replace(',', '').replace(' ', '').strip()
-            if valor_str and valor_str != 'null':
-                valor_contrato = int(float(valor_str))
-        except (ValueError, TypeError):
-            valor_contrato = 0
-    
-    # Procesar fechas al formato ISO 8601
-    def process_date(date_field):
-        if not contrato.get(date_field):
-            return None
-        try:
-            fecha_str = str(contrato[date_field]).strip()
-            if fecha_str and fecha_str != 'null' and fecha_str.lower() != 'none':
-                # Intentar diferentes formatos de fecha
-                fecha_formats = [
-                    '%Y-%m-%dT%H:%M:%S.%f',  # 2025-08-27T00:00:00.000
-                    '%Y-%m-%dT%H:%M:%S',     # 2025-08-27T00:00:00
-                    '%Y-%m-%d',              # 2025-08-27
-                    '%d/%m/%Y',              # 27/08/2025
-                    '%m/%d/%Y',              # 08/27/2025
-                    '%Y%m%d',                # 20250827
-                ]
-                
-                for fmt in fecha_formats:
-                    try:
-                        fecha_parsed = datetime.strptime(fecha_str, fmt)
-                        fecha_final = fecha_parsed.strftime('%Y-%m-%d')
-                        logger.debug(f"📅 Fecha convertida {date_field}: '{fecha_str}' → '{fecha_final}'")
-                        return fecha_final
-                    except ValueError:
-                        continue
-                
-                logger.warning(f"⚠️ No se pudo convertir fecha {date_field}: '{fecha_str}'")
-            return None
-        except (ValueError, TypeError):
-            return None
-    
-    return {
-        # Campos heredados del proceso de empréstito
-        "referencia_proceso": referencia_proceso,
-        "nombre_centro_gestor": proceso_data.get('nombre_centro_gestor', ''),
-        "banco": proceso_data.get('nombre_banco', ''),  # CORREGIDO: heredar desde 'nombre_banco'
-        "bp": proceso_data.get('bp', ''),  # AGREGADO: heredar campo bp
-        
-        # Campos principales del contrato desde SECOP
-        "referencia_contrato": contrato.get("referencia_del_contrato", ""),
-        "id_contrato": contrato.get("id_contrato", ""),
-        "proceso_contractual": contrato.get("proceso_de_compra", ""),  # Cambio: proceso_de_compra -> proceso_contractual (sobrescribe el heredado)
-        "sector": contrato.get("sector", ""),  # Nuevo campo: sector desde SECOP
-        "nombre_procedimiento": contrato.get("nombre_del_procedimiento", ""),
-        "descripcion_proceso": contrato.get("descripcion_del_proceso", ""),  # Unificado: descripcion_del_proceso -> descripcion_proceso
-        "objeto_contrato": contrato.get("objeto_del_contrato", ""),
-        
-        # Estado y modalidad
-        "estado_contrato": contrato.get("estado_contrato", ""),  # Corregido: estado_contrato en SECOP
-        "modalidad_contratacion": contrato.get("modalidad_de_contratacion", ""),
-        "tipo_contrato": contrato.get("tipo_de_contrato", ""),
-        
-        # Valores monetarios
-        # ELIMINADO: "valor_del_contrato" - redundante con "valor_contrato"
-        "valor_contrato": valor_contrato,
-        "valor_pagado": contrato.get("valor_pagado", ""),
-        
-        # Personal y responsables
-        "representante_legal": contrato.get("nombre_representante_legal", ""),  # Limpio: nombre_representante_legal -> representante_legal
-        "ordenador_gasto": contrato.get("nombre_ordenador_del_gasto", ""),  # Limpio: nombre_ordenador_del_gasto -> ordenador_gasto
-        "supervisor": contrato.get("nombre_supervisor", ""),  # Limpio: nombre_supervisor -> supervisor
-        
-        # Fechas en formato ISO 8601
-        "fecha_firma_contrato": process_date("fecha_de_firma_del_contrato"),
-        "fecha_inicio_contrato": process_date("fecha_de_inicio_del_contrato"),
-        "fecha_fin_contrato": process_date("fecha_de_fin_del_contrato"),
-        
-        # Entidades participantes
-        "entidad_contratante": contrato.get("nombre_entidad", ""),
-        "nombre_contratista": contrato.get("nombre_del_contratista", ""),
-        
-        # NITs
-        "nit_entidad": contrato.get("nit_entidad", ""),
-        "nit_contratista": contrato.get("nit_del_contratista", ""),
-        
-        # BPIN (código BPIN mapeado correctamente)
-        "bpin": bpin_value,
-        
-        # URLs y enlaces
-        "urlproceso": contrato.get("urlproceso", ""),
-        
-        # Metadatos de guardado
-        "fecha_guardado": datetime.now(),
-        "fuente_datos": "SECOP_API",
-        "version_esquema": "1.1",
-        "_dataset_source": "jbjy-vk9h"
-    }
-
-# Configurar logging
-import logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# Importar Firebase con manejo de errores
-try:
-    from database.firebase_config import get_firestore_client
-    FIRESTORE_AVAILABLE = True
-    logger.info("✅ Firebase configurado correctamente")
-except ImportError as e:
-    logger.error(f"❌ Error importando Firebase: {e}")
-    FIRESTORE_AVAILABLE = False
-    
-    def get_firestore_client():
-        return None
-
-
-async def obtener_contratos_desde_proceso_contractual() -> Dict[str, Any]:
-    """
-    Obtener TODOS los registros de procesos_emprestito y buscar contratos en SECOP para cada uno,
-    guardando los resultados en la colección contratos_emprestito
-    
-    OPTIMIZADO para procesamiento completo:
-    - Procesa TODOS los procesos de empréstito automáticamente
-    - Hereda campos: nombre_centro_gestor, banco (desde nombre_banco), bp
-    - Mapea bpin desde c_digo_bpin de SECOP
-    - Elimina campos redundantes (valor_del_contrato, proceso_de_compra)
-    - Crea colección automáticamente si no existe
-    """
-    if not FIRESTORE_AVAILABLE:
-        return {
-            "success": False,
-            "error": "Firebase no disponible"
-        }
-    
-    inicio_tiempo = datetime.now()
-    logger.info("🚀 Iniciando obtención completa de contratos desde SECOP (procesamiento automático de TODOS los procesos)...")
-    
-    try:
-        db_client = get_firestore_client()
-        if not db_client:
-            return {
-                "success": False,
-                "error": "Error obteniendo cliente Firestore"
-            }
-        
-        # 1. Obtener todos los registros de la colección procesos_emprestito
-        procesos_ref = db_client.collection('procesos_emprestito')
-        procesos_docs = list(procesos_ref.stream())
+        # Obtener todos los procesos actuales
+        collection_ref = db.collection('procesos_emprestito')
+        procesos_docs = list(collection_ref.stream())
         
         if not procesos_docs:
+            logger.warning("⚠️ No se encontraron procesos para restaurar")
             return {
-                "success": False,
-                "error": "No se encontraron procesos en la colección procesos_emprestito",
-                "timestamp": datetime.now().isoformat()
+                "success": True,
+                "message": "No hay procesos para restaurar", 
+                "total_procesos": 0,
+                "restaurados": 0,
+                "errores": []
             }
         
-        # Variables de control
+        logger.info(f"📊 Encontrados {len(procesos_docs)} procesos para restaurar usando POST")
+        
         total_procesos = len(procesos_docs)
-        total_contratos_encontrados = 0
-        total_documentos_nuevos = 0
-        total_documentos_actualizados = 0
-        todos_contratos_guardados = []
-        procesos_con_errores = []
+        restaurados = 0
+        errores = []
+        procesos_restaurados = []
         
-        # Procesar TODOS los procesos de empréstito
-        procesos_a_procesar = procesos_docs
-        
-        logger.info(f"🔄 Procesamiento completo iniciado: {len(procesos_a_procesar)} procesos totales a procesar")
-        
-        # Crear la colección si no existe (Firestore la crea automáticamente al agregar el primer documento)
-        contratos_ref = db_client.collection('contratos_emprestito')
-        logger.info("📁 Referencia a colección 'contratos_emprestito' establecida (se creará automáticamente si no existe)")
-        
-        # 3. Procesar cada proceso de empréstito
-        procesados_exitosos = 0
-        
-        for i, proceso_doc in enumerate(procesos_a_procesar, 1):
-            logger.info(f"\n{'='*60}")
-            logger.info(f"🎯 PROCESO {i}/{total_procesos} - PROCESAMIENTO INDIVIDUAL")
-            logger.info(f"{'='*60}")
+        for doc in procesos_docs:
+            doc_id = doc.id
+            proceso_data = doc.to_dict()
+            
+            # Validar campos obligatorios del POST
+            referencia_proceso = proceso_data.get('referencia_proceso')
+            nombre_centro_gestor = proceso_data.get('nombre_centro_gestor')
+            nombre_banco = proceso_data.get('nombre_banco')
+            plataforma = proceso_data.get('plataforma')
+            
+            if not referencia_proceso:
+                error_msg = f"❌ Proceso {doc_id} no tiene 'referencia_proceso' (obligatorio)"
+                logger.warning(error_msg)
+                errores.append(error_msg)
+                continue
+                
+            if not nombre_centro_gestor:
+                error_msg = f"❌ Proceso {referencia_proceso} no tiene 'nombre_centro_gestor' (obligatorio)"
+                logger.warning(error_msg)
+                errores.append(error_msg)
+                continue
+                
+            if not nombre_banco:
+                error_msg = f"❌ Proceso {referencia_proceso} no tiene 'nombre_banco' (obligatorio)"
+                logger.warning(error_msg)
+                errores.append(error_msg)
+                continue
+                
+            if not plataforma:
+                plataforma = "SECOP II"  # Valor por defecto
+                logger.info(f"⚠️ Proceso {referencia_proceso} no tiene 'plataforma', usando default: SECOP II")
             
             try:
-                proceso_data = proceso_doc.to_dict()
-                referencia_proceso = proceso_data.get('referencia_proceso', '')
-                proceso_contractual = proceso_data.get('proceso_contractual', '')
+                logger.info(f"🔄 Procesando con POST: {referencia_proceso}")
                 
-                if not referencia_proceso or not proceso_contractual:
-                    logger.warning(f"❌ Proceso incompleto {i}/{total_procesos}: {proceso_doc.id}")
-                    procesos_con_errores.append({
-                        "id": proceso_doc.id,
-                        "referencia_proceso": referencia_proceso or "N/A",
-                        "error": "Datos incompletos (falta referencia_proceso o proceso_contractual)"
-                    })
-                    continue
+                # Preparar datos exactamente como los espera el POST /emprestito/cargar-proceso
+                datos_post = {
+                    "referencia_proceso": referencia_proceso,
+                    "nombre_centro_gestor": nombre_centro_gestor,
+                    "nombre_banco": nombre_banco,
+                    "plataforma": plataforma,
+                    "bp": proceso_data.get("bp"),  # Opcional
+                    "nombre_resumido_proceso": proceso_data.get("nombre_resumido_proceso"),  # Opcional
+                    "id_paa": proceso_data.get("id_paa"),  # Opcional
+                    "valor_proyectado": proceso_data.get("valor_proyectado")  # Opcional
+                }
                 
-                logger.info(f"📋 Procesando: {referencia_proceso} - {proceso_contractual}")
-                logger.info(f"🏦 Centro Gestor: {proceso_data.get('nombre_centro_gestor', 'N/A')}")
-                logger.info(f"💳 Banco: {proceso_data.get('nombre_banco', 'N/A')}")  # CORREGIDO: nombre_banco
-                logger.info(f"🔢 BP: {proceso_data.get('bp', 'N/A')}")  # AGREGADO: mostrar BP
+                # Limpiar valores None de los campos opcionales (como hace Form en FastAPI)
+                datos_post_clean = {k: v for k, v in datos_post.items() if v is not None}
                 
-                # Procesar este proceso individual
-                resultado_individual = await procesar_proceso_individual(
-                    db_client, proceso_data, referencia_proceso, proceso_contractual, contratos_ref
-                )
+                logger.info(f"📝 Datos para POST: {datos_post_clean}")
                 
-                if resultado_individual["exito"]:
-                    procesados_exitosos += 1
-                    total_documentos_nuevos += resultado_individual["documentos_nuevos"]
-                    total_documentos_actualizados += resultado_individual["documentos_actualizados"]
-                    total_contratos_encontrados += resultado_individual["contratos_encontrados"]
-                    todos_contratos_guardados.extend(resultado_individual["contratos_guardados"])
-                    
-                    logger.info(f"✅ ÉXITO - Proceso {i}/{total_procesos}: {resultado_individual['contratos_encontrados']} contratos encontrados, {resultado_individual['documentos_nuevos']} nuevos, {resultado_individual['documentos_actualizados']} actualizados")
-                else:
-                    procesos_con_errores.append({
-                        "id": proceso_doc.id,
+                # Llamar a la función del POST (procesar_emprestito_completo)
+                resultado = await procesar_emprestito_completo(datos_post_clean)
+                
+                if resultado.get("success"):
+                    restaurados += 1
+                    procesos_restaurados.append({
                         "referencia_proceso": referencia_proceso,
-                        "error": resultado_individual["error"]
+                        "doc_id_original": doc_id,
+                        "doc_id_nuevo": resultado.get("doc_id"),
+                        "datos_procesados": datos_post_clean
                     })
-                    logger.error(f"❌ ERROR - Proceso {i}/{total_procesos}: {resultado_individual['error']}")
-                
-                # Log de progreso
-                tiempo_transcurrido = (datetime.now() - inicio_tiempo).total_seconds()
-                logger.info(f"⏱️  Tiempo transcurrido: {tiempo_transcurrido:.1f}s | Exitosos: {procesados_exitosos}/{i}")
+                    logger.info(f"✅ POST exitoso para proceso {referencia_proceso}")
+                else:
+                    error_msg = f"❌ Error en POST para proceso {referencia_proceso}: {resultado.get('error')}"
+                    logger.error(error_msg)
+                    errores.append(error_msg)
                 
             except Exception as e:
-                logger.error(f"💥 EXCEPCIÓN en proceso {i}/{total_procesos}: {e}")
-                procesos_con_errores.append({
-                    "id": proceso_doc.id,
-                    "referencia_proceso": referencia_proceso if 'referencia_proceso' in locals() else "DESCONOCIDO",
-                    "error": f"Excepción durante procesamiento: {str(e)}"
-                })
-                continue
+                error_msg = f"❌ Excepción procesando proceso {referencia_proceso}: {str(e)}"
+                logger.error(error_msg)
+                errores.append(error_msg)
         
-        # Actualizar estadísticas finales
-        procesos_procesados = procesados_exitosos
-        total_duplicados_ignorados = 0  # Ya se cuenta en el procesamiento individual
-        
-        logger.info(f"\n🏁 PROCESAMIENTO COMPLETO FINALIZADO")
-        logger.info(f"📊 Estadísticas finales:")
-        logger.info(f"   - Total procesos en BD: {total_procesos}")
-        logger.info(f"   - Procesados exitosamente: {procesados_exitosos}")
-        logger.info(f"   - Procesos con errores: {len(procesos_con_errores)}")
-        logger.info(f"   - Contratos encontrados: {total_contratos_encontrados}")
-        logger.info(f"   - Documentos nuevos: {total_documentos_nuevos}")
-        logger.info(f"   - Documentos actualizados: {total_documentos_actualizados}")
-        
-        # 4. Preparar respuesta final
-        total_procesados = total_documentos_nuevos + total_documentos_actualizados + total_duplicados_ignorados
-        
-        return {
+        resultado = {
             "success": True,
-            "message": f"✅ PROCESAMIENTO COMPLETO: {procesados_exitosos}/{total_procesos} procesos exitosos. Contratos: {total_procesados} total ({total_documentos_nuevos} nuevos, {total_documentos_actualizados} actualizados)",
-            "resumen_procesamiento": {
-                "total_procesos_en_bd": total_procesos,
-                "procesos_procesados_exitosamente": procesados_exitosos,
-                "procesos_con_errores": len(procesos_con_errores),
-                "tasa_exito": f"{(procesados_exitosos/total_procesos*100):.1f}%" if total_procesos > 0 else "0%"
-            },
-            "criterios_busqueda": {
-                "coleccion_origen": "procesos_emprestito",
-                "filtro_secop": "nit_entidad = '890399011'",
-                "procesamiento": "completo_automatico"
-            },
-            "resultados_secop": {
-                "total_contratos_encontrados": total_contratos_encontrados,
-                "total_contratos_procesados": total_procesados
-            },
-            "firebase_operacion": {
-                "coleccion_destino": "contratos_emprestito",
-                "documentos_nuevos": total_documentos_nuevos,
-                "documentos_actualizados": total_documentos_actualizados,
-                "duplicados_ignorados": total_duplicados_ignorados
-            },
-            "contratos_guardados": todos_contratos_guardados,
-            "procesos_con_errores": procesos_con_errores,
-            "tiempo_total": (datetime.now() - inicio_tiempo).total_seconds(),
+            "message": f"Restauración usando POST completada: {restaurados}/{total_procesos} procesos restaurados",
+            "total_procesos": total_procesos,
+            "restaurados": restaurados,
+            "errores": errores,
+            "procesos_restaurados": procesos_restaurados,
+            "metodo_usado": "POST /emprestito/cargar-proceso",
+            "funcion_llamada": "procesar_emprestito_completo",
+            "campos_obligatorios": ["referencia_proceso", "nombre_centro_gestor", "nombre_banco", "plataforma"],
+            "campos_opcionales": ["bp", "nombre_resumido_proceso", "id_paa", "valor_proyectado"],
             "timestamp": datetime.now().isoformat()
         }
+        
+        logger.info(f"🏁 {resultado['message']}")
+        return resultado
         
     except Exception as e:
-        logger.error(f"Error general en obtener_contratos_desde_proceso_contractual: {e}")
+        logger.error(f"❌ Error en restauración usando POST: {str(e)}")
         return {
             "success": False,
-            "error": str(e),
-            "message": "Error durante el procesamiento iterativo de contratos",
-            "timestamp": datetime.now().isoformat()
+            "error": f"Error en restauración usando POST: {str(e)}"
         }
 
 
-# Funciones adicionales requeridas por __init__.py
-def verificar_proceso_existente(referencia_proceso: str) -> bool:
-    """Verificar si un proceso existe en la colección procesos_emprestito"""
-    if not FIRESTORE_AVAILABLE:
-        return False
-    try:
-        db_client = get_firestore_client()
-        if not db_client:
-            return False
-        docs = db_client.collection('procesos_emprestito').where('referencia_proceso', '==', referencia_proceso).limit(1).stream()
-        return len(list(docs)) > 0
-    except Exception:
-        return False
-
-def obtener_datos_secop(proceso_contractual: str) -> Dict[str, Any]:
-    """Obtener datos de SECOP para un proceso específico"""
-    return {"mensaje": "Función no implementada"}
-
-def obtener_datos_tvec(proceso_contractual: str) -> Dict[str, Any]:
-    """Obtener datos de TVEC para un proceso específico"""
-    return {"mensaje": "Función no implementada"}
-
-def detectar_plataforma(proceso_contractual: str) -> str:
-    """Detectar la plataforma (SECOP/TVEC) basada en el proceso contractual"""
-    return "SECOP"
-
-def guardar_proceso_emprestito(datos: Dict[str, Any]) -> Dict[str, Any]:
-    """Guardar un proceso de empréstito"""
-    return {"mensaje": "Función no implementada"}
-
-def guardar_orden_compra_emprestito(datos: Dict[str, Any]) -> Dict[str, Any]:
-    """Guardar una orden de compra de empréstito"""
-    return {"mensaje": "Función no implementada"}
-
-def procesar_emprestito_completo(datos: Dict[str, Any]) -> Dict[str, Any]:
-    """Procesar un empréstito completo"""
-    return {"mensaje": "Función no implementada"}
-
-def eliminar_proceso_emprestito(referencia_proceso: str) -> Dict[str, Any]:
-    """Eliminar un proceso de empréstito"""
-    return {"mensaje": "Función no implementada"}
-
-def actualizar_proceso_emprestito(referencia_proceso: str, datos: Dict[str, Any]) -> Dict[str, Any]:
-    """Actualizar un proceso de empréstito"""
-    return {"mensaje": "Función no implementada"}
-
-def obtener_codigos_contratos() -> Dict[str, Any]:
-    """Obtener códigos de contratos"""
-    return {"mensaje": "Función no implementada"}
-
-def buscar_y_poblar_contratos_secop(proceso_contractual: str) -> Dict[str, Any]:
-    """Buscar y poblar contratos desde SECOP"""
-    return {"mensaje": "Función deprecada - usar obtener_contratos_desde_proceso_contractual"}
+async def actualizar_procesos_emprestito_desde_secop() -> Dict[str, Any]:
+    """
+    FUNCIÓN TEMPORALMENTE DESHABILITADA
+    
+    El endpoint PUT /actualizar_procesos_emprestito está deshabilitado por mantenimiento.
+    Esta función será reimplementada cuando sea necesario.
+    """
+    logger.info("⚠️ Función actualizar_procesos_emprestito_desde_secop temporalmente deshabilitada")
+    
+    return {
+        "success": False,
+        "message": "⚠️ Función temporalmente deshabilitada",
+        "error": "El endpoint PUT /actualizar_procesos_emprestito está deshabilitado por mantenimiento",
+        "estadisticas": {
+            "total_procesos": 0,
+            "procesos_actualizados": 0,
+            "procesos_sin_cambios": 0,
+            "procesos_no_encontrados_secop": 0,
+            "procesos_con_errores": 0,
+            "tasa_actualizacion": "0.0%"
+        },
+        "detalles_actualizaciones": [],
+        "procesos_con_errores": [],
+        "configuracion": {
+            "dataset_secop": "p6dx-8zbt",
+            "filtro_aplicado": "nit_entidad = '890399011'",
+            "campos_preservados": ["bp", "nombre_banco", "nombre_centro_gestor", "id_paa", "referencia_proceso", "plataforma"],
+            "campos_comparados": ["nombre_proceso", "descripcion_proceso", "estado_proceso", "modalidad_contratacion", "etapa"]
+        },
+        "tiempo_total_segundos": 0,
+        "timestamp": datetime.now().isoformat(),
+        "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
 
 # Variable de disponibilidad
 EMPRESTITO_OPERATIONS_AVAILABLE = FIRESTORE_AVAILABLE
 
-# Funciones de disponibilidad
 def get_emprestito_operations_status() -> Dict[str, Any]:
     """Obtener estado de las operaciones de empréstito"""
     return {
@@ -493,3 +264,315 @@ def get_emprestito_operations_status() -> Dict[str, Any]:
         "supported_platforms": ["SECOP", "SECOP II", "SECOP I", "SECOP 2", "SECOP 1", "TVEC"],
         "collections": ["procesos_emprestito", "ordenes_compra_emprestito", "contratos_emprestito"]
     }
+
+
+# ============================================================================
+# FUNCIONES STUB (Para compatibilidad con importaciones existentes)
+# ============================================================================
+
+async def verificar_proceso_existente(referencia_proceso: str) -> Dict[str, Any]:
+    """
+    Verifica si ya existe un proceso con la referencia especificada en cualquiera 
+    de las colecciones de empréstito.
+    """
+    try:
+        if not FIRESTORE_AVAILABLE:
+            return {"existe": False, "error": "Firebase no disponible"}
+        
+        db = get_firestore_client()
+        if db is None:
+            return {"existe": False, "error": "No se pudo conectar a Firestore"}
+        
+        # Buscar en colección procesos_emprestito (SECOP)
+        procesos_ref = db.collection('procesos_emprestito')
+        procesos_query = procesos_ref.where('referencia_proceso', '==', referencia_proceso).limit(1)
+        procesos_docs = list(procesos_query.stream())
+        
+        if procesos_docs:
+            doc = procesos_docs[0]
+            return {
+                "existe": True,
+                "coleccion": "procesos_emprestito",
+                "documento": doc.to_dict(),
+                "doc_id": doc.id
+            }
+        
+        # Buscar en colección ordenes_compra_emprestito (TVEC)
+        ordenes_ref = db.collection('ordenes_compra_emprestito')
+        ordenes_query = ordenes_ref.where('referencia_proceso', '==', referencia_proceso).limit(1)
+        ordenes_docs = list(ordenes_query.stream())
+        
+        if ordenes_docs:
+            doc = ordenes_docs[0]
+            return {
+                "existe": True,
+                "coleccion": "ordenes_compra_emprestito",
+                "documento": doc.to_dict(),
+                "doc_id": doc.id
+            }
+        
+        return {"existe": False}
+        
+    except Exception as e:
+        logger.error(f"Error verificando proceso existente: {str(e)}")
+        return {"existe": False, "error": str(e)}
+
+async def obtener_datos_secop(*args, **kwargs):
+    """Función stub - No implementada temporalmente"""
+    return {"success": False, "error": "Función no implementada temporalmente"}
+
+async def obtener_datos_tvec(*args, **kwargs):
+    """Función stub - No implementada temporalmente"""
+    return {"success": False, "error": "Función no implementada temporalmente"}
+
+async def detectar_plataforma(*args, **kwargs):
+    """Función stub - No implementada temporalmente"""
+    return {"success": False, "error": "Función no implementada temporalmente"}
+
+async def guardar_proceso_emprestito(*args, **kwargs):
+    """Función stub - No implementada temporalmente"""
+    return {"success": False, "error": "Función no implementada temporalmente"}
+
+async def guardar_orden_compra_emprestito(*args, **kwargs):
+    """Función stub - No implementada temporalmente"""
+    return {"success": False, "error": "Función no implementada temporalmente"}
+
+async def procesar_emprestito_completo(datos_emprestito: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Procesa y guarda un empréstito completo implementando la lógica real del POST /emprestito/cargar-proceso.
+    
+    Esta función implementa:
+    1. Validación de duplicados
+    2. Detección automática de plataforma (SECOP/TVEC)
+    3. Validación de centro gestor contra nombres únicos
+    4. Almacenamiento en colección apropiada según plataforma
+    5. Formato original básico (sin datos de APIs externas)
+    """
+    try:
+        if not FIRESTORE_AVAILABLE:
+            return {"success": False, "error": "Firebase no disponible"}
+        
+        db = get_firestore_client()
+        if db is None:
+            return {"success": False, "error": "No se pudo conectar a Firestore"}
+        
+        # Validar campos obligatorios
+        referencia_proceso = datos_emprestito.get("referencia_proceso")
+        nombre_centro_gestor = datos_emprestito.get("nombre_centro_gestor")
+        nombre_banco = datos_emprestito.get("nombre_banco")
+        plataforma = datos_emprestito.get("plataforma")
+        
+        if not referencia_proceso:
+            return {"success": False, "error": "referencia_proceso es obligatorio"}
+        if not nombre_centro_gestor:
+            return {"success": False, "error": "nombre_centro_gestor es obligatorio"}
+        if not nombre_banco:
+            return {"success": False, "error": "nombre_banco es obligatorio"}
+        if not plataforma:
+            return {"success": False, "error": "plataforma es obligatorio"}
+        
+        logger.info(f"🔄 Procesando empréstito: {referencia_proceso} - {plataforma}")
+        
+        # 1. VALIDAR CENTRO GESTOR contra nombres únicos
+        try:
+            centros_gestores_validos = await obtener_centros_gestores_validos()
+            if centros_gestores_validos and nombre_centro_gestor not in centros_gestores_validos:
+                logger.warning(f"⚠️ Centro gestor no válido: {nombre_centro_gestor}")
+                # No es error crítico, solo advertencia
+        except Exception as e:
+            logger.warning(f"⚠️ No se pudo validar centro gestor: {str(e)}")
+        
+        # 2. DETECTAR PLATAFORMA
+        plataforma_detectada = detectar_plataforma_emprestito(plataforma)
+        coleccion_destino = determinar_coleccion_por_plataforma(plataforma_detectada)
+        
+        logger.info(f"🎯 Plataforma detectada: {plataforma_detectada} → Colección: {coleccion_destino}")
+        
+        # 3. VERIFICAR DUPLICADOS en ambas colecciones
+        resultado_duplicado = await verificar_proceso_existente(referencia_proceso)
+        if resultado_duplicado.get("existe"):
+            return {
+                "success": False,
+                "error": f"Ya existe un proceso con referencia {referencia_proceso}",
+                "duplicate": True,
+                "existing_data": resultado_duplicado.get("documento"),
+                "coleccion_existente": resultado_duplicado.get("coleccion")
+            }
+        
+        # 4. CREAR DOCUMENTO EN FORMATO ORIGINAL
+        documento_original = {
+            "referencia_proceso": referencia_proceso,
+            "nombre_centro_gestor": nombre_centro_gestor,
+            "nombre_banco": nombre_banco,
+            "bp": datos_emprestito.get("bp"),
+            "plataforma": plataforma_detectada,
+            "nombre_resumido_proceso": datos_emprestito.get("nombre_resumido_proceso"),
+            "id_paa": datos_emprestito.get("id_paa"),
+            "valor_proyectado": datos_emprestito.get("valor_proyectado"),
+            "fecha_creacion": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "fecha_actualizacion": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "fuente_datos": "MANUAL_ENTRY",
+            "estado_proceso": "En proceso",  # Estado inicial
+            "usuario_creacion": "sistema"
+        }
+        
+        # Limpiar valores None de campos opcionales
+        documento_limpio = {k: v for k, v in documento_original.items() if v is not None}
+        
+        # 5. GUARDAR EN COLECCIÓN APROPIADA
+        collection_ref = db.collection(coleccion_destino)
+        doc_ref = collection_ref.add(documento_limpio)
+        doc_id = doc_ref[1].id
+        
+        logger.info(f"✅ Proceso {referencia_proceso} creado exitosamente en {coleccion_destino}")
+        
+        return {
+            "success": True,
+            "message": f"Proceso de empréstito cargado exitosamente en {coleccion_destino}",
+            "data": documento_limpio,
+            "doc_id": doc_id,
+            "coleccion": coleccion_destino,
+            "plataforma_detectada": plataforma_detectada,
+            "fuente_datos": "MANUAL_ENTRY"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error procesando empréstito completo: {str(e)}")
+        return {
+            "success": False,
+            "error": f"Error procesando empréstito: {str(e)}"
+        }
+
+def detectar_plataforma_emprestito(plataforma: str) -> str:
+    """
+    Detecta y valida la plataforma (SECOP o TVEC).
+    """
+    try:
+        if not plataforma:
+            return 'SECOP'  # Por defecto
+        
+        plataforma_upper = plataforma.upper().strip()
+        
+        if plataforma_upper in ['SECOP', 'SECOP I', 'SECOP II']:
+            return 'SECOP'
+        elif plataforma_upper in ['TVEC', 'TIENDA VIRTUAL', 'TIENDA_VIRTUAL']:
+            return 'TVEC'
+        else:
+            logger.warning(f"Plataforma no reconocida: {plataforma}. Usando SECOP por defecto.")
+            return 'SECOP'
+            
+    except Exception as e:
+        logger.error(f"Error detectando plataforma: {str(e)}")
+        return 'SECOP'
+
+def determinar_coleccion_por_plataforma(plataforma: str) -> str:
+    """
+    Determina la colección de Firestore según la plataforma.
+    """
+    if plataforma == 'TVEC':
+        return 'ordenes_compra_emprestito'
+    else:  # SECOP por defecto
+        return 'procesos_emprestito'
+
+async def obtener_centros_gestores_validos() -> List[str]:
+    """
+    Obtiene la lista de centros gestores válidos desde el endpoint correspondiente.
+    """
+    try:
+        # Lista hardcodeada basada en los datos proporcionados por el usuario
+        centros_gestores = [
+            "UNIDAD DE PROYECTOS ESPECIALES - UPE",
+            "DIRECCION GENERAL DE CREDITO PUBLICO Y TESORO NACIONAL",
+            "PROGRAMA NACIONAL DE CIENCIA, TECNOLOGIA E INNOVACION",
+            "DIRECCION GENERAL DE ORDENAMIENTO Y DESARROLLO TERRITORIAL",
+            "DIRECCION GENERAL DE DESARROLLO EMPRESARIAL",
+            "PROGRAMA NACIONAL DE EMPRENDIMIENTO Y INNOVACION",
+            "PROGRAMA NACIONAL COLOMBIA CIENTIFICA",
+            "PROGRAMA NACIONAL DE FOMENTO A LA INVESTIGACION",
+            "PROGRAMA NACIONAL DE FINANCIAMIENTO DE LA INFRAESTRUCTURA",
+            "DIRECCION GENERAL DE COMPETITIVIDAD Y DESARROLLO PRODUCTIVO",
+            "PROGRAM NACIONAL DE APOYO DIRECTO AL EMPLEO Y ECOSISTEMA",
+            "PROGRAMA NACIONAL DE INNOVACION EMPRESARIAL",
+            "PROGRAMA NACIONAL DE DESARROLLO DE PROVEEDORES",
+            "PROGRAMA DE FORTALECIMIENTO DE LA GESTIÓN PÚBLICA TERRITORIAL",
+            "PROGRAMA NACIONAL DE TRANSFORMACIÓN PRODUCTIVA",
+            "PROGRAMA NACIONAL DE SERVICIOS DE DESARROLLO EMPRESARIAL",
+            "PROGRAMA NACIONAL DE DESARROLLO DE CONGLOMERADOS PRODUCTIVOS",
+            "PROGRAMA NACIONAL DE DESARROLLO DE INSTRUMENTOS DE CREDITO",
+            "DIRECCIONGENERAL DE DESARROLLO RURAL",
+            "PROGRAMA NACIONAL DE DESARROLLO RURAL CON EQUIDAD - PNDRE",
+            "PROGRAMA NACIONAL DE ASISTENCIA TECNICA AGROPECUARIA - PNATA",
+            "PROGRAMA NACIONAL DE ECONOMIA CAMPESINA, FAMILIAR Y COMUNITARIA",
+            "PROGRAMA NACIONAL DE CONSTRUCCION DE PAZ Y CONVIVENCIA",
+            "PROGRAMA NACIONAL DE RECONCILIACION Y CONVIVENCIA",
+            "PROGRAMA NACIONAL DE SUSTITUCION DE CULTIVOS ILICITOS - PNSCI",
+            "PROGRAMA NACIONAL DE ATENCION A VICTIMAS DEL CONFLICTO ARMADO",
+            "PROGRAM NACIONAL DE CIENCIA TECNOLOGIA E INNOVACION AGROPECUARIA"
+        ]
+        
+        return centros_gestores
+        
+    except Exception as e:
+        logger.error(f"Error obteniendo centros gestores válidos: {str(e)}")
+        return []
+
+async def get_bancos_emprestito_all() -> Dict[str, Any]:
+    """Obtener todos los registros de la colección bancos_emprestito"""
+    try:
+        if not FIRESTORE_AVAILABLE:
+            return {"success": False, "error": "Firebase no disponible", "data": [], "count": 0}
+        
+        db = get_firestore_client()
+        if db is None:
+            return {"success": False, "error": "No se pudo conectar a Firestore", "data": [], "count": 0}
+        
+        collection_ref = db.collection('bancos_emprestito')
+        docs = collection_ref.stream()
+        bancos_data = []
+        
+        for doc in docs:
+            doc_data = doc.to_dict()
+            doc_data['id'] = doc.id  # Agregar ID del documento
+            # Limpiar datos de Firebase para serialización JSON
+            doc_data_clean = serialize_datetime_objects(doc_data)
+            bancos_data.append(doc_data_clean)
+        
+        # Ordenar por nombre_banco para mejor presentación
+        bancos_data.sort(key=lambda x: x.get('nombre_banco', '').lower())
+        
+        return {
+            "success": True,
+            "data": bancos_data,
+            "count": len(bancos_data),
+            "collection": "bancos_emprestito",
+            "timestamp": datetime.now().isoformat(),
+            "message": f"Se obtuvieron {len(bancos_data)} bancos de empréstito exitosamente"
+        }
+        
+    except Exception as e:
+        return {
+            "success": False, 
+            "error": f"Error obteniendo todos los bancos de empréstito: {str(e)}",
+            "data": [],
+            "count": 0
+        }
+
+async def eliminar_proceso_emprestito(*args, **kwargs):
+    """Función stub - No implementada temporalmente"""
+    return {"success": False, "error": "Función no implementada temporalmente"}
+
+async def actualizar_proceso_emprestito(*args, **kwargs):
+    """Función stub - No implementada temporalmente"""
+    return {"success": False, "error": "Función no implementada temporalmente"}
+
+async def obtener_codigos_contratos(*args, **kwargs):
+    """Función stub - No implementada temporalmente"""
+    return {"success": False, "error": "Función no implementada temporalmente"}
+
+async def buscar_y_poblar_contratos_secop(*args, **kwargs):
+    """Función stub - No implementada temporalmente"""
+    return {"success": False, "error": "Función no implementada temporalmente"}
+
+async def obtener_contratos_desde_proceso_contractual(*args, **kwargs):
+    """Función stub - No implementada temporalmente"""
+    return {"success": False, "error": "Función no implementada temporalmente"}

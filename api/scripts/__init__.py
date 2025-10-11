@@ -133,6 +133,7 @@ try:
         buscar_y_poblar_contratos_secop,
         obtener_contratos_desde_proceso_contractual,
         get_emprestito_operations_status,
+        get_bancos_emprestito_all,
         EMPRESTITO_OPERATIONS_AVAILABLE
     )
     print(f"✅ Emprestito operations imported successfully - AVAILABLE: {EMPRESTITO_OPERATIONS_AVAILABLE}")
@@ -179,6 +180,9 @@ except ImportError as e:
     
     def get_emprestito_operations_status():
         return {"operations_available": False, "error": "Emprestito operations not available"}
+    
+    async def get_bancos_emprestito_all():
+        return {"success": False, "error": "Emprestito operations not available", "data": [], "count": 0}
 
 # Importar operaciones de gestión de usuarios
 try:
@@ -301,6 +305,7 @@ __all__ = [
     "buscar_y_poblar_contratos_secop",
     "obtener_contratos_desde_proceso_contractual",
     "get_emprestito_operations_status",
+    "get_bancos_emprestito_all",
     
     # User management operations
     "validate_email",
