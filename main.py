@@ -493,6 +493,7 @@ async def read_root():
             ],
             "gestion_emprestito": [
                 "/emprestito/cargar-proceso",
+                "/emprestito/cargar-orden-compra",
                 "/emprestito/proceso/{referencia_proceso}",
                 "/emprestito/obtener-contratos-secop",
                 "/contratos_emprestito_all",
@@ -3292,6 +3293,7 @@ try:
         buscar_y_poblar_contratos_secop,
         obtener_contratos_desde_proceso_contractual,
         get_emprestito_operations_status,
+        cargar_orden_compra_directa,
         EMPRESTITO_OPERATIONS_AVAILABLE
     )
     from api.models import EmprestitoRequest, EmprestitoResponse
@@ -3444,6 +3446,162 @@ async def cargar_proceso_emprestito(
         raise
     except Exception as e:
         logger.error(f"Error en endpoint de empréstito: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "success": False,
+                "error": "Error interno del servidor",
+                "message": "Por favor, inténtelo de nuevo más tarde",
+                "code": "INTERNAL_SERVER_ERROR"
+            }
+        )
+
+@app.post("/emprestito/cargar-orden-compra", tags=["Gestión de Empréstito"])
+async def cargar_orden_compra_emprestito(
+    numero_orden: str = Form(..., description="Número de la orden de compra (obligatorio)"),
+    nombre_centro_gestor: str = Form(..., description="Centro gestor responsable (obligatorio)"),
+    nombre_banco: str = Form(..., description="Nombre del banco (obligatorio)"),
+    nombre_resumido_proceso: str = Form(..., description="Nombre resumido del proceso (obligatorio)"),
+    valor_proyectado: float = Form(..., description="Valor proyectado (obligatorio)"),
+    bp: Optional[str] = Form(None, description="Código BP (opcional)")
+):
+    """
+    ## 📋 Cargar Orden de Compra de Empréstito
+    
+    Endpoint para carga directa de órdenes de compra de empréstito en la colección 
+    `ordenes_compra_emprestito` sin procesamiento de APIs externas.
+    
+    ### ✅ Funcionalidades principales:
+    - **Carga directa**: Registra directamente en `ordenes_compra_emprestito`
+    - **Validación de duplicados**: Verifica existencia previa usando `numero_orden`
+    - **Validación de campos**: Verifica que todos los campos obligatorios estén presentes
+    - **Timestamps automáticos**: Agrega fecha de creación y actualización
+    
+    ### ⚙️ Campos obligatorios:
+    - `numero_orden`: Número único de la orden de compra
+    - `nombre_centro_gestor`: Centro gestor responsable
+    - `nombre_banco`: Nombre del banco
+    - `nombre_resumido_proceso`: Nombre resumido del proceso
+    - `valor_proyectado`: Valor proyectado en pesos colombianos
+    
+    ### 📝 Campos opcionales:
+    - `bp`: Código BP
+    
+    ### 🛡️ Validación de duplicados:
+    Busca `numero_orden` en la colección `ordenes_compra_emprestito` antes de crear nuevo registro.
+    
+    ### 📊 Estructura de datos guardados:
+    ```json
+    {
+        "numero_orden": "OC-2024-001",
+        "nombre_centro_gestor": "Secretaría de Salud",
+        "nombre_banco": "Banco Mundial",
+        "nombre_resumido_proceso": "Suministro equipos médicos",
+        "valor_proyectado": 1500000000.0,
+        "bp": "BP-2024-001",
+        "fecha_creacion": "2024-10-14T10:30:00",
+        "fecha_actualizacion": "2024-10-14T10:30:00",
+        "estado": "activo",
+        "tipo": "orden_compra_manual"
+    }
+    ```
+    
+    ### 📋 Ejemplo de request:
+    ```json
+    {
+        "numero_orden": "OC-SALUD-003-2024",
+        "nombre_centro_gestor": "Secretaría de Salud",
+        "nombre_banco": "Banco Mundial",
+        "nombre_resumido_proceso": "Suministro equipos médicos",
+        "valor_proyectado": 1500000000.0,
+        "bp": "BP-2024-001"
+    }
+    ```
+    
+    ### ✅ Respuesta exitosa (201):
+    ```json
+    {
+        "success": true,
+        "message": "Orden de compra OC-SALUD-003-2024 guardada exitosamente",
+        "doc_id": "abc123def456",
+        "data": { ... },
+        "coleccion": "ordenes_compra_emprestito"
+    }
+    ```
+    
+    ### ❌ Respuesta de duplicado (409):
+    ```json
+    {
+        "success": false,
+        "error": "Ya existe una orden de compra con número: OC-SALUD-003-2024",
+        "duplicate": true,
+        "existing_data": { ... }
+    }
+    ```
+    """
+    try:
+        check_emprestito_availability()
+        
+        # Crear diccionario con los datos del formulario
+        datos_orden = {
+            "numero_orden": numero_orden,
+            "nombre_centro_gestor": nombre_centro_gestor,
+            "nombre_banco": nombre_banco,
+            "nombre_resumido_proceso": nombre_resumido_proceso,
+            "valor_proyectado": valor_proyectado,
+            "bp": bp
+        }
+        
+        # Procesar orden de compra
+        resultado = await cargar_orden_compra_directa(datos_orden)
+        
+        # Manejar respuesta según el resultado
+        if not resultado.get("success"):
+            # Manejar caso especial de duplicado
+            if resultado.get("duplicate"):
+                return JSONResponse(
+                    content={
+                        "success": False,
+                        "error": resultado.get("error"),
+                        "duplicate": True,
+                        "existing_data": resultado.get("existing_data"),
+                        "message": "Ya existe una orden de compra con este número",
+                        "timestamp": datetime.now().isoformat()
+                    },
+                    status_code=409,  # Conflict
+                    headers={"Content-Type": "application/json; charset=utf-8"}
+                )
+            else:
+                # Error general
+                return JSONResponse(
+                    content={
+                        "success": False,
+                        "error": resultado.get("error"),
+                        "message": "Error al procesar la orden de compra",
+                        "timestamp": datetime.now().isoformat()
+                    },
+                    status_code=400,
+                    headers={"Content-Type": "application/json; charset=utf-8"}
+                )
+        
+        # Respuesta exitosa
+        return JSONResponse(
+            content={
+                "success": True,
+                "message": resultado.get("message"),
+                "data": resultado.get("data"),
+                "doc_id": resultado.get("doc_id"),
+                "coleccion": resultado.get("coleccion"),
+                "timestamp": datetime.now().isoformat()
+            },
+            status_code=201,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en endpoint de orden de compra: {e}")
         raise HTTPException(
             status_code=500,
             detail={

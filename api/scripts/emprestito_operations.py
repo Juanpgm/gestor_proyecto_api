@@ -1177,3 +1177,92 @@ async def obtener_contratos_desde_proceso_contractual() -> Dict[str, Any]:
             "message": "Error durante el procesamiento iterativo de contratos",
             "timestamp": datetime.now().isoformat()
         }
+
+
+async def cargar_orden_compra_directa(datos_orden: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Cargar orden de compra directamente en la colección ordenes_compra_emprestito
+    sin procesamiento adicional de APIs externas
+    """
+    if not FIRESTORE_AVAILABLE:
+        return {
+            "success": False,
+            "error": "Firebase no disponible"
+        }
+
+    try:
+        # Validar campos obligatorios
+        campos_obligatorios = [
+            "numero_orden", 
+            "nombre_centro_gestor", 
+            "nombre_banco", 
+            "nombre_resumido_proceso", 
+            "valor_proyectado"
+        ]
+        
+        for campo in campos_obligatorios:
+            if not datos_orden.get(campo):
+                return {
+                    "success": False,
+                    "error": f"El campo '{campo}' es obligatorio"
+                }
+
+        # Verificar si ya existe una orden con el mismo número
+        numero_orden = datos_orden.get("numero_orden", "").strip()
+        
+        db_client = get_firestore_client()
+        if not db_client:
+            return {
+                "success": False,
+                "error": "Error obteniendo cliente Firestore"
+            }
+
+        # Buscar duplicados por numero_orden
+        ordenes_ref = db_client.collection('ordenes_compra_emprestito')
+        query_resultado = ordenes_ref.where('numero_orden', '==', numero_orden).get()
+
+        if len(query_resultado) > 0:
+            return {
+                "success": False,
+                "error": f"Ya existe una orden de compra con número: {numero_orden}",
+                "duplicate": True,
+                "existing_data": {
+                    "doc_id": query_resultado[0].id,
+                    "numero_orden": numero_orden
+                }
+            }
+
+        # Preparar datos para guardar
+        datos_completos = {
+            "numero_orden": numero_orden,
+            "nombre_centro_gestor": datos_orden.get("nombre_centro_gestor", "").strip(),
+            "nombre_banco": datos_orden.get("nombre_banco", "").strip(),
+            "nombre_resumido_proceso": datos_orden.get("nombre_resumido_proceso", "").strip(),
+            "valor_proyectado": float(datos_orden.get("valor_proyectado", 0)),
+            "bp": datos_orden.get("bp", "").strip() if datos_orden.get("bp") else None,
+            "fecha_creacion": datetime.now(),
+            "fecha_actualizacion": datetime.now(),
+            "estado": "activo",
+            "tipo": "orden_compra_manual"
+        }
+
+        # Guardar en Firestore
+        doc_ref = db_client.collection('ordenes_compra_emprestito').add(datos_completos)
+        doc_id = doc_ref[1].id
+
+        logger.info(f"Orden de compra creada exitosamente: {doc_id}")
+
+        return {
+            "success": True,
+            "doc_id": doc_id,
+            "data": serialize_datetime_objects(datos_completos),
+            "message": f"Orden de compra {numero_orden} guardada exitosamente",
+            "coleccion": "ordenes_compra_emprestito"
+        }
+
+    except Exception as e:
+        logger.error(f"Error cargando orden de compra: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }

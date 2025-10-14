@@ -134,6 +134,7 @@ try:
         obtener_contratos_desde_proceso_contractual,
         get_emprestito_operations_status,
         get_bancos_emprestito_all,
+        cargar_orden_compra_directa,
         EMPRESTITO_OPERATIONS_AVAILABLE
     )
     print(f"✅ Emprestito operations imported successfully - AVAILABLE: {EMPRESTITO_OPERATIONS_AVAILABLE}")
@@ -170,6 +171,9 @@ except ImportError as e:
         return {"success": False, "error": "Emprestito operations not available"}
     
     async def obtener_codigos_contratos(referencia_proceso: str, proceso_contractual: str):
+        return {"success": False, "error": "Emprestito operations not available"}
+    
+    async def cargar_orden_compra_directa(datos_orden):
         return {"success": False, "error": "Emprestito operations not available"}
     
     async def buscar_y_poblar_contratos_secop(referencia_proceso: str, proceso_contractual: str):
@@ -306,6 +310,7 @@ __all__ = [
     "obtener_contratos_desde_proceso_contractual",
     "get_emprestito_operations_status",
     "get_bancos_emprestito_all",
+    "cargar_orden_compra_directa",
     
     # User management operations
     "validate_email",
