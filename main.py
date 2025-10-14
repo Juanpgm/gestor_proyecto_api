@@ -2262,15 +2262,21 @@ async def obtener_reportes_contratos():
     ## 📋 Obtener Todos los Reportes de Contratos
     
     **Propósito**: Obtener listado completo de todos los reportes de contratos almacenados en Firebase.
-    Muestra todos los registros de la colección `reportes_contratos`.
+    Muestra todos los registros de la colección `reportes_contratos` con `nombre_centro_gestor` 
+    actualizado desde la colección `contratos_emprestito` cuando sea necesario.
+    
+    ### 🔄 Integración con contratos_emprestito:
+    - Si un reporte no tiene `nombre_centro_gestor` o está vacío, se busca automáticamente 
+      en la colección `contratos_emprestito` usando `referencia_contrato` como clave
+    - Los reportes actualizados incluyen el campo `nombre_centro_gestor_source: 'contratos_emprestito'`
     
     ### 📊 Ordenamiento:
     Los resultados se ordenan por `fecha_reporte` descendente (más recientes primero).
     
     ### 💡 Casos de uso:
     - Obtener listado completo para dashboard de seguimiento
-    - Vista general de todos los reportes generados
-    - Administración y auditoría de reportes
+    - Vista general de todos los reportes generados con datos completos
+    - Administración y auditoría de reportes con información del centro gestor
     """
     # Verificar disponibilidad de servicios
     if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE or not REPORTES_CONTRATOS_AVAILABLE:
