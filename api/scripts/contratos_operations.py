@@ -159,8 +159,29 @@ async def get_contratos_init_data(filters: Optional[Dict[str, Any]] = None) -> D
         }
 
 
+async def get_nombre_resumido_proceso_by_referencia(db, referencia_proceso: str) -> str:
+    """Obtener nombre_resumido_proceso desde la colección procesos_emprestito"""
+    try:
+        if not referencia_proceso:
+            return ""
+        
+        # Buscar en procesos_emprestito por referencia_proceso
+        procesos_ref = db.collection('procesos_emprestito')
+        query = procesos_ref.where('referencia_proceso', '==', referencia_proceso)
+        docs = list(query.stream())
+        
+        if docs:
+            proceso_data = docs[0].to_dict()
+            return proceso_data.get('nombre_resumido_proceso', '')
+        
+        return ""
+    except Exception as e:
+        print(f"Error obteniendo nombre_resumido_proceso para {referencia_proceso}: {str(e)}")
+        return ""
+
+
 async def get_contratos_emprestito_all() -> Dict[str, Any]:
-    """Obtener todos los registros de la colección contratos_emprestito"""
+    """Obtener todos los registros de la colección contratos_emprestito con nombre_resumido_proceso heredado"""
     try:
         db = get_firestore_client()
         if db is None:
@@ -173,6 +194,20 @@ async def get_contratos_emprestito_all() -> Dict[str, Any]:
         for doc in docs:
             doc_data = doc.to_dict()
             doc_data['id'] = doc.id  # Agregar ID del documento
+            
+            # Obtener referencia_proceso del contrato
+            referencia_proceso = doc_data.get('referencia_proceso', '')
+            
+            # Si referencia_proceso es una lista, tomar el primer elemento
+            if isinstance(referencia_proceso, list):
+                referencia_proceso = referencia_proceso[0] if referencia_proceso else ''
+            
+            # Buscar nombre_resumido_proceso en procesos_emprestito
+            if referencia_proceso:
+                nombre_resumido_proceso = await get_nombre_resumido_proceso_by_referencia(db, referencia_proceso)
+                if nombre_resumido_proceso:
+                    doc_data['nombre_resumido_proceso'] = nombre_resumido_proceso
+            
             # Limpiar datos de Firebase para serialización JSON
             doc_data_clean = clean_firebase_data(doc_data)
             contratos_data.append(doc_data_clean)
@@ -183,7 +218,7 @@ async def get_contratos_emprestito_all() -> Dict[str, Any]:
             "count": len(contratos_data),
             "collection": "contratos_emprestito",
             "timestamp": datetime.now().isoformat(),
-            "message": f"Se obtuvieron {len(contratos_data)} contratos de empréstito exitosamente"
+            "message": f"Se obtuvieron {len(contratos_data)} contratos de empréstito exitosamente con datos heredados de procesos_emprestito"
         }
         
     except Exception as e:

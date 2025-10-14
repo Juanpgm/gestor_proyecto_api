@@ -3952,6 +3952,10 @@ async def obtener_todos_contratos_emprestito():
     - **modalidad_contratacion**: Modalidad de contratación
     - **entidad_contratante**: Entidad que contrata
     - **contratista**: Empresa contratista
+    - **nombre_resumido_proceso**: 🔄 Heredado desde procesos_emprestito
+    
+    ### 🔄 Campos heredados desde procesos_emprestito:
+    - **nombre_resumido_proceso**: Nombre resumido del proceso obtenido automáticamente usando referencia_proceso
     
     ### 📝 Ejemplo de uso:
     ```javascript
