@@ -244,13 +244,79 @@ async def get_nombre_resumido_proceso_by_referencia(db, referencia_proceso: str)
         return ""
 
 
+def extract_orden_compra_fields_all(orden_data: dict) -> dict:
+    """Extrae y mapea campos de orden de compra usando programación funcional para contratos_emprestito_all"""
+    field_mapping = {
+        'bpin': lambda x: x.get('bpin', ''),
+        'banco': lambda x: x.get('banco', ''),
+        'nombre_centro_gestor': lambda x: x.get('nombre_centro_gestor', ''),
+        'estado_contrato': lambda x: x.get('estado_orden', ''),
+        'referencia_contrato': lambda x: x.get('numero_orden', ''),
+        'referencia_proceso': lambda x: x.get('solicitud_id', ''),
+        'objeto_contrato': lambda x: x.get('objeto_orden', ''),
+        'modalidad_contratacion': lambda x: x.get('modalidad_contratacion', ''),
+        'fecha_inicio_contrato': lambda x: x.get('fecha_publicacion_orden', ''),
+        'fecha_fin_contrato': lambda x: x.get('fecha_vencimiento_orden', ''),
+        'tipo_contrato': lambda x: "Orden de Compra - TVEC",
+        'nombre_contratista': lambda x: x.get('nombre_proveedor', ''),
+        'valor_contrato': lambda x: x.get('valor_orden', ''),
+        'ordenador_gasto': lambda x: x.get('ordenador_gasto', ''),
+        'nombre_resumido_proceso': lambda x: x.get('nombre_resumido_proceso', '')
+    }
+    
+    # Aplicar mapeo funcional
+    mapped_data = {new_field: mapper(orden_data) for new_field, mapper in field_mapping.items()}
+    
+    # Agregar ID del documento
+    mapped_data['id'] = orden_data.get('id', '')
+    
+    return mapped_data
+
+async def get_ordenes_compra_all_data(db) -> list:
+    """Obtener datos de órdenes de compra mapeados para contratos_emprestito_all"""
+    try:
+        collection_ref = db.collection('ordenes_compra_emprestito')
+        docs = collection_ref.stream()
+        ordenes_data = []
+        
+        for doc in docs:
+            doc_data = doc.to_dict()
+            doc_data['id'] = doc.id
+            
+            # Obtener referencia_proceso (solicitud_id) de la orden
+            referencia_proceso = doc_data.get('solicitud_id', '')
+            
+            # Si referencia_proceso es una lista, tomar el primer elemento
+            if isinstance(referencia_proceso, list):
+                referencia_proceso = referencia_proceso[0] if referencia_proceso else ''
+            
+            # Buscar nombre_resumido_proceso en procesos_emprestito
+            if referencia_proceso:
+                nombre_resumido_proceso = await get_nombre_resumido_proceso_by_referencia(db, referencia_proceso)
+                if nombre_resumido_proceso:
+                    doc_data['nombre_resumido_proceso'] = nombre_resumido_proceso
+            
+            # Mapear campos usando programación funcional
+            mapped_data = extract_orden_compra_fields_all(doc_data)
+            
+            # Limpiar datos de Firebase para serialización JSON
+            mapped_data_clean = clean_firebase_data(mapped_data)
+            ordenes_data.append(mapped_data_clean)
+        
+        return ordenes_data
+        
+    except Exception as e:
+        print(f"Error obteniendo órdenes de compra: {str(e)}")
+        return []
+
 async def get_contratos_emprestito_all() -> Dict[str, Any]:
-    """Obtener todos los registros de la colección contratos_emprestito con nombre_resumido_proceso heredado"""
+    """Obtener todos los registros de las colecciones contratos_emprestito y ordenes_compra_emprestito con campos unificados"""
     try:
         db = get_firestore_client()
         if db is None:
             return {"success": False, "error": "No se pudo conectar a Firestore", "data": [], "count": 0}
         
+        # Obtener contratos de empréstito
         collection_ref = db.collection('contratos_emprestito')
         docs = collection_ref.stream()
         contratos_data = []
@@ -276,13 +342,21 @@ async def get_contratos_emprestito_all() -> Dict[str, Any]:
             doc_data_clean = clean_firebase_data(doc_data)
             contratos_data.append(doc_data_clean)
         
+        # Obtener órdenes de compra mapeadas
+        ordenes_data = await get_ordenes_compra_all_data(db)
+        
+        # Combinar ambas colecciones
+        all_data = contratos_data + ordenes_data
+        
         return {
             "success": True,
-            "data": contratos_data,
-            "count": len(contratos_data),
-            "collection": "contratos_emprestito",
+            "data": all_data,
+            "count": len(all_data),
+            "contratos_count": len(contratos_data),
+            "ordenes_count": len(ordenes_data),
+            "collections": ["contratos_emprestito", "ordenes_compra_emprestito"],
             "timestamp": datetime.now().isoformat(),
-            "message": f"Se obtuvieron {len(contratos_data)} contratos de empréstito exitosamente con datos heredados de procesos_emprestito"
+            "message": f"Se obtuvieron {len(contratos_data)} contratos y {len(ordenes_data)} órdenes de compra exitosamente ({len(all_data)} registros totales)"
         }
         
     except Exception as e:

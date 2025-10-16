@@ -4150,7 +4150,9 @@ async def obtener_todos_contratos_emprestito():
             "success": True,
             "data": result["data"],
             "count": result["count"],
-            "collection": result["collection"],
+            "contratos_count": result["contratos_count"],
+            "ordenes_count": result["ordenes_count"],
+            "collections": result["collections"],
             "timestamp": datetime.now().isoformat(),
             "last_updated": "2025-10-10T00:00:00Z",
             "message": result["message"]
