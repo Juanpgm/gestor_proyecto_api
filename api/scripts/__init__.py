@@ -265,6 +265,52 @@ except ImportError as e:
     async def process_proyectos_presupuestales_json(proyectos_data, update_mode="merge"):
         return {"success": False, "error": "Proyectos presupuestales operations not available"}
 
+# Importar operaciones de enriquecimiento TVEC
+try:
+    from .tvec_enrich_operations import (
+        obtener_ordenes_compra_tvec_enriquecidas,
+        get_tvec_enrich_status,
+        TVEC_ENRICH_OPERATIONS_AVAILABLE
+    )
+    print(f"✅ TVEC enrich operations imported successfully - AVAILABLE: {TVEC_ENRICH_OPERATIONS_AVAILABLE}")
+except ImportError as e:
+    print(f"Warning: TVEC enrich operations not available: {e}")
+    TVEC_ENRICH_OPERATIONS_AVAILABLE = False
+    
+    # Crear funciones dummy para TVEC enrich
+    async def obtener_ordenes_compra_tvec_enriquecidas():
+        return {"success": False, "error": "TVEC enrich operations not available"}
+    
+    def get_tvec_enrich_status():
+        return {"operations_available": False, "error": "TVEC enrich operations not available"}
+
+# Importar operaciones de órdenes de compra
+try:
+    from .ordenes_compra_operations import (
+        get_ordenes_compra_emprestito_all,
+        get_ordenes_compra_emprestito_by_referencia,
+        get_ordenes_compra_emprestito_by_centro_gestor,
+        get_ordenes_compra_operations_status,
+        ORDENES_COMPRA_OPERATIONS_AVAILABLE
+    )
+    print(f"✅ Ordenes compra operations imported successfully - AVAILABLE: {ORDENES_COMPRA_OPERATIONS_AVAILABLE}")
+except ImportError as e:
+    print(f"Warning: Ordenes compra operations not available: {e}")
+    ORDENES_COMPRA_OPERATIONS_AVAILABLE = False
+    
+    # Crear funciones dummy para órdenes de compra
+    async def get_ordenes_compra_emprestito_all():
+        return {"success": False, "error": "Ordenes compra operations not available", "data": [], "count": 0}
+    
+    async def get_ordenes_compra_emprestito_by_referencia(numero_orden: str):
+        return {"success": False, "error": "Ordenes compra operations not available", "data": [], "count": 0}
+    
+    async def get_ordenes_compra_emprestito_by_centro_gestor(nombre_centro_gestor: str):
+        return {"success": False, "error": "Ordenes compra operations not available", "data": [], "count": 0}
+    
+    def get_ordenes_compra_operations_status():
+        return {"operations_available": False, "error": "Ordenes compra operations not available"}
+
 __all__ = [
     # Firebase operations
     "get_collections_info",
@@ -348,6 +394,16 @@ __all__ = [
     # Proyectos presupuestales operations
     "process_proyectos_presupuestales_json",
     
+    # TVEC enrich operations
+    "obtener_ordenes_compra_tvec_enriquecidas",
+    "get_tvec_enrich_status",
+    
+    # Ordenes compra operations
+    "get_ordenes_compra_emprestito_all",
+    "get_ordenes_compra_emprestito_by_referencia",
+    "get_ordenes_compra_emprestito_by_centro_gestor",
+    "get_ordenes_compra_operations_status",
+    
     # Availability flags
     "FIREBASE_OPERATIONS_AVAILABLE",
     "UNIDADES_PROYECTO_AVAILABLE",
@@ -358,4 +414,6 @@ __all__ = [
     "AUTH_OPERATIONS_AVAILABLE",
     "WORKLOAD_IDENTITY_AVAILABLE",
     "PROYECTOS_PRESUPUESTALES_OPERATIONS_AVAILABLE",
+    "TVEC_ENRICH_OPERATIONS_AVAILABLE",
+    "ORDENES_COMPRA_OPERATIONS_AVAILABLE",
 ]

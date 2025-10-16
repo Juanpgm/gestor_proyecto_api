@@ -3294,13 +3294,22 @@ try:
         obtener_contratos_desde_proceso_contractual,
         get_emprestito_operations_status,
         cargar_orden_compra_directa,
-        EMPRESTITO_OPERATIONS_AVAILABLE
+        obtener_ordenes_compra_tvec_enriquecidas,
+        get_tvec_enrich_status,
+        get_ordenes_compra_emprestito_all,
+        get_ordenes_compra_emprestito_by_referencia,
+        get_ordenes_compra_emprestito_by_centro_gestor,
+        EMPRESTITO_OPERATIONS_AVAILABLE,
+        TVEC_ENRICH_OPERATIONS_AVAILABLE,
+        ORDENES_COMPRA_OPERATIONS_AVAILABLE
     )
     from api.models import EmprestitoRequest, EmprestitoResponse
     print(f"✅ Empréstito imports successful - AVAILABLE: {EMPRESTITO_OPERATIONS_AVAILABLE}")
+    print(f"✅ TVEC enrich imports successful - AVAILABLE: {TVEC_ENRICH_OPERATIONS_AVAILABLE}")
 except ImportError as e:
-    print(f"❌ Warning: Empréstito imports failed: {e}")
+    print(f"❌ Warning: Empréstito or TVEC imports failed: {e}")
     EMPRESTITO_OPERATIONS_AVAILABLE = False
+    TVEC_ENRICH_OPERATIONS_AVAILABLE = False
 
 def check_emprestito_availability():
     """Verificar disponibilidad de operaciones de empréstito"""
@@ -4305,6 +4314,231 @@ async def obtener_contratos_por_centro_gestor(nombre_centro_gestor: str):
             detail=f"Error procesando consulta por centro gestor: {str(e)}"
         )
 
+@app.get("/emprestito/ordenes-compra", tags=["Gestión de Empréstito"])
+async def get_ordenes_compra_todas():
+    """
+    ## 📋 Consultar Todas las Órdenes de Compra Existentes
+    
+    **Propósito**: Obtiene todas las órdenes de compra almacenadas en la colección 
+    `ordenes_compra_emprestito` para revisar los datos disponibles.
+    
+    ### ✅ Información que proporciona:
+    - **Listado completo**: Todas las órdenes de compra existentes
+    - **Campos disponibles**: Estructura de datos actual
+    - **Números de orden**: Para debugging del matching con TVEC
+    """
+    try:
+        from api.scripts.ordenes_compra_operations import get_ordenes_compra_emprestito_all
+        resultado = await get_ordenes_compra_emprestito_all()
+        return resultado
+        
+    except Exception as e:
+        logger.error(f"❌ Error consultando órdenes: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error consultando órdenes: {str(e)}"
+        )
+
+@app.post("/emprestito/obtener-ordenes-compra-TVEC", tags=["Gestión de Empréstito"])
+async def obtener_ordenes_compra_tvec_endpoint():
+    """
+    ## 🛒 Obtener y Enriquecer Órdenes de Compra con Datos de TVEC
+    
+    **Propósito**: Enriquece todas las órdenes de compra existentes en la colección 
+    `ordenes_compra_emprestito` con datos adicionales de la API de TVEC.
+    
+    ### ✅ Funcionalidades principales:
+    - **Enriquecimiento de datos**: Obtiene datos adicionales de TVEC usando `numero_orden`
+    - **Conservación de campos**: Mantiene todos los campos existentes en la colección
+    - **Datos adicionales**: Agrega campos con prefijo `tvec_` para datos de la tienda virtual
+    - **API Integration**: Usa la API oficial de datos abiertos de Colombia (rgxm-mmea)
+    
+    ### 📝 No requiere parámetros:
+    Este endpoint procesa automáticamente todas las órdenes existentes en `ordenes_compra_emprestito`.
+    
+    ### 📤 Envío:
+    ```http
+    POST /emprestito/obtener-ordenes-compra-TVEC
+    ```
+    **No es necesario enviar ningún cuerpo JSON**.
+    
+    ### 🔄 Proceso:
+    1. Obtener todas las órdenes de la colección `ordenes_compra_emprestito`
+    2. Conectar con la API de TVEC (www.datos.gov.co/rgxm-mmea)
+    3. Para cada orden, buscar datos adicionales usando `numero_orden`
+    4. Enriquecer órdenes con campos adicionales con prefijo `tvec_`
+    5. Actualizar registros en Firebase conservando campos originales
+    6. Retornar resumen completo del enriquecimiento
+    
+    ### 📊 Campos adicionales agregados (estructura similar a contratos):
+    
+    **Campos principales (estructura estándar):**
+    - `referencia_orden`: Referencia de la orden (similar a referencia_contrato)
+    - `id_orden`: Identificador único de la orden (similar a id_contrato)
+    - `estado_orden`: Estado de la orden (similar a estado_contrato)
+    - `modalidad_contratacion`: Modalidad de la compra (mapeado desde tipo_compra)
+    - `tipo_orden`: Tipo de compra (similar a tipo_contrato)
+    - `fecha_publicacion_orden`: Fecha de publicación (similar a fecha_firma_contrato)
+    - `fecha_vencimiento_orden`: Fecha de vencimiento (similar a fecha_fin_contrato)
+    - `entidad_compradora`: Entidad que compra (similar a entidad_contratante)
+    - `nombre_proveedor`: Nombre del proveedor (similar a nombre_contratista)
+    - `nit_proveedor`: NIT del proveedor (similar a nit_contratista)
+    - `descripcion_orden`: Descripción detallada (similar a descripcion_proceso)
+    - `objeto_orden`: Objeto de la orden (similar a objeto_contrato)
+    - `sector`: Sector/categoría principal
+    - `valor_orden`: Valor total como número (similar a valor_contrato)
+    - `_dataset_source`: "rgxm-mmea" (similar a "jbjy-vk9h" para contratos)
+    - `fuente_datos`: "TVEC_API" (similar a "SECOP_API")
+    - `fecha_guardado`: Timestamp de procesamiento
+    - `version_esquema`: "1.0" (versión del esquema TVEC)
+    
+    **Campos específicos TVEC (con prefijo):**
+    - `tvec_agregacion`: Tipo de agregación
+    - `tvec_codigo_categoria`: Código de categoría
+    - `tvec_unidad_medida`: Unidad de medida
+    - `tvec_cantidad`: Cantidad
+    - `tvec_precio_unitario`: Precio unitario
+    
+    ### 🔐 Snippet utilizado:
+    El endpoint usa exactamente el snippet proporcionado:
+    ```python
+    import pandas as pd
+    from sodapy import Socrata
+    
+    client = Socrata("www.datos.gov.co", None)
+    results = client.get("rgxm-mmea", limit=2000)
+    results_df = pd.DataFrame.from_records(results)
+    ```
+    
+    ### ✅ Respuesta exitosa:
+    ```json
+    {
+        "success": true,
+        "message": "Enriquecimiento completado: 15/20 órdenes enriquecidas",
+        "resumen": {
+            "total_ordenes_procesadas": 20,
+            "ordenes_enriquecidas": 15,
+            "ordenes_sin_datos_tvec": 3,
+            "ordenes_con_errores": 2,
+            "tasa_enriquecimiento": "75.0%"
+        },
+        "fuente_datos": {
+            "api_tvec": "www.datos.gov.co",
+            "dataset": "rgxm-mmea",
+            "registros_tvec_disponibles": 1850
+        },
+        "operacion_firebase": {
+            "coleccion": "ordenes_compra_emprestito",
+            "documentos_actualizados": 15,
+            "campos_preservados": true,
+            "campos_agregados_prefijo": "tvec_"
+        },
+        "ordenes_actualizadas": [
+            {
+                "doc_id": "abc123",
+                "numero_orden": "OC-2024-001",
+                "campos_agregados": [
+                    "referencia_orden", "estado_orden", "valor_orden", 
+                    "entidad_compradora", "nombre_proveedor", "nit_proveedor",
+                    "descripcion_orden", "objeto_orden", "sector", "_dataset_source",
+                    "fuente_datos", "fecha_guardado", "version_esquema"
+                ],
+                "datos_enriquecidos": {
+                    "numero_orden": "OC-2024-001",
+                    "referencia_orden": "OC-2024-001",
+                    "estado_orden": "Activa",
+                    "valor_orden": 1500000,
+                    "entidad_compradora": "ALCALDIA DE SANTIAGO DE CALI",
+                    "nombre_proveedor": "PROVEEDOR EJEMPLO S.A.S",
+                    "nit_proveedor": "900123456-1",
+                    "descripcion_orden": "Suministro de equipos tecnológicos",
+                    "sector": "Tecnología",
+                    "_dataset_source": "rgxm-mmea",
+                    "fuente_datos": "TVEC_API",
+                    "version_esquema": "1.0"
+                }
+            }
+        ],
+        "tiempo_total_segundos": 45.2,
+        "timestamp": "2025-10-16T..."
+    }
+    ```
+    
+    ### 🚨 Requisitos:
+    - Tener órdenes de compra registradas en `ordenes_compra_emprestito`
+    - Cada orden debe tener el campo `numero_orden` 
+    - Conexión a internet para acceder a la API de TVEC
+    - Librerías: `sodapy` y `pandas` instaladas
+    
+    ### 💡 Características especiales:
+    - **Preserva datos originales**: No modifica campos existentes
+    - **Prefijo tvec_**: Evita conflictos con campos originales
+    - **Matching por numero_orden**: Usa identificador único para relacionar datos
+    - **Tolerante a errores**: Continúa procesando aunque algunas órdenes fallen
+    - **Sin duplicados**: Solo agrega campos si no existen ya
+    
+    ### 🔗 Endpoints relacionados:
+    - `POST /emprestito/cargar-orden-compra` - Para crear nuevas órdenes
+    - `GET /ordenes_compra_emprestito_all` - Para consultar órdenes enriquecidas (si existe)
+    """
+    # Verificar disponibilidad de servicios
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
+    
+    if not TVEC_ENRICH_OPERATIONS_AVAILABLE:
+        raise HTTPException(
+            status_code=503, 
+            detail={
+                "success": False,
+                "error": "TVEC enrich operations not available",
+                "message": "Las operaciones de enriquecimiento TVEC no están disponibles",
+                "requirements": [
+                    "pip install sodapy pandas",
+                    "Verificar conectividad a internet",
+                    "Confirmar acceso a www.datos.gov.co"
+                ],
+                "code": "TVEC_SERVICES_UNAVAILABLE"
+            }
+        )
+    
+    try:
+        # Ejecutar enriquecimiento de órdenes de compra con datos de TVEC
+        resultado = await obtener_ordenes_compra_tvec_enriquecidas()
+        
+        # Determinar código de estado basado en el resultado
+        status_code = 200 if resultado.get("success") else 500
+        
+        # Retornar resultado con información detallada
+        return JSONResponse(
+            content={
+                **resultado,
+                "api_info": {
+                    "endpoint_name": "obtener-ordenes-compra-TVEC",
+                    "version": "1.0",
+                    "snippet_based": True,
+                    "preserves_original_data": True
+                },
+                "last_updated": "2025-10-16T00:00:00Z"
+            },
+            status_code=status_code,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en endpoint TVEC enriquecimiento: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "success": False,
+                "error": "Error interno del servidor",
+                "message": "Error ejecutando enriquecimiento con datos de TVEC",
+                "detalles": str(e),
+                "code": "TVEC_INTERNAL_ERROR"
+            }
+        )
+
 @app.get("/bancos_emprestito_all", tags=["Gestión de Empréstito"])
 async def get_all_bancos_emprestito():
     """
@@ -4384,6 +4618,142 @@ async def get_all_bancos_emprestito():
         raise HTTPException(
             status_code=500,
             detail=f"Error procesando consulta de bancos: {str(e)}"
+        )
+
+@app.get("/ordenes_compra_emprestito/numero/{numero_orden}", tags=["Gestión de Empréstito"])
+async def obtener_ordenes_por_numero(numero_orden: str):
+    """
+    ## 🔍 Obtener Órdenes de Compra por Número de Orden
+    
+    **Propósito**: Retorna órdenes de compra filtradas por número de orden específico.
+    
+    ### ✅ Casos de uso:
+    - Búsqueda de órdenes por número específico
+    - Consulta de detalles de orden individual
+    - Validación de existencia de orden
+    - Verificar datos enriquecidos de una orden específica
+    
+    ### 🔍 Filtrado:
+    - **Campo**: `numero_orden` (coincidencia exacta)
+    - **Tipo**: String - Número único de la orden
+    - **Sensible a mayúsculas**: Sí
+    
+    ### 📊 Información incluida:
+    - Todos los campos de las órdenes que coincidan con el número
+    - Datos enriquecidos de TVEC (si están disponibles)
+    - ID del documento para referencia
+    - Información del filtro aplicado
+    
+    ### 📝 Ejemplo de uso:
+    ```javascript
+    const numeroOrden = "OC-2024-001";
+    const response = await fetch(`/ordenes_compra_emprestito/numero/${numeroOrden}`);
+    const data = await response.json();
+    if (data.success && data.count > 0) {
+        const orden = data.data[0];
+        console.log('Orden encontrada:', orden.numero_orden);
+        if (orden._dataset_source === 'rgxm-mmea') {
+            console.log('Orden enriquecida con TVEC:', orden.valor_orden);
+        }
+    }
+    ```
+    """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
+    
+    try:
+        result = await get_ordenes_compra_emprestito_by_referencia(numero_orden)
+        
+        if not result["success"]:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error obteniendo órdenes por número: {result.get('error', 'Error desconocido')}"
+            )
+        
+        return create_utf8_response({
+            "success": True,
+            "data": result["data"],
+            "count": result["count"],
+            "collection": result["collection"],
+            "filter": result["filter"],
+            "timestamp": datetime.now().isoformat(),
+            "last_updated": "2025-10-16T00:00:00Z",
+            "message": result["message"]
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error procesando consulta por número de orden: {str(e)}"
+        )
+
+@app.get("/ordenes_compra_emprestito/centro-gestor/{nombre_centro_gestor}", tags=["Gestión de Empréstito"])
+async def obtener_ordenes_por_centro_gestor(nombre_centro_gestor: str):
+    """
+    ## 🏢 Obtener Órdenes de Compra por Centro Gestor
+    
+    **Propósito**: Retorna órdenes de compra filtradas por nombre del centro gestor específico.
+    
+    ### ✅ Casos de uso:
+    - Consulta de órdenes por dependencia responsable
+    - Reportes por entidad gestora
+    - Dashboard por centro de responsabilidad
+    - Análisis de distribución institucional de órdenes de compra
+    
+    ### 🔍 Filtrado:
+    - **Campo**: `nombre_centro_gestor` (coincidencia exacta)
+    - **Tipo**: String - Nombre completo del centro gestor
+    - **Sensible a mayúsculas**: Sí
+    
+    ### 📊 Información incluida:
+    - Todas las órdenes del centro gestor especificado
+    - Datos enriquecidos de TVEC (si están disponibles)
+    - Conteo de registros encontrados
+    - Información del filtro aplicado
+    
+    ### 📝 Ejemplo de uso:
+    ```javascript
+    const centroGestor = "Secretaría de Salud";
+    const response = await fetch(`/ordenes_compra_emprestito/centro-gestor/${encodeURIComponent(centroGestor)}`);
+    const data = await response.json();
+    if (data.success && data.count > 0) {
+        console.log(`${data.count} órdenes encontradas para:`, centroGestor);
+        const valorTotal = data.data.reduce((sum, o) => sum + (o.valor_orden || 0), 0);
+        console.log('Valor total de órdenes:', valorTotal);
+    }
+    ```
+    """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
+    
+    try:
+        result = await get_ordenes_compra_emprestito_by_centro_gestor(nombre_centro_gestor)
+        
+        if not result["success"]:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error obteniendo órdenes por centro gestor: {result.get('error', 'Error desconocido')}"
+            )
+        
+        return create_utf8_response({
+            "success": True,
+            "data": result["data"],
+            "count": result["count"],
+            "collection": result["collection"],
+            "filter": result["filter"],
+            "timestamp": datetime.now().isoformat(),
+            "last_updated": "2025-10-16T00:00:00Z",
+            "message": result["message"]
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error procesando consulta por centro gestor: {str(e)}"
         )
 
 
