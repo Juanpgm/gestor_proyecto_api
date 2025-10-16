@@ -115,7 +115,71 @@ def extract_contract_fields(doc_data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def get_contratos_init_data(filters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """Obtener datos de contratos con filtros por referencia_contrato y nombre_centro_gestor"""
+    """Obtener datos combinados de contratos y órdenes de compra con filtros por referencia_contrato y nombre_centro_gestor"""
+    try:
+        # Obtener datos de contratos
+        contratos_result = await get_contratos_emprestito_init_data(filters)
+        
+        # Obtener datos de órdenes de compra
+        ordenes_result = await get_ordenes_compra_init_data(filters)
+        
+        # Verificar si al menos uno fue exitoso
+        if not contratos_result["success"] and not ordenes_result["success"]:
+            return {
+                "success": False,
+                "error": f"Error obteniendo datos: Contratos - {contratos_result.get('error', 'Error desconocido')}, Órdenes - {ordenes_result.get('error', 'Error desconocido')}",
+                "data": [],
+                "count": 0
+            }
+        
+        # Combinar datos usando programación funcional
+        contratos_data = contratos_result["data"] if contratos_result["success"] else []
+        ordenes_data = ordenes_result["data"] if ordenes_result["success"] else []
+        
+        # Función para agregar metadatos de origen
+        def add_source_metadata(item: dict, source: str) -> dict:
+            """Agregar metadatos de origen a cada item usando programación funcional"""
+            return {**item, '_source': source}
+        
+        # Aplicar metadatos usando programación funcional
+        contratos_with_source = [add_source_metadata(item, 'contratos_emprestito') for item in contratos_data]
+        ordenes_with_source = [add_source_metadata(item, 'ordenes_compra_emprestito') for item in ordenes_data]
+        
+        # Combinar datasets
+        combined_data = contratos_with_source + ordenes_with_source
+        
+        # Ordenar por referencia_contrato usando programación funcional
+        sorted_data = sorted(combined_data, key=lambda x: str(x.get('referencia_contrato', '')))
+        
+        return {
+            "success": True,
+            "data": sorted_data,
+            "count": len(sorted_data),
+            "sources": {
+                "contratos_emprestito": {
+                    "count": len(contratos_data),
+                    "success": contratos_result["success"]
+                },
+                "ordenes_compra_emprestito": {
+                    "count": len(ordenes_data),
+                    "success": ordenes_result["success"]
+                }
+            },
+            "filters_applied": filters or {},
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        return {
+            "success": False, 
+            "error": f"Error obteniendo datos combinados: {str(e)}",
+            "data": [],
+            "count": 0
+        }
+
+
+async def get_contratos_emprestito_init_data(filters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Obtener datos de contratos con filtros por referencia_contrato y nombre_centro_gestor (función original renombrada)"""
     try:
         db = get_firestore_client()
         if db is None:
@@ -301,6 +365,86 @@ async def get_contratos_emprestito_by_centro_gestor(nombre_centro_gestor: str) -
         return {
             "success": False, 
             "error": f"Error obteniendo contratos por centro gestor: {str(e)}",
+            "data": [],
+            "count": 0
+        }
+
+
+def extract_orden_compra_fields(doc_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Extraer y mapear campos de órdenes de compra al formato de contratos con programación funcional"""
+    
+    # Funciones auxiliares puras
+    def safe_get(data: dict, key: str, default='') -> str:
+        """Obtener valor de manera segura y limpia"""
+        value = data.get(key, default)
+        return clean_text_field(str(value)) if value else ''
+    
+    def safe_get_int(data: dict, key: str, default=0) -> int:
+        """Obtener valor entero de manera segura"""
+        value = data.get(key, default)
+        try:
+            return int(value) if value else default
+        except (ValueError, TypeError):
+            return default
+    
+    # Mapeo de campos usando programación funcional
+    field_mappings = {
+        'bpin': lambda data: safe_get_int(data, 'bpin'),
+        'banco': lambda data: safe_get(data, 'nombre_banco'),
+        'nombre_centro_gestor': lambda data: safe_get(data, 'nombre_centro_gestor'),
+        'estado_contrato': lambda data: safe_get(data, 'estado_orden'),
+        'referencia_contrato': lambda data: safe_get(data, 'numero_orden'),
+        'referencia_proceso': lambda data: safe_get(data, 'solicitud_id'),
+        'objeto_contrato': lambda data: safe_get(data, 'objeto_orden'),
+        'modalidad_contratacion': lambda data: safe_get(data, 'modalidad_contratacion'),
+        'fecha_inicio_contrato': lambda data: safe_get(data, 'fecha_publicacion_orden'),
+        'fecha_fin_contrato': lambda data: safe_get(data, 'fecha_vencimiento_orden')
+    }
+    
+    # Aplicar mapeos usando programación funcional
+    return {key: mapper(doc_data) for key, mapper in field_mappings.items()}
+
+
+async def get_ordenes_compra_init_data(filters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Obtener datos de órdenes de compra con filtros por referencia_contrato y nombre_centro_gestor"""
+    try:
+        db = get_firestore_client()
+        if db is None:
+            return {"success": False, "error": "No se pudo conectar a Firestore", "data": [], "count": 0}
+        
+        collection_ref = db.collection('ordenes_compra_emprestito')
+        query = collection_ref
+        
+        # Aplicar filtro server-side por nombre_centro_gestor (exacto)
+        if filters and filters.get('nombre_centro_gestor'):
+            query = query.where('nombre_centro_gestor', '==', filters['nombre_centro_gestor'])
+        
+        # Obtener documentos
+        docs = query.stream()
+        ordenes_data = []
+        
+        for doc in docs:
+            doc_data = doc.to_dict()
+            orden_record = extract_orden_compra_fields(doc_data)
+            
+            # Filtro client-side por referencia_contrato (búsqueda parcial usando numero_orden)
+            if filters and filters.get('referencia_contrato'):
+                search_term = str(filters['referencia_contrato']).lower()
+                if search_term not in str(orden_record.get('referencia_contrato', '')).lower():
+                    continue
+            
+            ordenes_data.append(orden_record)
+        
+        return {
+            "success": True,
+            "data": ordenes_data,
+            "count": len(ordenes_data)
+        }
+        
+    except Exception as e:
+        return {
+            "success": False, 
+            "error": f"Error obteniendo órdenes de compra: {str(e)}",
             "data": [],
             "count": 0
         }
