@@ -1,6 +1,30 @@
 # Changelog - API Gestión de Proyectos
 
-## [2025-10-10] - Versión Actual
+## [2025-10-16] - Versión Actual
+
+### ✨ Mejora - Campo nombre_resumido_proceso en Endpoint de Seguimiento
+
+- **Endpoint mejorado**: `GET /contratos/init_contratos_seguimiento`
+
+  - **Tag**: "Interoperabilidad con Artefacto de Seguimiento"
+  - **Nuevo campo**: `nombre_resumido_proceso` 
+  - **Fuente de datos**: Heredado desde colección `procesos_emprestito`
+  - **Disponible en**: Contratos (`contratos_emprestito`) y Órdenes de Compra (`ordenes_compra_emprestito`)
+  - **Funcionalidad**: Enriquece los datos con el nombre resumido del proceso asociado
+
+- **Campos retornados actualizados**:
+  - `bpin`, `banco`, `nombre_centro_gestor`, `estado_contrato`
+  - `referencia_contrato`, `referencia_proceso`, **`nombre_resumido_proceso`**
+  - `objeto_contrato`, `modalidad_contratacion`
+  - `fecha_inicio_contrato`, `fecha_firma`, `fecha_fin_contrato`
+
+- **Implementación técnica**:
+  - **Función `extract_contract_fields()`**: Acepta parámetro opcional `nombre_resumido_proceso`
+  - **Función `extract_orden_compra_fields()`**: Actualizada para incluir el nuevo campo
+  - **Lookup automático**: Consulta a `procesos_emprestito` por `referencia_proceso`/`solicitud_id`
+  - **Compatibilidad**: Manejo de campos faltantes con valores por defecto
+
+## [2025-10-10] - Versión Anterior
 
 ### ✨ Nueva Funcionalidad - Reportes de Contratos con Google Drive
 

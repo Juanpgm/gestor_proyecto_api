@@ -70,7 +70,7 @@ def clean_text_field(text: Any) -> str:
     return text_str
 
 
-def extract_contract_fields(doc_data: Dict[str, Any]) -> Dict[str, Any]:
+def extract_contract_fields(doc_data: Dict[str, Any], nombre_resumido_proceso: str = '') -> Dict[str, Any]:
     """Extraer solo los campos requeridos para el endpoint con texto limpio"""
     registro_origen = doc_data.get('registro_origen', {})
     
@@ -106,6 +106,7 @@ def extract_contract_fields(doc_data: Dict[str, Any]) -> Dict[str, Any]:
         'estado_contrato': clean_text_field(doc_data.get('estado_contrato', '')),
         'referencia_contrato': clean_text_field(doc_data.get('referencia_contrato', '')),
         'referencia_proceso': clean_text_field(referencia_proceso_str),
+        'nombre_resumido_proceso': clean_text_field(nombre_resumido_proceso),
         'objeto_contrato': clean_text_field(doc_data.get('objeto_contrato', '')),
         'modalidad_contratacion': clean_text_field(doc_data.get('modalidad_contratacion', '')),
         'fecha_inicio_contrato': get_date_field('fecha_inicio_contrato'),
@@ -198,7 +199,29 @@ async def get_contratos_emprestito_init_data(filters: Optional[Dict[str, Any]] =
         
         for doc in docs:
             doc_data = doc.to_dict()
-            contract_record = extract_contract_fields(doc_data)
+            
+            # Obtener referencia_proceso para buscar nombre_resumido_proceso
+            # Prioridad: campo directo -> registro_origen -> proceso_contractual como fallback
+            referencia_proceso = doc_data.get('referencia_proceso', '')
+            
+            if not referencia_proceso:
+                # Intentar desde registro_origen
+                registro_origen = doc_data.get('registro_origen', {})
+                referencia_proceso = registro_origen.get('referencia_proceso', [])
+                if isinstance(referencia_proceso, list):
+                    referencia_proceso = referencia_proceso[0] if referencia_proceso else ''
+            
+            if not referencia_proceso:
+                # Como último recurso, intentar con proceso_contractual
+                referencia_proceso = doc_data.get('proceso_contractual', '')
+            
+            # Limpiar y convertir a string
+            referencia_proceso_str = str(referencia_proceso).strip() if referencia_proceso else ''
+            
+            # Obtener nombre_resumido_proceso desde la colección procesos_emprestito
+            nombre_resumido_proceso = await get_nombre_resumido_proceso_by_referencia(db, referencia_proceso_str)
+            
+            contract_record = extract_contract_fields(doc_data, nombre_resumido_proceso)
             
             # Filtro client-side por referencia_contrato (búsqueda parcial)
             if filters and filters.get('referencia_contrato'):
@@ -229,6 +252,9 @@ async def get_nombre_resumido_proceso_by_referencia(db, referencia_proceso: str)
         if not referencia_proceso:
             return ""
         
+        # Limpiar la referencia (quitar espacios y convertir a string)
+        referencia_proceso = str(referencia_proceso).strip()
+        
         # Buscar en procesos_emprestito por referencia_proceso
         procesos_ref = db.collection('procesos_emprestito')
         query = procesos_ref.where('referencia_proceso', '==', referencia_proceso)
@@ -236,7 +262,8 @@ async def get_nombre_resumido_proceso_by_referencia(db, referencia_proceso: str)
         
         if docs:
             proceso_data = docs[0].to_dict()
-            return proceso_data.get('nombre_resumido_proceso', '')
+            nombre_resumido = proceso_data.get('nombre_resumido_proceso', '')
+            return nombre_resumido
         
         return ""
     except Exception as e:
@@ -248,7 +275,7 @@ def extract_orden_compra_fields_all(orden_data: dict) -> dict:
     """Extrae y mapea campos de orden de compra usando programación funcional para contratos_emprestito_all"""
     field_mapping = {
         'bpin': lambda x: x.get('bpin', ''),
-        'banco': lambda x: x.get('nombre_banco', ''),
+        'banco': lambda x: x.get('banco', ''),
         'nombre_centro_gestor': lambda x: x.get('nombre_centro_gestor', ''),
         'estado_contrato': lambda x: x.get('estado_orden', ''),
         'referencia_contrato': lambda x: x.get('numero_orden', ''),
@@ -444,7 +471,7 @@ async def get_contratos_emprestito_by_centro_gestor(nombre_centro_gestor: str) -
         }
 
 
-def extract_orden_compra_fields(doc_data: Dict[str, Any]) -> Dict[str, Any]:
+def extract_orden_compra_fields(doc_data: Dict[str, Any], nombre_resumido_proceso: str = '') -> Dict[str, Any]:
     """Extraer y mapear campos de órdenes de compra al formato de contratos con programación funcional"""
     
     # Funciones auxiliares puras
@@ -461,6 +488,10 @@ def extract_orden_compra_fields(doc_data: Dict[str, Any]) -> Dict[str, Any]:
         except (ValueError, TypeError):
             return default
     
+    # Si no se pasó nombre_resumido_proceso como parámetro, intentar obtenerlo del documento
+    if not nombre_resumido_proceso:
+        nombre_resumido_proceso = doc_data.get('nombre_resumido_proceso', '')
+    
     # Mapeo de campos usando programación funcional
     field_mappings = {
         'bpin': lambda data: safe_get_int(data, 'bpin'),
@@ -469,9 +500,11 @@ def extract_orden_compra_fields(doc_data: Dict[str, Any]) -> Dict[str, Any]:
         'estado_contrato': lambda data: safe_get(data, 'estado_orden'),
         'referencia_contrato': lambda data: safe_get(data, 'numero_orden'),
         'referencia_proceso': lambda data: safe_get(data, 'solicitud_id'),
+        'nombre_resumido_proceso': lambda data: clean_text_field(nombre_resumido_proceso),
         'objeto_contrato': lambda data: safe_get(data, 'objeto_orden'),
         'modalidad_contratacion': lambda data: safe_get(data, 'modalidad_contratacion'),
         'fecha_inicio_contrato': lambda data: safe_get(data, 'fecha_publicacion_orden'),
+        'fecha_firma': lambda data: '',  # No disponible en órdenes de compra
         'fecha_fin_contrato': lambda data: safe_get(data, 'fecha_vencimiento_orden')
     }
     
@@ -499,7 +532,11 @@ async def get_ordenes_compra_init_data(filters: Optional[Dict[str, Any]] = None)
         
         for doc in docs:
             doc_data = doc.to_dict()
-            orden_record = extract_orden_compra_fields(doc_data)
+            
+            # Las órdenes de compra ya tienen nombre_resumido_proceso directamente
+            nombre_resumido_proceso = doc_data.get('nombre_resumido_proceso', '')
+            
+            orden_record = extract_orden_compra_fields(doc_data, nombre_resumido_proceso)
             
             # Filtro client-side por referencia_contrato (búsqueda parcial usando numero_orden)
             if filters and filters.get('referencia_contrato'):

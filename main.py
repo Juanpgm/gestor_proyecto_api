@@ -2030,7 +2030,7 @@ async def init_contratos_seguimiento(
     Obtiene datos de contratos desde la colección `contratos_emprestito` con filtros optimizados.
     
     **Campos retornados**: bpin, banco, nombre_centro_gestor, estado_contrato, referencia_contrato, 
-    referencia_proceso, objeto_contrato, modalidad_contratacion, fecha_inicio_contrato, fecha_firma, 
+    referencia_proceso, nombre_resumido_proceso, objeto_contrato, modalidad_contratacion, fecha_inicio_contrato, fecha_firma, 
     fecha_fin_contrato
     
     **Filtros**:
