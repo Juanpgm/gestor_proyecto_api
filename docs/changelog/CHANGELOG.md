@@ -7,12 +7,13 @@
 - **Endpoint mejorado**: `GET /contratos/init_contratos_seguimiento`
 
   - **Tag**: "Interoperabilidad con Artefacto de Seguimiento"
-  - **Nuevo campo**: `nombre_resumido_proceso` 
+  - **Nuevo campo**: `nombre_resumido_proceso`
   - **Fuente de datos**: Heredado desde colección `procesos_emprestito`
   - **Disponible en**: Contratos (`contratos_emprestito`) y Órdenes de Compra (`ordenes_compra_emprestito`)
   - **Funcionalidad**: Enriquece los datos con el nombre resumido del proceso asociado
 
 - **Campos retornados actualizados**:
+
   - `bpin`, `banco`, `nombre_centro_gestor`, `estado_contrato`
   - `referencia_contrato`, `referencia_proceso`, **`nombre_resumido_proceso`**
   - `objeto_contrato`, `modalidad_contratacion`
