@@ -136,6 +136,9 @@ try:
         get_bancos_emprestito_all,
         get_procesos_emprestito_all,
         cargar_orden_compra_directa,
+        obtener_datos_secop_completos,
+        actualizar_proceso_emprestito_completo,
+        procesar_todos_procesos_emprestito_completo,
         EMPRESTITO_OPERATIONS_AVAILABLE
     )
     print(f"✅ Emprestito operations imported successfully - AVAILABLE: {EMPRESTITO_OPERATIONS_AVAILABLE}")
@@ -191,6 +194,15 @@ except ImportError as e:
     
     async def get_procesos_emprestito_all():
         return {"success": False, "error": "Emprestito operations not available", "data": [], "count": 0}
+    
+    async def obtener_datos_secop_completos(referencia_proceso: str):
+        return {"success": False, "error": "Emprestito operations not available"}
+    
+    async def actualizar_proceso_emprestito_completo(referencia_proceso: str):
+        return {"success": False, "error": "Emprestito operations not available"}
+    
+    async def procesar_todos_procesos_emprestito_completo():
+        return {"success": False, "error": "Emprestito operations not available"}
 
 # Importar operaciones de gestión de usuarios
 try:
@@ -362,6 +374,9 @@ __all__ = [
     "get_bancos_emprestito_all",
     "get_procesos_emprestito_all",
     "cargar_orden_compra_directa",
+    "obtener_datos_secop_completos",
+    "actualizar_proceso_emprestito_completo",
+    "procesar_todos_procesos_emprestito_completo",
     
     # User management operations
     "validate_email",

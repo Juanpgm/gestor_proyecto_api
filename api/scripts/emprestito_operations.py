@@ -1266,3 +1266,360 @@ async def cargar_orden_compra_directa(datos_orden: Dict[str, Any]) -> Dict[str, 
             "success": False,
             "error": str(e)
         }
+
+async def obtener_datos_secop_completos(referencia_proceso: str) -> Dict[str, Any]:
+    """
+    Obtener datos completos de un proceso desde la API del SECOP
+    Incluye todos los campos adicionales solicitados para complementar procesos_emprestito
+    """
+    try:
+        # Importar Socrata aquí para evitar errores de importación si no está disponible
+        from sodapy import Socrata
+        
+        # Configuración SECOP
+        SECOP_DOMAIN = "www.datos.gov.co"
+        DATASET_ID = "p6dx-8zbt"
+        NIT_ENTIDAD_CALI = "890399011"
+
+        # Cliente no autenticado para datos públicos
+        client = Socrata(SECOP_DOMAIN, None, timeout=30)
+
+        # Construir filtro para búsqueda específica
+        where_clause = f"nit_entidad='{NIT_ENTIDAD_CALI}' AND referencia_del_proceso='{referencia_proceso}'"
+
+        # Realizar consulta
+        results = client.get(
+            DATASET_ID,
+            where=where_clause,
+            limit=1  # Solo necesitamos un resultado
+        )
+
+        client.close()
+
+        if not results:
+            return {
+                "success": False,
+                "error": f"No se encontró el proceso {referencia_proceso} en SECOP"
+            }
+
+        # Tomar el primer resultado
+        proceso_raw = results[0]
+
+        # Log para debugging: ver todos los campos disponibles
+        logger.info(f"Obteniendo datos completos SECOP para {referencia_proceso}")
+
+        # Mapear campos completos según especificaciones
+        # Mantener nombres de variables en Firebase sin cambiar, pero mapear desde SECOP
+        proceso_datos_completos = {
+            # Campos básicos existentes
+            "adjudicado": proceso_raw.get("adjudicado", ""),
+            "fase": proceso_raw.get("fase", ""),
+            "estado_proceso": proceso_raw.get("estado_del_procedimiento", ""),
+            
+            # Campos adicionales solicitados con mapeo exacto
+            "fecha_publicacion_fase": proceso_raw.get("fecha_de_publicacion_del", ""),
+            "fecha_publicacion_fase_1": None,  # No disponible en SECOP
+            "fecha_publicacion_fase_2": None,  # No disponible en SECOP
+            "fecha_publicacion_fase_3": proceso_raw.get("fecha_de_publicacion_fase_3", ""),
+            
+            "proveedores_invitados": proceso_raw.get("proveedores_invitados", 0),
+            "proveedores_con_invitacion": proceso_raw.get("proveedores_con_invitacion", 0),
+            "visualizaciones_proceso": proceso_raw.get("visualizaciones_del", 0),
+            "proveedores_que_manifestaron": proceso_raw.get("proveedores_que_manifestaron", 0),
+            "numero_lotes": proceso_raw.get("numero_de_lotes", 0),
+            "fecha_adjudicacion": None,  # No disponible directamente en SECOP
+            "estado_resumen": proceso_raw.get("estado_resumen", ""),
+            "fecha_recepcion_respuestas": None,  # No disponible en SECOP
+            "fecha_apertura_respuestas": None,  # No disponible en SECOP
+            "fecha_apertura_efectiva": None,  # No disponible en SECOP
+            "respuestas_procedimiento": proceso_raw.get("respuestas_al_procedimiento", 0),
+            "respuestas_externas": proceso_raw.get("respuestas_externas", 0),
+            "conteo_respuestas_ofertas": proceso_raw.get("conteo_de_respuestas_a_ofertas", 0),
+        }
+
+        # Convertir valores numéricos
+        campos_numericos = [
+            "proveedores_invitados", "proveedores_con_invitacion", "visualizaciones_proceso",
+            "proveedores_que_manifestaron", "numero_lotes", "respuestas_procedimiento",
+            "respuestas_externas", "conteo_respuestas_ofertas"
+        ]
+        
+        for campo in campos_numericos:
+            try:
+                valor = proceso_datos_completos.get(campo, 0)
+                if valor is not None and str(valor).strip() != "":
+                    proceso_datos_completos[campo] = int(float(str(valor)))
+                else:
+                    proceso_datos_completos[campo] = 0
+            except (ValueError, TypeError):
+                logger.warning(f"⚠️ Error convertiendo campo numérico {campo}: {proceso_datos_completos.get(campo)}")
+                proceso_datos_completos[campo] = 0
+
+        return {
+            "success": True,
+            "data": proceso_datos_completos
+        }
+
+    except ImportError:
+        logger.error("sodapy no está instalado. Instala con: pip install sodapy")
+        return {
+            "success": False,
+            "error": "sodapy no está disponible. Instala con: pip install sodapy"
+        }
+    except Exception as e:
+        logger.error(f"Error obteniendo datos completos de SECOP: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+async def actualizar_proceso_emprestito_completo(referencia_proceso: str) -> Dict[str, Any]:
+    """
+    Actualizar un proceso de empréstito existente con datos completos de SECOP
+    sin afectar campos existentes, solo complementando con nuevos datos
+    """
+    try:
+        if not FIRESTORE_AVAILABLE:
+            return {"success": False, "error": "Firebase no disponible"}
+        
+        db = get_firestore_client()
+        if db is None:
+            return {"success": False, "error": "No se pudo conectar a Firestore"}
+        
+        # 1. Verificar que el proceso existe en procesos_emprestito
+        collection_ref = db.collection('procesos_emprestito')
+        query = collection_ref.where('referencia_proceso', '==', referencia_proceso).limit(1)
+        docs = list(query.stream())
+        
+        if not docs:
+            return {
+                "success": False,
+                "error": f"No se encontró el proceso {referencia_proceso} en la colección procesos_emprestito"
+            }
+        
+        doc = docs[0]
+        doc_data = doc.to_dict()
+        
+        # 2. Obtener datos completos de SECOP
+        resultado_secop = await obtener_datos_secop_completos(referencia_proceso)
+        
+        if not resultado_secop.get("success"):
+            return {
+                "success": False,
+                "error": f"Error obteniendo datos de SECOP: {resultado_secop.get('error')}"
+            }
+        
+        datos_secop = resultado_secop["data"]
+        
+        # 3. Preparar datos para actualización (solo los campos nuevos)
+        datos_actualizacion = {}
+        campos_cambios = []
+        
+        for campo, valor_nuevo in datos_secop.items():
+            valor_actual = doc_data.get(campo)
+            
+            # Solo actualizar si el campo no existe o ha cambiado
+            if valor_actual != valor_nuevo:
+                datos_actualizacion[campo] = valor_nuevo
+                campos_cambios.append(f"{campo}: '{valor_actual}' → '{valor_nuevo}'")
+        
+        # 4. Si no hay cambios, no actualizar
+        if not datos_actualizacion:
+            return {
+                "success": True,
+                "message": f"Proceso {referencia_proceso} ya está actualizado, no se requieren cambios",
+                "changes_count": 0,
+                "doc_id": doc.id
+            }
+        
+        # 5. Agregar timestamp de actualización
+        datos_actualizacion["fecha_actualizacion_completa"] = datetime.now()
+        
+        # 6. Actualizar el documento
+        doc.reference.update(datos_actualizacion)
+        
+        logger.info(f"✅ Proceso {referencia_proceso} actualizado con {len(datos_actualizacion)} campos")
+        
+        return {
+            "success": True,
+            "message": f"Proceso {referencia_proceso} actualizado exitosamente",
+            "doc_id": doc.id,
+            "changes_count": len(datos_actualizacion),
+            "changes_summary": campos_cambios[:10],  # Mostrar máximo 10 cambios
+            "datos_actualizados": serialize_datetime_objects(datos_actualizacion)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error actualizando proceso completo: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+async def procesar_todos_procesos_emprestito_completo() -> Dict[str, Any]:
+    """
+    Procesar TODOS los procesos de empréstito de la colección para actualizarlos
+    con datos completos de SECOP sin requerir parámetros de entrada
+    """
+    try:
+        import time
+        start_time = time.time()
+        
+        if not FIRESTORE_AVAILABLE:
+            return {"success": False, "error": "Firebase no disponible"}
+        
+        db = get_firestore_client()
+        if db is None:
+            return {"success": False, "error": "No se pudo conectar a Firestore"}
+        
+        # 1. Obtener todos los procesos de la colección procesos_emprestito
+        logger.info("🔍 Obteniendo todos los procesos de empréstito para actualización completa...")
+        collection_ref = db.collection('procesos_emprestito')
+        docs = list(collection_ref.stream())
+        
+        if not docs:
+            return {
+                "success": False,
+                "error": "No se encontraron procesos en la colección procesos_emprestito",
+                "total_procesos_encontrados": 0
+            }
+        
+        logger.info(f"📊 Encontrados {len(docs)} procesos para actualizar con datos completos de SECOP")
+        
+        # 2. Inicializar contadores y resultados
+        total_procesos = len(docs)
+        procesos_procesados = 0
+        procesos_actualizados = 0
+        procesos_sin_cambios = 0
+        procesos_con_errores = 0
+        total_campos_actualizados = 0
+        
+        resultados_detallados = []
+        errores_detallados = []
+        
+        # 3. Procesar cada proceso individualmente
+        for i, doc in enumerate(docs, 1):
+            doc_data = doc.to_dict()
+            referencia_proceso = doc_data.get('referencia_proceso')
+            
+            if not referencia_proceso:
+                error_msg = f"Proceso {doc.id} no tiene 'referencia_proceso'"
+                logger.warning(f"⚠️ {error_msg}")
+                errores_detallados.append(error_msg)
+                procesos_con_errores += 1
+                continue
+            
+            try:
+                # Calcular tiempo estimado restante
+                if i > 1:
+                    tiempo_transcurrido = time.time() - start_time
+                    tiempo_promedio_por_proceso = tiempo_transcurrido / (i - 1)
+                    procesos_restantes = total_procesos - i + 1
+                    tiempo_estimado_restante = tiempo_promedio_por_proceso * procesos_restantes
+                    logger.info(f"🔄 Procesando {i}/{total_procesos}: {referencia_proceso} (ETA: {tiempo_estimado_restante:.1f}s)")
+                else:
+                    logger.info(f"🔄 Procesando {i}/{total_procesos}: {referencia_proceso}")
+                
+                # Actualizar proceso individual con datos completos
+                resultado_individual = await actualizar_proceso_emprestito_completo(referencia_proceso)
+                
+                procesos_procesados += 1
+                
+                if resultado_individual.get("success"):
+                    changes_count = resultado_individual.get("changes_count", 0)
+                    
+                    if changes_count > 0:
+                        procesos_actualizados += 1
+                        total_campos_actualizados += changes_count
+                        logger.info(f"✅ {referencia_proceso}: {changes_count} campos actualizados")
+                    else:
+                        procesos_sin_cambios += 1
+                        logger.info(f"ℹ️ {referencia_proceso}: sin cambios necesarios")
+                    
+                    # Agregar resultado detallado
+                    resultado_detalle = {
+                        "referencia_proceso": referencia_proceso,
+                        "success": True,
+                        "changes_count": changes_count,
+                        "changes_summary": resultado_individual.get("changes_summary", [])[:3]  # Máximo 3 cambios
+                    }
+                    
+                    if changes_count == 0:
+                        resultado_detalle["message"] = "Ya está actualizado"
+                    
+                    resultados_detallados.append(resultado_detalle)
+                    
+                else:
+                    procesos_con_errores += 1
+                    error_msg = f"{referencia_proceso}: {resultado_individual.get('error', 'Error desconocido')}"
+                    logger.error(f"❌ {error_msg}")
+                    errores_detallados.append(error_msg)
+                    
+                    resultados_detallados.append({
+                        "referencia_proceso": referencia_proceso,
+                        "success": False,
+                        "error": resultado_individual.get("error", "Error desconocido")
+                    })
+                
+            except Exception as e:
+                procesos_con_errores += 1
+                error_msg = f"{referencia_proceso}: Excepción - {str(e)}"
+                logger.error(f"❌ {error_msg}")
+                errores_detallados.append(error_msg)
+                
+                resultados_detallados.append({
+                    "referencia_proceso": referencia_proceso,
+                    "success": False,
+                    "error": str(e)
+                })
+        
+        # 4. Calcular tiempo de procesamiento
+        end_time = time.time()
+        tiempo_procesamiento = round(end_time - start_time, 2)
+        
+        # 5. Preparar respuesta final
+        mensaje_resumen = f"Se procesaron {procesos_procesados} procesos de empréstito exitosamente"
+        if procesos_con_errores > 0:
+            mensaje_resumen += f" ({procesos_con_errores} con errores)"
+        
+        resultado_final = {
+            "success": True,
+            "message": mensaje_resumen,
+            "resumen_procesamiento": {
+                "total_procesos_encontrados": total_procesos,
+                "procesos_procesados": procesos_procesados,
+                "procesos_actualizados": procesos_actualizados,
+                "procesos_sin_cambios": procesos_sin_cambios,
+                "procesos_con_errores": procesos_con_errores
+            },
+            "resultados_detallados": resultados_detallados,
+            "estadisticas": {
+                "total_campos_actualizados": total_campos_actualizados,
+                "tiempo_procesamiento": f"{tiempo_procesamiento} segundos"
+            },
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        # 6. Agregar errores si los hay
+        if errores_detallados:
+            resultado_final["errores"] = errores_detallados[:10]  # Máximo 10 errores
+        
+        logger.info(f"""
+✅ Procesamiento completo finalizado:
+   📊 Total procesos: {total_procesos}
+   ✅ Procesados: {procesos_procesados}
+   🔄 Actualizados: {procesos_actualizados}
+   ℹ️ Sin cambios: {procesos_sin_cambios}
+   ❌ Con errores: {procesos_con_errores}
+   📈 Campos actualizados: {total_campos_actualizados}
+   ⏱️ Tiempo: {tiempo_procesamiento}s
+        """)
+        
+        return resultado_final
+        
+    except Exception as e:
+        logger.error(f"Error procesando todos los procesos de empréstito: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }

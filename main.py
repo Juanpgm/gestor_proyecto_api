@@ -100,6 +100,10 @@ try:
         # Bancos operations
         get_bancos_emprestito_all,
         get_procesos_emprestito_all,
+        # Empréstito operations completas
+        obtener_datos_secop_completos,
+        actualizar_proceso_emprestito_completo,
+        procesar_todos_procesos_emprestito_completo,
         # Reportes contratos operations
         create_reporte_contrato,
         get_reportes_contratos,
@@ -424,16 +428,27 @@ def clean_firebase_data(data):
 async def timeout_middleware(request: Request, call_next):
     """Middleware para prevenir que las requests se cuelguen"""
     try:
-        # Timeout de 30 segundos para todas las requests
-        return await asyncio.wait_for(call_next(request), timeout=30.0)
+        # Timeout extendido para endpoints de procesamiento masivo
+        if request.url.path == "/emprestito/obtener-procesos-secop":
+            # 5 minutos para procesamiento masivo de SECOP
+            timeout_seconds = 300.0
+        elif request.url.path == "/emprestito/obtener-contratos-secop":
+            # 10 minutos para procesamiento masivo de contratos
+            timeout_seconds = 600.0
+        else:
+            # Timeout de 30 segundos para todas las otras requests
+            timeout_seconds = 30.0
+            
+        return await asyncio.wait_for(call_next(request), timeout=timeout_seconds)
     except asyncio.TimeoutError:
         return JSONResponse(
             status_code=504,
             content={
                 "error": "Request timeout",
-                "message": "The request took too long to process",
+                "message": f"The request took too long to process (timeout: {timeout_seconds}s)",
                 "fallback": True,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
+                "endpoint": str(request.url.path)
             }
         )
     except Exception as e:
@@ -495,6 +510,7 @@ async def read_root():
             "gestion_emprestito": [
                 "/emprestito/cargar-proceso",
                 "/emprestito/cargar-orden-compra",
+                "/emprestito/obtener-procesos-secop (POST - Procesamiento masivo)",
                 "/emprestito/proceso/{referencia_proceso}",
                 "/emprestito/obtener-contratos-secop",
                 "/contratos_emprestito_all",
@@ -3438,17 +3454,49 @@ async def cargar_proceso_emprestito(
                 )
         
         # Éxito: proceso creado correctamente
+        respuesta_base = {
+            "success": True,
+            "message": "Proceso de empréstito cargado exitosamente",
+            "data": resultado.get("data"),
+            "doc_id": resultado.get("doc_id"),
+            "coleccion": resultado.get("coleccion"),
+            "plataforma_detectada": resultado.get("plataforma_detectada"),
+            "fuente_datos": resultado.get("fuente_datos"),
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        # Si es un proceso SECOP, intentar actualizar con datos completos automáticamente
+        if resultado.get("plataforma_detectada") == "SECOP" and resultado.get("coleccion") == "procesos_emprestito":
+            try:
+                logger.info(f"🔄 Actualizando automáticamente proceso SECOP: {referencia_proceso}")
+                resultado_actualizacion = await actualizar_proceso_emprestito_completo(referencia_proceso)
+                
+                if resultado_actualizacion.get("success"):
+                    respuesta_base["actualizacion_completa"] = {
+                        "success": True,
+                        "changes_count": resultado_actualizacion.get("changes_count", 0),
+                        "changes_summary": resultado_actualizacion.get("changes_summary", [])[:5],  # Máximo 5 cambios en resumen
+                        "message": f"Proceso actualizado automáticamente con {resultado_actualizacion.get('changes_count', 0)} campos adicionales"
+                    }
+                    logger.info(f"✅ Actualización automática exitosa: {resultado_actualizacion.get('changes_count', 0)} cambios")
+                else:
+                    respuesta_base["actualizacion_completa"] = {
+                        "success": False,
+                        "error": resultado_actualizacion.get("error", "Error desconocido"),
+                        "message": "No se pudo actualizar automáticamente con datos completos"
+                    }
+                    logger.warning(f"⚠️ Actualización automática falló: {resultado_actualizacion.get('error')}")
+                    
+            except Exception as e:
+                logger.warning(f"⚠️ Error en actualización automática: {e}")
+                respuesta_base["actualizacion_completa"] = {
+                    "success": False,
+                    "error": str(e),
+                    "message": "Error durante actualización automática (proceso principal creado exitosamente)"
+                }
+        
         return JSONResponse(
-            content={
-                "success": True,
-                "message": "Proceso de empréstito cargado exitosamente",
-                "data": resultado.get("data"),
-                "doc_id": resultado.get("doc_id"),
-                "coleccion": resultado.get("coleccion"),
-                "plataforma_detectada": resultado.get("plataforma_detectada"),
-                "fuente_datos": resultado.get("fuente_datos"),
-                "timestamp": datetime.now().isoformat()
-            },
+            content=respuesta_base,
             status_code=201,
             headers={"Content-Type": "application/json; charset=utf-8"}
         )
@@ -4862,6 +4910,156 @@ async def obtener_ordenes_por_centro_gestor(nombre_centro_gestor: str):
         raise HTTPException(
             status_code=500,
             detail=f"Error procesando consulta por centro gestor: {str(e)}"
+        )
+
+@app.post("/emprestito/obtener-procesos-secop", tags=["Gestión de Empréstito"])
+async def obtener_procesos_secop_completo_endpoint():
+    """
+    ## 🔄 Obtener y Actualizar Datos Completos de SECOP para Todos los Procesos
+    
+    Endpoint para complementar los datos de TODA la colección "procesos_emprestito" con información 
+    adicional desde la API de SECOP, sin alterar los campos existentes ni los nombres de variables.
+    
+    ### ✅ Funcionalidades principales:
+    - **Procesamiento masivo**: Actualiza TODOS los procesos de la colección automáticamente
+    - **Actualización selectiva**: Solo actualiza campos que han cambiado por proceso
+    - **Preservación de datos**: Mantiene todos los campos existentes intactos
+    - **Mapeo desde SECOP**: Obtiene datos adicionales usando la API oficial
+    - **Sin parámetros**: Lee automáticamente todas las referencias_proceso de Firebase
+    
+    ### 📊 Campos que se actualizan/complementan:
+    **Campos básicos:**
+    - `adjudicado` ← adjudicado (SECOP)
+    - `fase` ← fase (SECOP)
+    - `estado_proceso` ← estado_del_procedimiento (SECOP)
+    
+    **Campos adicionales agregados:**
+    - `fecha_publicacion_fase` ← fecha_de_publicacion_del (SECOP)
+    - `fecha_publicacion_fase_1` ← null (no disponible en SECOP)
+    - `fecha_publicacion_fase_2` ← null (no disponible en SECOP)
+    - `fecha_publicacion_fase_3` ← fecha_de_publicacion_fase_3 (SECOP)
+    - `proveedores_invitados` ← proveedores_invitados (SECOP)
+    - `proveedores_con_invitacion` ← proveedores_con_invitacion (SECOP)
+    - `visualizaciones_proceso` ← visualizaciones_del (SECOP)
+    - `proveedores_que_manifestaron` ← proveedores_que_manifestaron (SECOP)
+    - `numero_lotes` ← numero_de_lotes (SECOP)
+    - `fecha_adjudicacion` ← null (no disponible en SECOP)
+    - `estado_resumen` ← estado_resumen (SECOP)
+    - `fecha_recepcion_respuestas` ← null (no disponible en SECOP)
+    - `fecha_apertura_respuestas` ← null (no disponible en SECOP)
+    - `fecha_apertura_efectiva` ← null (no disponible en SECOP)
+    - `respuestas_procedimiento` ← respuestas_al_procedimiento (SECOP)
+    - `respuestas_externas` ← respuestas_externas (SECOP)
+    - `conteo_respuestas_ofertas` ← conteo_de_respuestas_a_ofertas (SECOP)
+    
+    ### 🔐 Validaciones:
+    - Verificar que el proceso existe en la colección `procesos_emprestito`
+    - Conectar con API de SECOP usando la referencia_proceso
+    - Solo actualizar si hay cambios reales en los datos
+    - Mantener estructura de variables sin cambios
+    
+    ### 📝 Ejemplo de request:
+    ```http
+    POST /emprestito/obtener-procesos-secop
+    ```
+    **No requiere parámetros - procesamiento automático**
+    
+    ### ✅ Respuesta exitosa:
+    ```json
+    {
+        "success": true,
+        "message": "Se procesaron 5 procesos de empréstito exitosamente",
+        "resumen_procesamiento": {
+            "total_procesos_encontrados": 5,
+            "procesos_procesados": 4,
+            "procesos_actualizados": 3,
+            "procesos_sin_cambios": 1,
+            "procesos_con_errores": 1
+        },
+        "resultados_detallados": [
+            {
+                "referencia_proceso": "4163.001.32.1.718-2024",
+                "success": true,
+                "changes_count": 8,
+                "changes_summary": [
+                    "adjudicado: 'No' → 'Sí'",
+                    "estado_proceso: 'En evaluación' → 'Seleccionado'"
+                ]
+            },
+            {
+                "referencia_proceso": "4164.001.32.1.719-2024",
+                "success": true,
+                "changes_count": 0,
+                "message": "Ya está actualizado"
+            }
+        ],
+        "estadisticas": {
+            "total_campos_actualizados": 25,
+            "tiempo_procesamiento": "45.2 segundos"
+        },
+        "timestamp": "2024-10-18T..."
+    }
+    ```
+    
+    ### 📋 Respuesta sin procesos:
+    ```json
+    {
+        "success": false,
+        "error": "No se encontraron procesos en la colección procesos_emprestito",
+        "total_procesos_encontrados": 0
+    }
+    ```
+    
+    ### 🔍 API de SECOP utilizada:
+    - **Dominio**: www.datos.gov.co
+    - **Dataset**: p6dx-8zbt (Procesos de contratación)
+    - **Filtro**: nit_entidad='890399011' AND referencia_del_proceso='{referencia_proceso}'
+    
+    ### ⏱️ Tiempo de procesamiento:
+    - **Timeout extendido**: 5 minutos (300 segundos)
+    - **Tiempo estimado**: ~10-15 segundos por proceso
+    - **Progreso**: Se reporta en logs con ETA para procesos restantes
+    - **Recomendación**: Monitor logs del servidor para ver progreso en tiempo real
+    """
+    try:
+        check_emprestito_availability()
+        
+        # Procesar todos los procesos de empréstito automáticamente
+        resultado = await procesar_todos_procesos_emprestito_completo()
+        
+        # Manejar respuesta según el resultado
+        if not resultado.get("success"):
+            # Si no se encontraron procesos
+            if "No se encontraron procesos" in resultado.get("error", ""):
+                raise HTTPException(
+                    status_code=404,
+                    detail=resultado
+                )
+            else:
+                # Otros errores
+                raise HTTPException(
+                    status_code=500,
+                    detail=resultado
+                )
+        
+        # Respuesta exitosa
+        return JSONResponse(
+            content=resultado,
+            status_code=200,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en endpoint obtener procesos SECOP completo: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "success": False,
+                "error": "Error interno del servidor",
+                "message": "Error obteniendo datos completos de SECOP para todos los procesos"
+            }
         )
 
 
