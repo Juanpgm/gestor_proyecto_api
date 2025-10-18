@@ -134,6 +134,7 @@ try:
         obtener_contratos_desde_proceso_contractual,
         get_emprestito_operations_status,
         get_bancos_emprestito_all,
+        get_procesos_emprestito_all,
         cargar_orden_compra_directa,
         EMPRESTITO_OPERATIONS_AVAILABLE
     )
@@ -186,6 +187,9 @@ except ImportError as e:
         return {"operations_available": False, "error": "Emprestito operations not available"}
     
     async def get_bancos_emprestito_all():
+        return {"success": False, "error": "Emprestito operations not available", "data": [], "count": 0}
+    
+    async def get_procesos_emprestito_all():
         return {"success": False, "error": "Emprestito operations not available", "data": [], "count": 0}
 
 # Importar operaciones de gestión de usuarios
@@ -356,6 +360,7 @@ __all__ = [
     "obtener_contratos_desde_proceso_contractual",
     "get_emprestito_operations_status",
     "get_bancos_emprestito_all",
+    "get_procesos_emprestito_all",
     "cargar_orden_compra_directa",
     
     # User management operations

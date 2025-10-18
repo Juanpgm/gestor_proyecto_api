@@ -99,6 +99,7 @@ try:
         get_contratos_emprestito_by_centro_gestor,
         # Bancos operations
         get_bancos_emprestito_all,
+        get_procesos_emprestito_all,
         # Reportes contratos operations
         create_reporte_contrato,
         get_reportes_contratos,
@@ -499,7 +500,8 @@ async def read_root():
                 "/contratos_emprestito_all",
                 "/contratos_emprestito/referencia/{referencia_contrato}",
                 "/contratos_emprestito/centro-gestor/{nombre_centro_gestor}",
-                "/bancos_emprestito_all"
+                "/bancos_emprestito_all",
+                "/procesos_emprestito_all"
             ],
             "administracion_usuarios": [
                 "/auth/validate-session",
@@ -4620,6 +4622,110 @@ async def get_all_bancos_emprestito():
         raise HTTPException(
             status_code=500,
             detail=f"Error procesando consulta de bancos: {str(e)}"
+        )
+
+@app.get("/procesos_emprestito_all", tags=["Gestión de Empréstito"])
+async def get_all_procesos_emprestito():
+    """
+    ## Obtener Todos los Procesos de Empréstito
+    
+    **Propósito**: Retorna todo el contenido de la colección "procesos_emprestito" en Firebase.
+    
+    ### ✅ Casos de uso:
+    - Obtener listado completo de procesos de empréstito
+    - Exportación de datos para análisis
+    - Integración con sistemas externos
+    - Reportes y dashboards de procesos
+    - Monitoreo del estado de procesos
+    
+    ### 📊 Información incluida:
+    - Todos los campos disponibles en la colección
+    - ID del documento para referencia
+    - Conteo total de registros
+    - Timestamp de la consulta
+    - Datos serializados correctamente para JSON
+    
+    ### 🗄️ Campos principales esperados:
+    - **referencia_proceso**: Referencia única del proceso
+    - **nombre_centro_gestor**: Entidad responsable
+    - **nombre_banco**: Entidad bancaria
+    - **plataforma**: SECOP, SECOP II, TVEC, etc.
+    - **bp**: Código de proyecto base
+    - **proceso_contractual**: Código del proceso contractual
+    - **nombre_proceso**: Nombre del procedimiento
+    - **estado_proceso**: Estado actual del proceso
+    - **valor_publicacion**: Valor del proceso
+    - **fecha_publicacion**: Fecha de publicación
+    - **nombre_resumido_proceso**: Nombre resumido (opcional)
+    - **id_paa**: ID del PAA (opcional)
+    - **valor_proyectado**: Valor proyectado (opcional)
+    
+    ### 📝 Ejemplo de uso:
+    ```javascript
+    const response = await fetch('/procesos_emprestito_all');
+    const data = await response.json();
+    if (data.success) {
+        console.log('Procesos encontrados:', data.count);
+        console.log('Datos:', data.data);
+        
+        // Filtrar por estado
+        const activos = data.data.filter(p => p.estado_proceso === 'Activo');
+        
+        // Sumar valores
+        const valorTotal = data.data.reduce((sum, p) => sum + (p.valor_publicacion || 0), 0);
+    }
+    ```
+    
+    ### 💡 Características:
+    - **Serialización**: Datos de Firebase convertidos correctamente a JSON
+    - **UTF-8**: Soporte completo para caracteres especiales
+    - **Fechas**: Timestamps convertidos a formato ISO
+    - **Performance**: Consulta optimizada de toda la colección
+    - **Consistencia**: Estructura de datos uniforme
+    
+    ### 🔗 Endpoints relacionados:
+    - `POST /emprestito/cargar-proceso` - Para crear nuevos procesos
+    - `GET /contratos_emprestito_all` - Para consultar contratos relacionados
+    - `GET /bancos_emprestito_all` - Para obtener bancos disponibles
+    """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
+    
+    if not EMPRESTITO_OPERATIONS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Emprestito operations not available")
+    
+    try:
+        result = await get_procesos_emprestito_all()
+        
+        if not result["success"]:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error obteniendo procesos de empréstito: {result.get('error', 'Error desconocido')}"
+            )
+        
+        return create_utf8_response({
+            "success": True,
+            "data": result["data"],
+            "count": result["count"],
+            "collection": result["collection"],
+            "timestamp": result["timestamp"],
+            "last_updated": "2025-10-18T00:00:00Z",  # Endpoint creation date
+            "message": result["message"],
+            "metadata": {
+                "data_serialized": True,
+                "utf8_enabled": True,
+                "spanish_support": True,
+                "firebase_timestamps_converted": True,
+                "purpose": "Complete procesos_emprestito collection data"
+            }
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error procesando consulta de procesos de empréstito: {str(e)}"
         )
 
 @app.get("/ordenes_compra_emprestito/numero/{numero_orden}", tags=["Gestión de Empréstito"])
