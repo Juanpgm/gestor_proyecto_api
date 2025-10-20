@@ -327,6 +327,29 @@ except ImportError as e:
     def get_ordenes_compra_operations_status():
         return {"operations_available": False, "error": "Ordenes compra operations not available"}
 
+# Importar operaciones de flujo de caja
+try:
+    from .flujo_caja_operations import (
+        process_flujo_caja_excel,
+        save_flujo_caja_to_firebase,
+        get_flujo_caja_from_firebase,
+        FLUJO_CAJA_OPERATIONS_AVAILABLE
+    )
+    print(f"✅ Flujo caja operations imported successfully - AVAILABLE: {FLUJO_CAJA_OPERATIONS_AVAILABLE}")
+except ImportError as e:
+    print(f"Warning: Flujo caja operations not available: {e}")
+    FLUJO_CAJA_OPERATIONS_AVAILABLE = False
+    
+    # Crear funciones dummy para flujo de caja
+    def process_flujo_caja_excel(file_content: bytes, filename: str):
+        return {"success": False, "error": "Flujo caja operations not available"}
+    
+    async def save_flujo_caja_to_firebase(records, update_mode="merge"):
+        return {"success": False, "error": "Flujo caja operations not available"}
+    
+    async def get_flujo_caja_from_firebase(filters=None):
+        return {"success": False, "error": "Flujo caja operations not available", "data": [], "count": 0}
+
 __all__ = [
     # Firebase operations
     "get_collections_info",
@@ -424,6 +447,11 @@ __all__ = [
     "get_ordenes_compra_emprestito_by_centro_gestor",
     "get_ordenes_compra_operations_status",
     
+    # Flujo caja operations
+    "process_flujo_caja_excel",
+    "save_flujo_caja_to_firebase",
+    "get_flujo_caja_from_firebase",
+    
     # Availability flags
     "FIREBASE_OPERATIONS_AVAILABLE",
     "UNIDADES_PROYECTO_AVAILABLE",
@@ -436,4 +464,5 @@ __all__ = [
     "PROYECTOS_PRESUPUESTALES_OPERATIONS_AVAILABLE",
     "TVEC_ENRICH_OPERATIONS_AVAILABLE",
     "ORDENES_COMPRA_OPERATIONS_AVAILABLE",
+    "FLUJO_CAJA_OPERATIONS_AVAILABLE",
 ]

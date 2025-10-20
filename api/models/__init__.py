@@ -63,6 +63,20 @@ except ImportError as e:
     print(f"Warning: Proyectos presupuestales models not available: {e}")
     PROYECTOS_PRESUPUESTALES_MODELS_AVAILABLE = False
 
+try:
+    from .flujo_caja_models import (
+        # Flujo de caja models
+        FlujoCajaRequest,
+        FlujoCajaResponse,
+        FlujoCajaUploadRequest,
+        FlujoCajaFilters,
+        FLUJO_CAJA_MODELS_AVAILABLE,
+    )
+    FLUJO_CAJA_MODELS_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Flujo caja models not available: {e}")
+    FLUJO_CAJA_MODELS_AVAILABLE = False
+
 __all__ = [
     # Request models
     "UserRegistrationRequest",
@@ -92,6 +106,11 @@ __all__ = [
     "PhoneValidationRequest",
     # Config models
     "SystemConfigResponse",
+    # Flujo de caja models
+    "FlujoCajaRequest",
+    "FlujoCajaResponse", 
+    "FlujoCajaUploadRequest",
+    "FlujoCajaFilters",
     # Reporte models
     "AlertaReporte",
     "ArchivoEvidencia",
@@ -103,4 +122,5 @@ __all__ = [
     "USER_MODELS_AVAILABLE",
     "REPORTE_MODELS_AVAILABLE",
     "PROYECTOS_PRESUPUESTALES_MODELS_AVAILABLE",
+    "FLUJO_CAJA_MODELS_AVAILABLE",
 ]

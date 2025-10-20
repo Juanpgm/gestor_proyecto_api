@@ -132,6 +132,11 @@ try:
         EMPRESTITO_OPERATIONS_AVAILABLE,
         REPORTES_CONTRATOS_AVAILABLE,
         PROYECTOS_PRESUPUESTALES_OPERATIONS_AVAILABLE,
+        # Flujo caja operations
+        process_flujo_caja_excel,
+        save_flujo_caja_to_firebase,
+        get_flujo_caja_from_firebase,
+        FLUJO_CAJA_OPERATIONS_AVAILABLE,
     )
     SCRIPTS_AVAILABLE = True
     print(f"✅ Scripts imported successfully - SCRIPTS_AVAILABLE: {SCRIPTS_AVAILABLE}")
@@ -140,6 +145,7 @@ except Exception as e:
     SCRIPTS_AVAILABLE = False
     USER_MANAGEMENT_AVAILABLE = False
     AUTH_OPERATIONS_AVAILABLE = False
+    FLUJO_CAJA_OPERATIONS_AVAILABLE = False
 
 # Importar modelos Pydantic
 try:
@@ -161,6 +167,12 @@ try:
         REPORTE_MODELS_AVAILABLE,
         # Proyectos presupuestales models
         PROYECTOS_PRESUPUESTALES_MODELS_AVAILABLE,
+        # Flujo de caja models
+        FlujoCajaRequest,
+        FlujoCajaResponse,
+        FlujoCajaUploadRequest,
+        FlujoCajaFilters,
+        FLUJO_CAJA_MODELS_AVAILABLE,
     )
     print(f"✅ User models imported successfully - USER_MODELS_AVAILABLE: {USER_MODELS_AVAILABLE}")
 except Exception as e:
@@ -517,7 +529,9 @@ async def read_root():
                 "/contratos_emprestito/referencia/{referencia_contrato}",
                 "/contratos_emprestito/centro-gestor/{nombre_centro_gestor}",
                 "/bancos_emprestito_all",
-                "/procesos_emprestito_all"
+                "/procesos_emprestito_all",
+                "/emprestito/flujo-caja/cargar-excel (POST - Cargar flujos de caja desde Excel)",
+                "/emprestito/flujo-caja/all (GET - Consultar flujos de caja con filtros)"
             ],
             "administracion_usuarios": [
                 "/auth/validate-session",
@@ -5060,6 +5074,219 @@ async def obtener_procesos_secop_completo_endpoint():
                 "error": "Error interno del servidor",
                 "message": "Error obteniendo datos completos de SECOP para todos los procesos"
             }
+        )
+
+
+# ============================================================================
+# ENDPOINTS DE FLUJO DE CAJA EMPRÉSTITO
+# ============================================================================
+
+@app.post("/emprestito/flujo-caja/cargar-excel", tags=["Gestión de Empréstito"])
+async def cargar_flujo_caja_excel(
+    archivo_excel: UploadFile = File(..., description="Archivo Excel con flujos de caja"),
+    update_mode: str = Form(default="merge", description="Modo de actualización: merge, replace, append")
+):
+    """
+    ## 📊 Cargar Flujos de Caja desde Archivo Excel
+    
+    Endpoint para procesar archivos Excel con información de flujos de caja de proyectos
+    y cargarlos en la colección "flujo_caja_emprestito".
+    
+    ### 📁 Archivo Excel esperado:
+    - **Hoja**: "CONTRATOS - Seguimiento" 
+    - **Columnas requeridas**: Responsable, Organismo, Banco, BP Proyecto, Descripcion BP
+    - **Columnas de datos**: Todas las columnas que contengan "Desembolso" en su nombre
+    - **Formato de fechas**: Las columnas de desembolso deben contener fechas como jul-25, ago-25, etc.
+    
+    ### 🔧 Modos de actualización:
+    - **merge**: Actualiza existentes y crea nuevos (por defecto)
+    - **replace**: Reemplaza toda la colección
+    - **append**: Solo agrega nuevos registros
+    
+    ### 📊 Procesamiento:
+    1. Lee datos del Excel
+    2. Separa columnas de Desembolso normal y REAL
+    3. Convierte a formato largo (un registro por mes)
+    4. Crea campo Periodo en formato fecha
+    5. Guarda en Firebase con ID único por organismo_banco_mes
+    
+    ### 🎯 Cómo usar:
+    1. Selecciona archivo .xlsx con formato correcto
+    2. Elige modo de actualización
+    3. Haz clic en "Execute"
+    
+    ### ✅ Validaciones:
+    - Solo archivos .xlsx
+    - Columnas Organismo y Banco requeridas
+    - Al menos una columna de Desembolso
+    - Tamaño máximo: 10MB
+    """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase o scripts no disponibles")
+    
+    if not FLUJO_CAJA_OPERATIONS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Operaciones de flujo de caja no disponibles")
+    
+    # Validar modo de actualización
+    if update_mode not in ["merge", "replace", "append"]:
+        raise HTTPException(status_code=400, detail="update_mode debe ser: merge, replace o append")
+    
+    # Validar tipo de archivo
+    if not archivo_excel.filename.lower().endswith(('.xlsx', '.xls')):
+        raise HTTPException(status_code=400, detail="Solo se permiten archivos Excel (.xlsx, .xls)")
+    
+    # Validar tamaño del archivo (10MB máximo)
+    max_size = 10 * 1024 * 1024  # 10MB
+    file_content = await archivo_excel.read()
+    if len(file_content) > max_size:
+        raise HTTPException(status_code=400, detail="El archivo no puede exceder 10MB")
+    
+    try:
+        # Procesar el archivo Excel
+        result = process_flujo_caja_excel(file_content, archivo_excel.filename)
+        
+        if not result["success"]:
+            raise HTTPException(status_code=400, detail=result.get('error', 'Error procesando Excel'))
+        
+        # Guardar en Firebase
+        save_result = await save_flujo_caja_to_firebase(result["data"], update_mode)
+        
+        if not save_result["success"]:
+            raise HTTPException(status_code=500, detail=save_result.get('error', 'Error guardando en Firebase'))
+        
+        # Combinar resultados
+        final_result = {
+            "success": True,
+            "message": "Flujos de caja cargados exitosamente",
+            "archivo_info": {
+                "nombre_archivo": archivo_excel.filename,
+                "tamaño_bytes": len(file_content),
+                "modo_actualizacion": update_mode
+            },
+            "procesamiento": result["summary"],
+            "guardado": save_result["summary"],
+            "timestamp": datetime.now().isoformat(),
+            "last_updated": "2025-10-20T00:00:00Z"
+        }
+        
+        return create_utf8_response(final_result)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+@app.get("/emprestito/flujo-caja/all", tags=["Gestión de Empréstito"])
+async def get_flujos_caja_all(
+    responsable: Optional[str] = Query(None, description="Filtrar por responsable específico"),
+    organismo: Optional[str] = Query(None, description="Filtrar por organismo específico"),
+    banco: Optional[str] = Query(None, description="Filtrar por banco específico"),
+    bp_proyecto: Optional[str] = Query(None, description="Filtrar por BP Proyecto específico"),
+    mes: Optional[str] = Query(None, description="Filtrar por mes específico (ej: jul-25)"),
+    periodo_desde: Optional[str] = Query(None, description="Periodo desde (formato: YYYY-MM-DD)"),
+    periodo_hasta: Optional[str] = Query(None, description="Periodo hasta (formato: YYYY-MM-DD)"),
+    limit: Optional[int] = Query(None, ge=1, le=1000, description="Límite de registros")
+):
+    """
+    ## 📊 Obtener Todos los Flujos de Caja
+    
+    Endpoint para consultar flujos de caja almacenados en la colección "flujo_caja_emprestito".
+    
+    ### ✅ Casos de uso:
+    - Consultar flujos de caja por organismo o banco
+    - Filtrar por períodos específicos
+    - Analizar desembolsos planeados vs reales
+    - Generar reportes de flujo de caja
+    - Exportar datos para dashboards
+    
+    ### 🔍 Filtros disponibles:
+    - **responsable**: Filtrar por responsable específico
+    - **organismo**: Filtrar por organismo específico
+    - **banco**: Filtrar por banco específico
+    - **bp_proyecto**: Filtrar por BP Proyecto específico  
+    - **mes**: Filtrar por mes específico (ej: "jul-25")
+    - **periodo_desde**: Desde fecha específica (YYYY-MM-DD)
+    - **periodo_hasta**: Hasta fecha específica (YYYY-MM-DD)
+    - **limit**: Limitar número de resultados (máx: 1000)
+    
+    ### 📊 Información incluida:
+    - Responsable, organismo, banco y BP proyecto
+    - Descripción del BP proyecto
+    - Mes y período en formato fecha
+    - Monto de desembolso
+    - Columna origen del Excel
+    - ID único del registro y metadatos de archivo origen
+    
+    ### 📝 Ejemplo de uso:
+    ```javascript
+    // Obtener todos los flujos
+    const response = await fetch('/emprestito/flujo-caja/all');
+    
+    // Filtrar por banco específico
+    const response = await fetch('/emprestito/flujo-caja/all?banco=Banco Popular');
+    
+    // Filtrar por período
+    const response = await fetch('/emprestito/flujo-caja/all?periodo_desde=2025-07-01&periodo_hasta=2025-12-31');
+    ```
+    
+    ### 💡 Características:
+    - **Ordenamiento**: Por período (cronológico)
+    - **Resumen**: Estadísticas agregadas incluidas
+    - **Metadatos**: Organismos, bancos y meses únicos
+    - **UTF-8**: Soporte completo para caracteres especiales
+    """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase o scripts no disponibles")
+    
+    if not FLUJO_CAJA_OPERATIONS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Operaciones de flujo de caja no disponibles")
+    
+    try:
+        # Construir filtros
+        filters = {}
+        
+        if responsable:
+            filters['responsable'] = responsable
+        if organismo:
+            filters['organismo'] = organismo
+        if banco:
+            filters['banco'] = banco
+        if bp_proyecto:
+            filters['bp_proyecto'] = bp_proyecto
+        if mes:
+            filters['mes'] = mes
+        if periodo_desde:
+            filters['periodo_desde'] = periodo_desde
+        if periodo_hasta:
+            filters['periodo_hasta'] = periodo_hasta
+        if limit:
+            filters['limit'] = limit
+        
+        # Obtener datos de Firebase
+        result = await get_flujo_caja_from_firebase(filters)
+        
+        if not result["success"]:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error obteniendo flujos de caja: {result.get('error', 'Error desconocido')}"
+            )
+        
+        # Agregar información del endpoint
+        result["last_updated"] = "2025-10-20T00:00:00Z"
+        result["endpoint_info"] = {
+            "filtros_aplicados": len([k for k, v in filters.items() if v is not None]),
+            "total_filtros_disponibles": 6,
+            "ordenamiento": "por_periodo_cronologico"
+        }
+        
+        return create_utf8_response(result)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error procesando consulta de flujos de caja: {str(e)}"
         )
 
 

@@ -40,6 +40,9 @@ aiohttp==3.10.11
 sodapy==2.2.0
 pandas==2.2.3
 
+# Excel processing
+openpyxl==3.1.5
+
 # Google Drive API para manejo de archivos de evidencia (integrado con versiones existentes)
 
 # Nota: Las siguientes dependencias son parte de la librería estándar de Python
