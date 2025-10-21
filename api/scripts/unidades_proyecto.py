@@ -651,11 +651,13 @@ async def get_unidades_proyecto_attributes(
         # Ordenar para paginación consistente
         query = query.order_by('__name__')  # Ordenar por document ID
         
-        # Aplicar límite server-side SOLO si se especifica explícitamente
+        # ✅ FIX: NO aplicar límite server-side cuando hay filtros client-side
+        # El límite se aplicará DESPUÉS de los filtros client-side para consistencia
+        # with geometry endpoint behavior
+        server_side_limit_skipped = False
         if limit and limit > 0:
-            query = query.limit(limit + (offset or 0))  # Aumentar límite para compensar offset
-            server_side_filters_applied.append(f"limit_explícito={limit}")
-            print(f"📋 DEBUG: ✅ SERVER-SIDE límite explícito aplicado: {limit}")
+            server_side_limit_skipped = True
+            print(f"📋 DEBUG: ⏭️ SERVER-SIDE límite pospuesto para aplicar después de filtros: {limit}")
         
         # Aplicar offset si se especifica
         if offset and offset > 0:
@@ -766,11 +768,16 @@ async def get_unidades_proyecto_attributes(
                 attributes_data = apply_client_side_filters(attributes_data, client_side_filters)
                 print(f"📋 DEBUG: 🎯 RESULTADO FINAL - Registros después de filtros: {len(attributes_data)} de {total_docs} descargados")
         
-        # Aplicar límite después de filtros client-side
+        # ✅ FIX: Aplicar límite después de filtros client-side (CONSISTENTE con geometry endpoint)
         original_count = len(attributes_data)
         if limit and limit > 0:
+            # Apply offset first (if any), then limit
+            if offset and offset > 0:
+                attributes_data = attributes_data[offset:]
+                print(f"📋 DEBUG: Aplicando offset de {offset} registros")
+            
             attributes_data = attributes_data[:limit]
-            print(f"📋 DEBUG: Aplicando límite de {limit} registros")
+            print(f"📋 DEBUG: ✅ LÍMITE APLICADO DESPUÉS DE FILTROS: {limit} registros (consistente con geometry endpoint)")
         
         optimization_info = "Con filtros aplicados" if has_filters else "Sin filtros - Datos completos"
         
