@@ -374,7 +374,7 @@ important_origins = [
     "http://localhost:3000",
     "http://localhost:5500",
     "https://gestor-proyectos-vercel.vercel.app",  # Frontend específico de Vercel
-    "https://gestor-proyectos-vercel-git-dev-juan-pablos-projects-56fe2e60.vercel.app"  # Branch dev de Vercel
+    "https://gestor-proyectos-vercel-5ogb5wph8-juan-pablos-projects-56fe2e60.vercel.app"  # Branch dev de Vercel
 ]
 
 # Combinar todos los orígenes
