@@ -752,7 +752,8 @@ async def procesar_proceso_individual(db_client, proceso_data, referencia_proces
         "documentos_nuevos": 0,
         "documentos_actualizados": 0,
         "contratos_guardados": [],
-        "error": None
+        "error": None,
+        "sin_contratos": False
     }
 
     try:
@@ -771,6 +772,7 @@ async def procesar_proceso_individual(db_client, proceso_data, referencia_proces
 
         if not contratos_secop:
             resultado["exito"] = True  # No es error, simplemente no hay contratos
+            resultado["sin_contratos"] = True  # Flag para distinguir de errores técnicos
             logger.info(f"ℹ️  No se encontraron contratos para el proceso {proceso_contractual}")
             return resultado
 
@@ -803,13 +805,32 @@ async def procesar_proceso_individual(db_client, proceso_data, referencia_proces
                     existing_docs = list(existing_query.limit(1).stream())
 
                 if existing_docs:
-                    # Actualizar documento existente
+                    # Actualizar documento existente - Solo campos que han cambiado
                     existing_doc = existing_docs[0]
-                    contrato_transformado["fecha_actualizacion"] = datetime.now()
-                    existing_doc.reference.update(contrato_transformado)
-
-                    resultado["documentos_actualizados"] += 1
-                    logger.info(f"🔄 Contrato actualizado: {referencia_contrato or id_contrato}")
+                    existing_data = existing_doc.to_dict()
+                    
+                    # Crear objeto de actualización solo con campos que han cambiado
+                    campos_actualizacion = {}
+                    
+                    # Comparar cada campo y solo actualizar si hay cambios
+                    for key, new_value in contrato_transformado.items():
+                        if key == "fecha_guardado":  # No comparar fecha_guardado
+                            continue
+                        
+                        existing_value = existing_data.get(key)
+                        
+                        # Actualizar solo si el valor es diferente o el campo no existe
+                        if existing_value != new_value:
+                            campos_actualizacion[key] = new_value
+                    
+                    # Solo actualizar si hay cambios reales
+                    if campos_actualizacion:
+                        campos_actualizacion["fecha_actualizacion"] = datetime.now()
+                        existing_doc.reference.update(campos_actualizacion)
+                        resultado["documentos_actualizados"] += 1
+                        logger.info(f"🔄 Contrato actualizado ({len(campos_actualizacion)} campos): {referencia_contrato or id_contrato}")
+                    else:
+                        logger.info(f"📋 Contrato sin cambios: {referencia_contrato or id_contrato}")
                 else:
                     # Crear nuevo documento con UID automático de Firebase (como procesos_emprestito)
                     doc_ref = contratos_ref.add(contrato_transformado)
@@ -1053,7 +1074,8 @@ async def obtener_contratos_desde_proceso_contractual() -> Dict[str, Any]:
         total_documentos_nuevos = 0
         total_documentos_actualizados = 0
         todos_contratos_guardados = []
-        procesos_con_errores = []
+        procesos_con_errores_tecnicos = []
+        procesos_sin_contratos = []
 
         # Procesar TODOS los procesos de empréstito
         procesos_a_procesar = procesos_docs
@@ -1079,7 +1101,7 @@ async def obtener_contratos_desde_proceso_contractual() -> Dict[str, Any]:
 
                 if not referencia_proceso or not proceso_contractual:
                     logger.warning(f"❌ Proceso incompleto {i}/{total_procesos}: {proceso_doc.id}")
-                    procesos_con_errores.append({
+                    procesos_con_errores_tecnicos.append({
                         "id": proceso_doc.id,
                         "referencia_proceso": referencia_proceso or "N/A",
                         "error": "Datos incompletos (falta referencia_proceso o proceso_contractual)"
@@ -1103,14 +1125,25 @@ async def obtener_contratos_desde_proceso_contractual() -> Dict[str, Any]:
                     total_contratos_encontrados += resultado_individual["contratos_encontrados"]
                     todos_contratos_guardados.extend(resultado_individual["contratos_guardados"])
 
-                    logger.info(f"✅ ÉXITO - Proceso {i}/{total_procesos}: {resultado_individual['contratos_encontrados']} contratos encontrados, {resultado_individual['documentos_nuevos']} nuevos, {resultado_individual['documentos_actualizados']} actualizados")
+                    if resultado_individual.get("sin_contratos", False):
+                        # Proceso exitoso pero sin contratos encontrados en SECOP
+                        procesos_sin_contratos.append({
+                            "id": proceso_doc.id,
+                            "referencia_proceso": referencia_proceso,
+                            "proceso_contractual": proceso_contractual,
+                            "motivo": "No se encontraron contratos en SECOP para este proceso"
+                        })
+                        logger.info(f"ℹ️  SIN CONTRATOS - Proceso {i}/{total_procesos}: {proceso_contractual}")
+                    else:
+                        logger.info(f"✅ ÉXITO - Proceso {i}/{total_procesos}: {resultado_individual['contratos_encontrados']} contratos encontrados, {resultado_individual['documentos_nuevos']} nuevos, {resultado_individual['documentos_actualizados']} actualizados")
                 else:
-                    procesos_con_errores.append({
+                    # Error técnico real
+                    procesos_con_errores_tecnicos.append({
                         "id": proceso_doc.id,
                         "referencia_proceso": referencia_proceso,
                         "error": resultado_individual["error"]
                     })
-                    logger.error(f"❌ ERROR - Proceso {i}/{total_procesos}: {resultado_individual['error']}")
+                    logger.error(f"❌ ERROR TÉCNICO - Proceso {i}/{total_procesos}: {resultado_individual['error']}")
 
                 # Log de progreso
                 tiempo_transcurrido = (datetime.now() - inicio_tiempo).total_seconds()
@@ -1118,7 +1151,7 @@ async def obtener_contratos_desde_proceso_contractual() -> Dict[str, Any]:
 
             except Exception as e:
                 logger.error(f"💥 EXCEPCIÓN en proceso {i}/{total_procesos}: {e}")
-                procesos_con_errores.append({
+                procesos_con_errores_tecnicos.append({
                     "id": proceso_doc.id,
                     "referencia_proceso": referencia_proceso if 'referencia_proceso' in locals() else "DESCONOCIDO",
                     "error": f"Excepción durante procesamiento: {str(e)}"
@@ -1133,7 +1166,8 @@ async def obtener_contratos_desde_proceso_contractual() -> Dict[str, Any]:
         logger.info(f"📊 Estadísticas finales:")
         logger.info(f"   - Total procesos en BD: {total_procesos}")
         logger.info(f"   - Procesados exitosamente: {procesados_exitosos}")
-        logger.info(f"   - Procesos con errores: {len(procesos_con_errores)}")
+        logger.info(f"   - Procesos sin contratos en SECOP: {len(procesos_sin_contratos)}")
+        logger.info(f"   - Errores técnicos: {len(procesos_con_errores_tecnicos)}")
         logger.info(f"   - Contratos encontrados: {total_contratos_encontrados}")
         logger.info(f"   - Documentos nuevos: {total_documentos_nuevos}")
         logger.info(f"   - Documentos actualizados: {total_documentos_actualizados}")
@@ -1143,11 +1177,12 @@ async def obtener_contratos_desde_proceso_contractual() -> Dict[str, Any]:
 
         return {
             "success": True,
-            "message": f"✅ PROCESAMIENTO COMPLETO: {procesados_exitosos}/{total_procesos} procesos exitosos. Contratos: {total_procesados} total ({total_documentos_nuevos} nuevos, {total_documentos_actualizados} actualizados)",
+            "message": f"✅ PROCESAMIENTO COMPLETO: {procesados_exitosos}/{total_procesos} procesos procesados. Contratos: {total_procesados} total ({total_documentos_nuevos} nuevos, {total_documentos_actualizados} actualizados)",
             "resumen_procesamiento": {
                 "total_procesos_en_bd": total_procesos,
                 "procesos_procesados_exitosamente": procesados_exitosos,
-                "procesos_con_errores": len(procesos_con_errores),
+                "procesos_sin_contratos_en_secop": len(procesos_sin_contratos),
+                "procesos_con_errores_tecnicos": len(procesos_con_errores_tecnicos),
                 "tasa_exito": f"{(procesados_exitosos/total_procesos*100):.1f}%" if total_procesos > 0 else "0%"
             },
             "criterios_busqueda": {
@@ -1166,7 +1201,8 @@ async def obtener_contratos_desde_proceso_contractual() -> Dict[str, Any]:
                 "duplicados_ignorados": total_duplicados_ignorados
             },
             "contratos_guardados": todos_contratos_guardados,
-            "procesos_con_errores": procesos_con_errores,
+            "procesos_sin_contratos_en_secop": procesos_sin_contratos,
+            "procesos_con_errores_tecnicos": procesos_con_errores_tecnicos,
             "tiempo_total": (datetime.now() - inicio_tiempo).total_seconds(),
             "timestamp": datetime.now().isoformat()
         }
