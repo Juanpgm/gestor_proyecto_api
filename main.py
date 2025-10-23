@@ -104,6 +104,10 @@ try:
         obtener_datos_secop_completos,
         actualizar_proceso_emprestito_completo,
         procesar_todos_procesos_emprestito_completo,
+        # Nuevas funciones para proyecciones de empréstito
+        crear_tabla_proyecciones_desde_sheets,
+    leer_proyecciones_emprestito,
+    get_proyecciones_sin_proceso,
         # Reportes contratos operations
         create_reporte_contrato,
         get_reportes_contratos,
@@ -531,7 +535,9 @@ async def read_root():
                 "/bancos_emprestito_all",
                 "/procesos_emprestito_all",
                 "/emprestito/flujo-caja/cargar-excel (POST - Cargar flujos de caja desde Excel)",
-                "/emprestito/flujo-caja/all (GET - Consultar flujos de caja con filtros)"
+                "/emprestito/flujo-caja/all (GET - Consultar flujos de caja con filtros)",
+                "/emprestito/crear-tabla-proyecciones (POST - Crear tabla desde Google Sheets)",
+                "/emprestito/leer-tabla-proyecciones (GET - Leer proyecciones cargadas)"
             ],
             "administracion_usuarios": [
                 "/auth/validate-session",
@@ -5288,6 +5294,250 @@ async def get_flujos_caja_all(
             status_code=500,
             detail=f"Error procesando consulta de flujos de caja: {str(e)}"
         )
+
+@app.post("/emprestito/crear-tabla-proyecciones", tags=["Gestión de Empréstito"])
+async def crear_tabla_proyecciones_endpoint():
+    """
+    ## 📊 Crear Tabla de Proyecciones desde Google Sheets
+    
+    **Propósito**: Lee datos de Google Sheets específico y los carga en la colección "proyecciones_emprestito".
+    
+    ### 🔧 Proceso automático:
+    1. **Lee datos** desde Google Sheets específico (Publicados Emprestitos nuevo)
+    2. **Mapea campos** según especificaciones definidas
+    3. **Procesa BP** agregando prefijo "BP" automáticamente
+    4. **Guarda en Firebase** en colección "proyecciones_emprestito"
+    5. **Elimina temporal** y registra fecha de actualización
+    
+    ### 📋 Mapeo de campos:
+    - `Item` → `item`
+    - `Nro de Proceso` → `referencia_proceso`
+    - `NOMBRE ABREVIADO` → `nombre_organismo_reducido`
+    - `Banco` → `nombre_banco`
+    - `BP` → `BP` (con prefijo "BP" agregado)
+    - `Proyecto` → `nombre_generico_proyecto`
+    - `Proyecto con su respectivo contrato` → `nombre_resumido_proceso`
+    - `ID PAA` → `id_paa`
+    - `LINK DEL PROCESO` → `urlProceso`
+    - `VALOR TOTAL` → `valor_proyectado`
+    
+    ### ✅ Características:
+    - **Reemplazo completo**: Elimina datos existentes y carga nuevos
+    - **Validación automática**: Verifica campos obligatorios
+    - **Manejo de errores**: Reporta filas con problemas
+    - **Metadatos**: Registra fecha de carga y estadísticas
+    - **UTF-8**: Soporte completo para caracteres especiales
+    - **URL fija**: Usa Google Sheets predefinido
+    - **Service Account**: Autenticación con service account configurado
+    
+    ### 🔐 Autenticación:
+    - **Service Account**: `unidad-cumplimiento-sheets@unidad-cumplimiento.iam.gserviceaccount.com`
+    - **Permisos**: Debe tener acceso de lectura al Google Sheets configurado
+    - **Scopes**: `spreadsheets.readonly` y `drive.readonly`
+    - **Credenciales**: Configuradas en el sistema usando ADC o variable de entorno
+    
+    ### 📝 Ejemplo de respuesta:
+    ```json
+    {
+        "success": true,
+        "message": "Tabla de proyecciones creada exitosamente",
+        "resumen_operacion": {
+            "filas_leidas": 150,
+            "registros_procesados": 148,
+            "registros_guardados": 148,
+            "docs_eliminados_previos": 145
+        }
+    }
+    ```
+    
+    ### 💡 Notas importantes:
+    - **URL fija**: Usa Google Sheets predefinido internamente
+    - **Automático**: No requiere parámetros de entrada
+    - **Destructivo**: Reemplaza todos los datos existentes
+    - **Auditable**: Mantiene registro de fecha de última actualización
+    - **Permisos**: Requiere service account con acceso al Google Sheets
+    """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase o scripts no disponibles")
+    
+    if not EMPRESTITO_OPERATIONS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Operaciones de empréstito no disponibles")
+    
+    try:
+        # URL fija del Google Sheets según especificación del usuario
+        sheet_url = "https://docs.google.com/spreadsheets/d/11-sdLwINHHwRit8b9jnnXcO2phhuEVUpXM6q6yv8DYo/edit?usp=sharing"
+        
+        # Ejecutar proceso completo
+        result = await crear_tabla_proyecciones_desde_sheets(sheet_url)
+        
+        if not result["success"]:
+            # Verificar si es error de autorización para dar mejor mensaje
+            error_msg = result.get('error', 'Error desconocido')
+            
+            if 'Unauthorized' in error_msg or '401' in error_msg:
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "error": "El Google Sheets no es público o no tiene permisos de lectura",
+                        "solucion": "Para resolver este problema:",
+                        "pasos": [
+                            "1. Abrir el Google Sheets",
+                            "2. Hacer clic en 'Compartir' (botón azul superior derecho)",
+                            "3. En 'Obtener enlace', cambiar a 'Cualquier persona con el enlace'",
+                            "4. Cambiar permisos a 'Lector'",
+                            "5. Copiar el enlace y usarlo en el parámetro sheet_url"
+                        ],
+                        "error_original": error_msg
+                    }
+                )
+            else:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Error creando tabla de proyecciones: {error_msg}"
+                )
+        
+        # Agregar información del endpoint
+        result["last_updated"] = "2025-10-22T00:00:00Z"
+        result["endpoint_info"] = {
+            "sheet_url_fija": True,
+            "operacion": "reemplazo_completo",
+            "campos_mapeados": 10,
+            "validaciones": "campos_obligatorios",
+            "service_account": "unidad-cumplimiento-sheets@unidad-cumplimiento.iam.gserviceaccount.com"
+        }
+        
+        return create_utf8_response(result)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error procesando creación de tabla de proyecciones: {str(e)}"
+        )
+
+@app.get("/emprestito/leer-tabla-proyecciones", tags=["Gestión de Empréstito"])
+async def leer_tabla_proyecciones_endpoint():
+    """
+    ## 📋 Leer Tabla de Proyecciones de Empréstito
+    
+    **Propósito**: Obtiene todos los registros de la colección "proyecciones_emprestito".
+    
+    ### ✅ Casos de uso:
+    - Consultar proyecciones cargadas desde Google Sheets
+    - Verificar datos después de carga
+    - Exportar proyecciones para análisis
+    - Integrar con dashboards y reportes
+    - Auditar última fecha de actualización
+    
+    ### 📊 Información incluida:
+    - **Datos mapeados**: Todos los campos según mapeo definido
+    - **Metadatos**: Fecha de carga, fuente, fila origen
+    - **Timestamps**: Fecha de guardado y última actualización
+    - **ID único**: Identificador de Firebase para cada registro
+    - **Estadísticas**: Información de la última carga realizada
+    
+    ### 🔍 Campos de respuesta:
+    - `item`: Número de ítem
+    - `referencia_proceso`: Número de proceso
+    - `nombre_organismo_reducido`: Nombre abreviado del organismo
+    - `nombre_banco`: Banco asociado
+    - `BP`: Código BP con prefijo agregado
+    - `nombre_generico_proyecto`: Nombre del proyecto
+    - `nombre_resumido_proceso`: Proyecto con contrato
+    - `id_paa`: ID del PAA
+    - `urlProceso`: Enlace al proceso
+    - `valor_proyectado`: Valor total del proyecto
+    
+    ### 📝 Ejemplo de uso:
+    ```javascript
+    const response = await fetch('/emprestito/leer-tabla-proyecciones');
+    const data = await response.json();
+    
+    if (data.success) {
+        console.log(`Proyecciones encontradas: ${data.count}`);
+        console.log(`Última carga: ${data.metadatos_carga.fecha_ultima_carga}`);
+        
+        // Procesar proyecciones
+        data.data.forEach(proyeccion => {
+            console.log(`${proyeccion.referencia_proceso}: ${proyeccion.valor_proyectado}`);
+        });
+    }
+    ```
+    
+    ### 💡 Características:
+    - **Ordenamiento**: Por fecha de carga (más recientes primero)
+    - **Metadatos completos**: Información de la última actualización
+    - **Sin filtros**: Retorna todos los registros disponibles
+    - **UTF-8**: Soporte completo para caracteres especiales
+    - **Auditoría**: Incluye información de trazabilidad
+    """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase o scripts no disponibles")
+    
+    if not EMPRESTITO_OPERATIONS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Operaciones de empréstito no disponibles")
+    
+    try:
+        # Obtener proyecciones de Firebase
+        result = await leer_proyecciones_emprestito()
+        
+        if not result["success"]:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error leyendo tabla de proyecciones: {result.get('error', 'Error desconocido')}"
+            )
+        
+        # Agregar información del endpoint
+        result["last_updated"] = "2025-10-22T00:00:00Z"
+        result["endpoint_info"] = {
+            "coleccion_fuente": "proyecciones_emprestito",
+            "ordenamiento": "por_fecha_carga_desc",
+            "incluye_metadatos": True,
+            "trazabilidad_completa": True
+        }
+        
+        return create_utf8_response(result)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error procesando lectura de tabla de proyecciones: {str(e)}"
+        )
+
+
+@app.get("/emprestito/proyecciones-sin-proceso", tags=["Gestión de Empréstito"])
+async def endpoint_proyecciones_sin_proceso():
+    """Devuelve proyecciones cuya 'referencia_proceso' no exista en 'procesos_emprestito'."""
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase o scripts no disponibles")
+
+    if not EMPRESTITO_OPERATIONS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Operaciones de empréstito no disponibles")
+
+    try:
+        result = await get_proyecciones_sin_proceso()
+
+        if not result.get("success", False):
+            raise HTTPException(status_code=500, detail=result.get("error", "Error desconocido"))
+
+        # Agregar metadata del endpoint
+        result["last_updated"] = "2025-10-23T00:00:00Z"
+        result["endpoint_info"] = {
+            "coleccion_origen": "proyecciones_emprestito",
+            "coleccion_comparacion": "procesos_emprestito",
+            "filter_field": "referencia_proceso",
+            "returned_count": result.get("count", 0)
+        }
+
+        return create_utf8_response(result)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error procesando endpoint: {str(e)}")
 
 
 # ============================================================================

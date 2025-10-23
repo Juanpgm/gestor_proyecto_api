@@ -139,6 +139,10 @@ try:
         obtener_datos_secop_completos,
         actualizar_proceso_emprestito_completo,
         procesar_todos_procesos_emprestito_completo,
+        # Nuevas funciones para proyecciones de empréstito
+        crear_tabla_proyecciones_desde_sheets,
+        leer_proyecciones_emprestito,
+        get_proyecciones_sin_proceso,
         EMPRESTITO_OPERATIONS_AVAILABLE
     )
     print(f"✅ Emprestito operations imported successfully - AVAILABLE: {EMPRESTITO_OPERATIONS_AVAILABLE}")
@@ -203,6 +207,18 @@ except ImportError as e:
     
     async def procesar_todos_procesos_emprestito_completo():
         return {"success": False, "error": "Emprestito operations not available"}
+    
+    # Nuevas funciones dummy para proyecciones
+    async def crear_tabla_proyecciones_desde_sheets(sheet_url: str):
+        return {"success": False, "error": "Emprestito operations not available"}
+    
+    async def leer_proyecciones_emprestito():
+        return {"success": False, "error": "Emprestito operations not available", "data": [], "count": 0}
+    
+    async def get_proyecciones_sin_proceso():
+        return {"success": False, "error": "Emprestito operations not available", "data": [], "count": 0}
+    
+
 
 # Importar operaciones de gestión de usuarios
 try:
@@ -400,6 +416,10 @@ __all__ = [
     "obtener_datos_secop_completos",
     "actualizar_proceso_emprestito_completo",
     "procesar_todos_procesos_emprestito_completo",
+    # Nuevas funciones para proyecciones de empréstito
+    "crear_tabla_proyecciones_desde_sheets",
+    "leer_proyecciones_emprestito",
+    "get_proyecciones_sin_proceso",
     
     # User management operations
     "validate_email",

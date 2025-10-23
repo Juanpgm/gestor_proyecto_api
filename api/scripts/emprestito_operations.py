@@ -6,6 +6,8 @@ Solo funcionalidades esenciales habilitadas
 import logging
 from typing import Dict, List, Any, Optional
 from datetime import datetime
+import pandas as pd
+import re
 from database.firebase_config import get_firestore_client
 
 # Configurar logging
@@ -1623,3 +1625,626 @@ async def procesar_todos_procesos_emprestito_completo() -> Dict[str, Any]:
             "success": False,
             "error": str(e)
         }
+
+# ============================================================================
+# FUNCIONES PARA PROYECCIONES DE EMPRÉSTITO DESDE GOOGLE SHEETS
+# ============================================================================
+
+async def leer_google_sheets_proyecciones(sheet_url: str) -> Dict[str, Any]:
+    """
+    Lee datos de Google Sheets usando autenticación con service account
+    
+    Args:
+        sheet_url: URL del Google Sheet
+        
+    Returns:
+        Dict con success, data (DataFrame) y mensaje
+    """
+    try:
+        import gspread
+        from google.oauth2.service_account import Credentials
+        
+        # Extraer el ID del spreadsheet de la URL
+        sheet_id_match = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', sheet_url)
+        if not sheet_id_match:
+            return {
+                "success": False,
+                "error": "No se pudo extraer el ID del Google Sheet de la URL proporcionada"
+            }
+        
+        sheet_id = sheet_id_match.group(1)
+        logger.info(f"📊 Accediendo a Google Sheets ID: {sheet_id}")
+        
+        # Obtener credenciales de Firebase para Google Sheets
+        import firebase_admin
+        from firebase_admin import credentials
+        import os
+        import json
+        import base64
+        
+        try:
+            # Opción 1: Intentar usar el service account específico del archivo de credenciales
+            service_account_file = "credentials/unidad-cumplimiento-drive.json"
+            service_account_email = "unidad-cumplimiento-drive@unidad-cumplimiento.iam.gserviceaccount.com"
+            
+            try:
+                # Verificar si el archivo de credenciales existe
+                import os
+                if os.path.exists(service_account_file):
+                    from google.oauth2.service_account import Credentials
+                    
+                    # Scopes necesarios para Google Sheets
+                    scopes = [
+                        'https://www.googleapis.com/auth/spreadsheets.readonly',
+                        'https://www.googleapis.com/auth/drive.readonly'
+                    ]
+                    
+                    sheets_credentials = Credentials.from_service_account_file(
+                        service_account_file, 
+                        scopes=scopes
+                    )
+                    logger.info(f"🔑 Usando service account desde archivo: {service_account_email}")
+                    
+                    # Crear cliente gspread
+                    gc = gspread.authorize(sheets_credentials)
+                    logger.info("✅ Cliente gspread autorizado exitosamente")
+                else:
+                    # Fallback a ADC
+                    raise FileNotFoundError("Archivo de service account no encontrado")
+                
+            except Exception as service_account_error:
+                logger.warning(f"⚠️ Service account desde archivo no disponible: {str(service_account_error)}")
+                
+                # Opción 2: Intentar usar las credenciales por defecto de Google Cloud
+                from google.auth import default
+                
+                # Obtener credenciales por defecto con scopes específicos
+                scopes = [
+                    'https://www.googleapis.com/auth/spreadsheets.readonly',
+                    'https://www.googleapis.com/auth/drive.readonly'
+                ]
+                
+                sheets_credentials, project_id = default(scopes=scopes)
+                logger.info(f"🔑 Usando Application Default Credentials para Google Sheets")
+                logger.info(f"🆔 Proyecto detectado: {project_id}")
+                
+                # Crear cliente gspread
+                gc = gspread.authorize(sheets_credentials)
+                logger.info("✅ Cliente gspread autorizado exitosamente")
+                
+            except Exception as default_error:
+                logger.warning(f"⚠️ ADC no disponible: {str(default_error)}")
+                
+                # Opción 2: Usar credenciales de Firebase desde variable de entorno
+                firebase_key = os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY")
+                if not firebase_key:
+                    raise Exception("FIREBASE_SERVICE_ACCOUNT_KEY no encontrada en variables de entorno")
+                
+                # Decodificar las credenciales
+                service_account_info = json.loads(base64.b64decode(firebase_key).decode('utf-8'))
+                service_account_email = service_account_info.get('client_email', service_account_email)
+                
+                logger.info(f"🔑 Usando service account desde env: {service_account_email}")
+                
+                # Crear credenciales específicas para Google Sheets API
+                scopes = [
+                    'https://www.googleapis.com/auth/spreadsheets.readonly',
+                    'https://www.googleapis.com/auth/drive.readonly'
+                ]
+                
+                # Crear credenciales con los scopes necesarios
+                sheets_credentials = Credentials.from_service_account_info(
+                    service_account_info, 
+                    scopes=scopes
+                )
+                
+                # Crear cliente gspread
+                gc = gspread.authorize(sheets_credentials)
+            
+        except Exception as cred_error:
+            logger.error(f"❌ Error obteniendo credenciales: {str(cred_error)}")
+            return {
+                "success": False,
+                "error": f"Error obteniendo credenciales para Google Sheets: {str(cred_error)}"
+            }
+        
+        try:
+            # Abrir el spreadsheet por ID
+            spreadsheet = gc.open_by_key(sheet_id)
+            logger.info(f"📋 Spreadsheet abierto: '{spreadsheet.title}'")
+            
+            # Obtener la worksheet "publicados_emprestito"
+            try:
+                worksheet = spreadsheet.worksheet("publicados_emprestito")
+                logger.info(f"📄 Accediendo a worksheet: 'publicados_emprestito'")
+            except gspread.exceptions.WorksheetNotFound:
+                # Si no existe, usar la primera worksheet
+                worksheet = spreadsheet.get_worksheet(0)
+                logger.info(f"📄 Worksheet 'publicados_emprestito' no encontrada, usando: '{worksheet.title}'")
+            
+            # Obtener todos los valores como lista de listas
+            all_values = worksheet.get_all_values()
+            
+            if not all_values:
+                return {
+                    "success": False,
+                    "error": "El worksheet está vacío"
+                }
+            
+            # Los headers están en la fila 1 (índice 0)
+            headers = all_values[0]
+            
+            # El contenido comienza desde la columna B (índice 1) según especificación
+            # Filtrar headers y datos para empezar desde columna B
+            headers_desde_b = headers[1:] if len(headers) > 1 else headers
+            datos_desde_b = [fila[1:] if len(fila) > 1 else fila for fila in all_values[1:]]
+            
+            # Crear DataFrame con pandas
+            df = pd.DataFrame(datos_desde_b, columns=headers_desde_b)
+            
+            # Limpiar DataFrame eliminando filas completamente vacías
+            df = df.dropna(how='all')
+            
+            logger.info(f"✅ Google Sheets leído exitosamente: {len(df)} filas, {len(df.columns)} columnas")
+            logger.info(f"📋 Columnas encontradas (desde columna B): {list(df.columns)}")
+            
+            return {
+                "success": True,
+                "data": df,
+                "message": f"Se leyeron {len(df)} filas del Google Sheet (worksheet: {worksheet.title})",
+                "columns": list(df.columns),
+                "rows_count": len(df),
+                "worksheet_name": worksheet.title,
+                "spreadsheet_title": spreadsheet.title,
+                "service_account_email": service_account_email,
+                "autenticacion": "service_account"
+            }
+            
+        except gspread.exceptions.SpreadsheetNotFound:
+            return {
+                "success": False,
+                "error": f"No se encontró el Google Sheets con ID: {sheet_id}. Verifica que el service account {service_account_email} tenga acceso al documento."
+            }
+        except gspread.exceptions.APIError as api_error:
+            error_message = str(api_error)
+            if "[400]" in error_message and "not supported for this document" in error_message:
+                return {
+                    "success": False,
+                    "error": f"El documento de Google Sheets no es accesible. Esto puede deberse a: 1) Restricciones de Google Workspace, 2) El service account no tiene permisos, 3) El documento no es un Google Sheets válido. Service account: {service_account_email}"
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": f"Error de API de Google Sheets: {str(api_error)}. Verifica permisos del service account {service_account_email}."
+                }
+        
+    except ImportError as e:
+        logger.error(f"❌ Error importando gspread: {str(e)}")
+        return {
+            "success": False,
+            "error": "gspread no está disponible. Instala con: pip install gspread"
+        }
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        logger.error(f"❌ Error leyendo Google Sheets: {str(e)}")
+        logger.error(f"❌ Traceback completo: {error_details}")
+        return {
+            "success": False,
+            "error": f"Error leyendo Google Sheets: {str(e)} | Detalles: {type(e).__name__}"
+        }
+
+async def procesar_datos_proyecciones(df: pd.DataFrame) -> Dict[str, Any]:
+    """
+    Procesa y mapea los datos del DataFrame según las especificaciones del usuario
+    
+    Mapeo de campos:
+    - Item: item
+    - Nro de Proceso: referencia_proceso  
+    - NOMBRE ABREVIADO: nombre_organismo_reducido
+    - Banco: nombre_banco
+    - BP: BP (con prefijo "BP" agregado)
+    - Proyecto: nombre_generico_proyecto
+    - Proyecto con su respectivo contrato: nombre_resumido_proceso
+    - ID PAA: id_paa
+    - LINK DEL PROCESO: urlProceso
+    - VALOR TOTAL: valor_proyectado
+    """
+    try:
+        logger.info("🔄 Procesando datos de proyecciones...")
+        
+        # Mapeo de columnas original -> campo destino
+        mapeo_campos = {
+            "Item": "item",
+            "Nro de Proceso": "referencia_proceso",
+            "NOMBRE ABREVIADO": "nombre_organismo_reducido", 
+            "Banco": "nombre_banco",
+            "BP": "BP",
+            "DESCRIPCION BP": "descripcion_bp",  # Campo adicional que aparece en la especificación
+            "Proyecto": "nombre_generico_proyecto",
+            "Proyecto con su respectivo contrato": "nombre_resumido_proceso",
+            "ID PAA": "id_paa",
+            "LINK DEL PROCESO": "urlProceso",
+            "VALOR\n TOTAL": "valor_proyectado",  # Puede tener salto de línea
+            "VALOR TOTAL": "valor_proyectado"  # Versión sin salto de línea
+        }
+        
+        # Verificar qué columnas están disponibles
+        columnas_disponibles = list(df.columns)
+        logger.info(f"📋 Columnas disponibles en el DataFrame: {columnas_disponibles}")
+        
+        # Crear lista de registros procesados
+        registros_procesados = []
+        filas_con_errores = []
+        
+        for index, fila in df.iterrows():
+            try:
+                # Crear registro mapeado
+                registro = {}
+                
+                # Mapear cada campo según la especificación
+                for col_original, campo_destino in mapeo_campos.items():
+                    # Buscar la columna en el DataFrame (puede haber variaciones)
+                    valor = None
+                    
+                    for col_df in columnas_disponibles:
+                        if col_original.lower().strip() in col_df.lower().strip():
+                            valor = fila[col_df]
+                            break
+                    
+                    # Si no se encontró, intentar búsqueda exacta
+                    if valor is None and col_original in columnas_disponibles:
+                        valor = fila[col_original]
+                    
+                    # Procesar el valor
+                    if pd.isna(valor) or valor is None:
+                        registro[campo_destino] = "" if campo_destino != "valor_proyectado" else 0
+                    else:
+                        valor_str = str(valor).strip()
+                        
+                        # Procesamiento especial para BP - agregar prefijo
+                        if campo_destino == "BP" and valor_str:
+                            if not valor_str.upper().startswith("BP"):
+                                registro[campo_destino] = f"BP{valor_str}"
+                            else:
+                                registro[campo_destino] = valor_str
+                        # Procesamiento especial para valor_proyectado
+                        elif campo_destino == "valor_proyectado":
+                            try:
+                                # Limpiar formato de número (comas, espacios, etc.)
+                                valor_limpio = re.sub(r'[^\d.-]', '', valor_str)
+                                if valor_limpio:
+                                    registro[campo_destino] = float(valor_limpio)
+                                else:
+                                    registro[campo_destino] = 0
+                            except (ValueError, TypeError):
+                                registro[campo_destino] = 0
+                        else:
+                            registro[campo_destino] = valor_str
+                
+                # Agregar metadatos
+                registro["fecha_carga"] = datetime.now().isoformat()
+                registro["fuente"] = "google_sheets"
+                registro["fila_origen"] = index + 1  # +1 porque pandas usa índice 0
+                
+                # Validar campos obligatorios mínimos
+                if not registro.get("referencia_proceso") or registro["referencia_proceso"] == "":
+                    filas_con_errores.append({
+                        "fila": index + 1,
+                        "error": "referencia_proceso vacío o faltante",
+                        "datos": registro
+                    })
+                    continue
+                
+                registros_procesados.append(registro)
+                
+            except Exception as e:
+                logger.error(f"❌ Error procesando fila {index + 1}: {str(e)}")
+                filas_con_errores.append({
+                    "fila": index + 1,
+                    "error": str(e),
+                    "datos": {}
+                })
+        
+        logger.info(f"✅ Procesamiento completado: {len(registros_procesados)} registros válidos, {len(filas_con_errores)} con errores")
+        
+        return {
+            "success": True,
+            "data": registros_procesados,
+            "message": f"Se procesaron {len(registros_procesados)} registros exitosamente",
+            "registros_validos": len(registros_procesados),
+            "filas_con_errores": len(filas_con_errores),
+            "errores_detalle": filas_con_errores,
+            "mapeo_aplicado": mapeo_campos
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error procesando datos de proyecciones: {str(e)}")
+        return {
+            "success": False,
+            "error": f"Error procesando datos: {str(e)}"
+        }
+
+async def guardar_proyecciones_emprestito(registros: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Guarda los registros de proyecciones en la colección proyecciones_emprestito
+    """
+    try:
+        if not FIRESTORE_AVAILABLE:
+            return {
+                "success": False,
+                "error": "Firebase no disponible"
+            }
+        
+        db = get_firestore_client()
+        if db is None:
+            return {
+                "success": False,
+                "error": "No se pudo conectar a Firestore"
+            }
+        
+        # Limpiar la colección existente (reemplazar datos completos)
+        logger.info("🗑️ Limpiando colección proyecciones_emprestito existente...")
+        collection_ref = db.collection('proyecciones_emprestito')
+        
+        # Eliminar documentos existentes
+        docs = collection_ref.stream()
+        batch = db.batch()
+        docs_eliminados = 0
+        
+        for doc in docs:
+            batch.delete(doc.reference)
+            docs_eliminados += 1
+            
+            # Ejecutar batch cada 500 documentos para evitar límites
+            if docs_eliminados % 500 == 0:
+                batch.commit()
+                batch = db.batch()
+        
+        # Ejecutar batch final si hay documentos pendientes
+        if docs_eliminados % 500 != 0:
+            batch.commit()
+        
+        logger.info(f"🗑️ Eliminados {docs_eliminados} documentos existentes")
+        
+        # Guardar nuevos registros
+        logger.info(f"💾 Guardando {len(registros)} nuevos registros...")
+        documentos_guardados = 0
+        
+        # Usar batch para operaciones eficientes
+        batch = db.batch()
+        
+        for i, registro in enumerate(registros):
+            # Agregar timestamp de guardado
+            registro_con_timestamp = registro.copy()
+            registro_con_timestamp["fecha_guardado"] = datetime.now()
+            registro_con_timestamp["ultima_actualizacion"] = datetime.now()
+            
+            # Crear documento con ID automático
+            doc_ref = collection_ref.document()
+            batch.set(doc_ref, registro_con_timestamp)
+            documentos_guardados += 1
+            
+            # Ejecutar batch cada 500 documentos
+            if documentos_guardados % 500 == 0:
+                batch.commit()
+                batch = db.batch()
+                logger.info(f"💾 Guardados {documentos_guardados}/{len(registros)} registros...")
+        
+        # Ejecutar batch final
+        if documentos_guardados % 500 != 0:
+            batch.commit()
+        
+        # Guardar metadatos de la carga
+        metadatos_carga = {
+            "fecha_ultima_carga": datetime.now(),
+            "registros_cargados": documentos_guardados,
+            "fuente": "google_sheets",
+            "docs_eliminados_previos": docs_eliminados,
+            "operacion": "reemplazo_completo"
+        }
+        
+        # Guardar metadatos en documento especial - DESHABILITADO
+        # db.collection('proyecciones_emprestito_meta').document('ultima_carga').set(metadatos_carga)
+        
+        logger.info(f"✅ Guardado completado: {documentos_guardados} registros en proyecciones_emprestito")
+        
+        return {
+            "success": True,
+            "message": f"Se guardaron {documentos_guardados} registros exitosamente",
+            "registros_guardados": documentos_guardados,
+            "docs_eliminados_previos": docs_eliminados,
+            "coleccion": "proyecciones_emprestito",
+            "operacion": "reemplazo_completo",
+            "metadatos_guardados": True
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error guardando proyecciones: {str(e)}")
+        return {
+            "success": False,
+            "error": f"Error guardando proyecciones: {str(e)}"
+        }
+
+async def leer_proyecciones_emprestito() -> Dict[str, Any]:
+    """
+    Lee todos los registros de la colección proyecciones_emprestito
+    """
+    try:
+        if not FIRESTORE_AVAILABLE:
+            return {
+                "success": False,
+                "error": "Firebase no disponible",
+                "data": [],
+                "count": 0
+            }
+        
+        db = get_firestore_client()
+        if db is None:
+            return {
+                "success": False,
+                "error": "No se pudo conectar a Firestore",
+                "data": [],
+                "count": 0
+            }
+        
+        # Leer todos los documentos de la colección
+        collection_ref = db.collection('proyecciones_emprestito')
+        docs = collection_ref.stream()
+        
+        proyecciones_data = []
+        for doc in docs:
+            doc_data = doc.to_dict()
+            doc_data['id'] = doc.id  # Agregar ID del documento
+            # Limpiar datos de Firebase para serialización JSON
+            doc_data_clean = serialize_datetime_objects(doc_data)
+            proyecciones_data.append(doc_data_clean)
+        
+        # Leer metadatos de la última carga - DESHABILITADO
+        metadatos = None
+        # try:
+        #     meta_doc = db.collection('proyecciones_emprestito_meta').document('ultima_carga').get()
+        #     if meta_doc.exists:
+        #         metadatos = serialize_datetime_objects(meta_doc.to_dict())
+        # except Exception as e:
+        #     logger.warning(f"⚠️ No se pudieron leer metadatos: {str(e)}")
+        
+        # Ordenar por fecha de carga (más recientes primero)
+        proyecciones_data.sort(key=lambda x: x.get('fecha_carga', ''), reverse=True)
+        
+        return {
+            "success": True,
+            "data": proyecciones_data,
+            "count": len(proyecciones_data),
+            "collection": "proyecciones_emprestito",
+            "metadatos_carga": metadatos,
+            "timestamp": datetime.now().isoformat(),
+            "message": f"Se obtuvieron {len(proyecciones_data)} proyecciones de empréstito exitosamente"
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error leyendo proyecciones: {str(e)}")
+        return {
+            "success": False,
+            "error": f"Error leyendo proyecciones: {str(e)}",
+            "data": [],
+            "count": 0
+        }
+
+
+async def get_proyecciones_sin_proceso() -> Dict[str, Any]:
+    """
+    Compara los valores de 'referencia_proceso' en 'proyecciones_emprestito' con
+    la colección 'procesos_emprestito' y devuelve las proyecciones cuyo
+    'referencia_proceso' no aparece en procesos_emprestito.
+    """
+    try:
+        if not FIRESTORE_AVAILABLE:
+            return {"success": False, "error": "Firebase no disponible", "data": [], "count": 0}
+
+        db = get_firestore_client()
+        if db is None:
+            return {"success": False, "error": "No se pudo conectar a Firestore", "data": [], "count": 0}
+
+        # Obtener todos los procesos existentes y construir un set de referencias
+        procesos_ref = db.collection('procesos_emprestito')
+        procesos_docs = list(procesos_ref.stream())
+        referencias_procesos = set()
+        for doc in procesos_docs:
+            d = doc.to_dict()
+            ref = d.get('referencia_proceso')
+            if ref:
+                referencias_procesos.add(str(ref).strip())
+
+        # Obtener todas las proyecciones y filtrar
+        proyecciones_ref = db.collection('proyecciones_emprestito')
+        proyecciones_docs = list(proyecciones_ref.stream())
+
+        proyecciones_sin_proceso = []
+        for doc in proyecciones_docs:
+            pdata = doc.to_dict()
+            refp = pdata.get('referencia_proceso')
+            refp_str = str(refp).strip() if refp is not None else None
+            if not refp_str or refp_str not in referencias_procesos:
+                pdata['id'] = doc.id
+                pdata_clean = serialize_datetime_objects(pdata)
+                proyecciones_sin_proceso.append(pdata_clean)
+
+        return {
+            "success": True,
+            "data": proyecciones_sin_proceso,
+            "count": len(proyecciones_sin_proceso),
+            "collection_source": "proyecciones_emprestito",
+            "collection_compare": "procesos_emprestito",
+            "timestamp": datetime.now().isoformat(),
+            "message": f"Se encontraron {len(proyecciones_sin_proceso)} proyecciones sin proceso asociado"
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Error comparando colecciones: {str(e)}")
+        return {"success": False, "error": f"Error comparando colecciones: {str(e)}", "data": [], "count": 0}
+
+async def crear_tabla_proyecciones_desde_sheets(sheet_url: str) -> Dict[str, Any]:
+    """
+    Función principal que orquesta todo el proceso:
+    1. Lee datos de Google Sheets
+    2. Procesa y mapea los datos
+    3. Guarda en Firebase
+    4. Limpia recursos temporales
+    """
+    try:
+        logger.info("🚀 Iniciando creación de tabla de proyecciones desde Google Sheets...")
+        
+        # Paso 1: Leer Google Sheets
+        resultado_lectura = await leer_google_sheets_proyecciones(sheet_url)
+        if not resultado_lectura["success"]:
+            return resultado_lectura
+        
+        df_temporal = resultado_lectura["data"]
+        logger.info(f"📊 DataFrame temporal creado: {len(df_temporal)} filas")
+        
+        # Paso 2: Procesar y mapear datos
+        resultado_procesamiento = await procesar_datos_proyecciones(df_temporal)
+        if not resultado_procesamiento["success"]:
+            return resultado_procesamiento
+        
+        registros_procesados = resultado_procesamiento["data"]
+        logger.info(f"✅ Datos procesados: {len(registros_procesados)} registros válidos")
+        
+        # Paso 3: Guardar en Firebase
+        resultado_guardado = await guardar_proyecciones_emprestito(registros_procesados)
+        if not resultado_guardado["success"]:
+            return resultado_guardado
+        
+        # Paso 4: Limpiar DataFrame temporal (Python se encarga automáticamente)
+        del df_temporal
+        logger.info("🗑️ DataFrame temporal eliminado")
+        
+        # Preparar respuesta final
+        return {
+            "success": True,
+            "message": "Tabla de proyecciones creada exitosamente desde Google Sheets",
+            "resumen_operacion": {
+                "sheet_url": sheet_url,
+                "filas_leidas": resultado_lectura["rows_count"],
+                "registros_procesados": len(registros_procesados),
+                "registros_guardados": resultado_guardado["registros_guardados"],
+                "docs_eliminados_previos": resultado_guardado["docs_eliminados_previos"]
+            },
+            "detalle_procesamiento": {
+                "filas_con_errores": resultado_procesamiento["filas_con_errores"],
+                "errores_detalle": resultado_procesamiento["errores_detalle"][:5],  # Máximo 5 errores
+                "mapeo_aplicado": resultado_procesamiento["mapeo_aplicado"]
+            },
+            "coleccion_destino": "proyecciones_emprestito",
+            "operacion": "reemplazo_completo",
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error en creación de tabla de proyecciones: {str(e)}")
+        return {
+            "success": False,
+            "error": f"Error en creación de tabla de proyecciones: {str(e)}"
+        }
+

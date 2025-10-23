@@ -1,6 +1,148 @@
 # Changelog - API Gestión de Proyectos
 
-## [2025-10-16] - Versión Actual
+## [2025-10-22] - Versión Actual
+
+### ✨ Nueva Funcionalidad - Gestión de Proyecciones de Empréstito
+
+- **Nuevos endpoints para Gestión de Empréstito**:
+
+  - **POST `/emprestito/crear-tabla-proyecciones`**
+
+    - **Tag**: "Gestión de Empréstito"
+    - **Funcionalidad**: Carga datos desde Google Sheets y los guarda en Firebase
+    - **Google Sheets**: Integración con service account authentication
+    - **Worksheet**: `publicados_emprestito`
+    - **URL fija**: Sheet ID `11-sdLwINHHwRit8b9jnnXcO2phhuEVUpXM6q6yv8DYo`
+    - **Operación**: Reemplazo completo de la colección `proyecciones_emprestito`
+
+  - **GET `/emprestito/leer-tabla-proyecciones`**
+
+    - **Tag**: "Gestión de Empréstito"
+    - **Funcionalidad**: Obtiene todas las proyecciones cargadas
+    - **Ordenamiento**: Por fecha de carga (más recientes primero)
+    - **Campos mapeados**: 10 campos principales incluyendo `referencia_proceso`, `valor_proyectado`
+
+  - **GET `/emprestito/proyecciones-sin-proceso`** ⭐ **NUEVO**
+    - **Tag**: "Gestión de Empréstito"
+    - **Funcionalidad**: Compara colecciones y retorna proyecciones sin proceso asociado
+    - **Comparación**: `proyecciones_emprestito` vs `procesos_emprestito`
+    - **Campo clave**: `referencia_proceso`
+    - **Resultado actual**: 5 proyecciones sin proceso asociado
+
+- **Integración completa con Google Sheets**:
+
+  - **Service Account**: `unidad-cumplimiento-drive@unidad-cumplimiento.iam.gserviceaccount.com`
+  - **Credenciales**: `credentials/unidad-cumplimiento-drive.json`
+  - **Autenticación dual**: Application Default Credentials + archivo explícito
+  - **Scopes**: `spreadsheets.readonly`, `drive.readonly`
+  - **Error handling**: Manejo robusto de permisos y autenticación
+
+- **Mapeo de campos Google Sheets → Firebase**:
+  ```
+  Item → item
+  Nro de Proceso → referencia_proceso
+  NOMBRE ABREVIADO → nombre_organismo_reducido
+  Banco → nombre_banco
+  BP → BP (con prefijo "BP" agregado automáticamente)
+  Proyecto → nombre_generico_proyecto
+  Proyecto con su respectivo contrato → nombre_resumido_proceso
+  ID PAA → id_paa
+  URL → urlProceso
+  Valor total del proyecto → valor_proyectado
+  ```
+
+### 🔧 Mejoras Técnicas
+
+- **Nueva función de comparación**:
+
+  - `get_proyecciones_sin_proceso()` en `emprestito_operations.py`
+  - Algoritmo eficiente de comparación por sets
+  - Normalización de strings con trim de espacios
+  - Manejo de valores nulos y vacíos
+
+- **Procesamiento de datos optimizado**:
+
+  - **Función**: `procesar_datos_proyecciones()` con validaciones
+  - **Limpieza automática**: Filtrado de filas con campos faltantes
+  - **Transformaciones**: Prefijo "BP" automático, conversión de tipos
+  - **Metadatos**: Tracking de fila origen y errores de procesamiento
+
+- **Serialización JSON mejorada**:
+  - **Función**: `serialize_datetime_objects()` para compatibilidad
+  - **Tipos soportados**: DatetimeWithNanoseconds, datetime estándar
+  - **Firebase compatibility**: Conversión automática a ISO format
+
+### 🛠️ Arquitectura y Desarrollo
+
+- **Módulo emprestito_operations.py expandido**:
+
+  - `leer_google_sheets_proyecciones()`: Lectura robusta de Google Sheets
+  - `procesar_datos_proyecciones()`: Mapeo y validación de datos
+  - `guardar_proyecciones_emprestito()`: Guardado optimizado en Firebase
+  - `crear_tabla_proyecciones_desde_sheets()`: Función orquestadora completa
+  - `get_proyecciones_sin_proceso()`: Nueva función de comparación
+
+- **Imports y exports actualizados**:
+
+  - `api/scripts/__init__.py`: Nuevas funciones exportadas
+  - `main.py`: Imports y endpoints registrados
+  - Funciones dummy para fallback cuando servicios no disponibles
+
+- **Logging mejorado**:
+  - Debug detallado para autenticación Google Sheets
+  - Tracking de errores con traceback completo
+  - Información de progreso en operaciones masivas
+
+### 🧪 Testing y Validación
+
+- **Debugging exhaustivo realizado**:
+
+  - ✅ Múltiples scripts de debug para Google Sheets access
+  - ✅ Validación de service account credentials
+  - ✅ Pruebas con diferentes sheet IDs y permisos
+  - ✅ Verificación de worksheet names y estructura
+
+- **Endpoints completamente funcionales**:
+
+  - ✅ POST `/emprestito/crear-tabla-proyecciones`: Carga exitosa desde Google Sheets
+  - ✅ GET `/emprestito/leer-tabla-proyecciones`: Lectura completa de proyecciones
+  - ✅ GET `/emprestito/proyecciones-sin-proceso`: Comparación funcionando correctamente
+
+- **Casos de uso validados**:
+  - ✅ Carga inicial de datos desde Google Sheets
+  - ✅ Reemplazo completo de datos existentes
+  - ✅ Lectura y consulta de proyecciones cargadas
+  - ✅ Identificación de proyecciones sin proceso asociado (5 encontradas)
+
+### 🔐 Seguridad y Configuración
+
+- **Manejo seguro de credenciales**:
+
+  - Service account file protegido en `credentials/`
+  - Variables de entorno para configuración sensible
+  - Fallback a Application Default Credentials
+
+- **Validaciones robustas**:
+  - Verificación de disponibilidad de Firebase y scripts
+  - Error handling específico para problemas de autenticación
+  - Messages informativos para resolución de problemas
+
+### 📊 Resultados de Implementación
+
+- **Colección `proyecciones_emprestito`**: Poblada con datos reales desde Google Sheets
+- **Función de comparación**: Identificó 5 proyecciones sin proceso asociado:
+
+  1. DATIC - ModernIzacion Plataforma Tecnológica (2 procesos)
+  2. Cultura - Bibliotecas Públicas (órdenes de compra)
+  3. Bienestar Social - Casa Matria Juanambú
+  4. DATIC - Soluciones Tecnológicas
+
+- **Performance**: Operaciones eficientes con manejo de grandes volúmenes de datos
+- **Compatibilidad**: Integración perfecta con el ecosistema existente de la API
+
+---
+
+## [2025-10-16] - Versión Anterior
 
 ### ✨ Mejora - Campo nombre_resumido_proceso en Endpoint de Seguimiento
 
