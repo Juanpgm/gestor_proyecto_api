@@ -19,6 +19,8 @@ try:
         # Empréstito models
         EmprestitoRequest,
         EmprestitoResponse,
+        ProyeccionEmprestitoUpdateRequest,
+        ProyeccionEmprestitoUpdateResponse,
         # Response models
         UserResponse,
         AuthMethodsResponse,
@@ -92,6 +94,10 @@ __all__ = [
     # Empréstito models
     "EmprestitoRequest",
     "EmprestitoResponse",
+    "ProyeccionEmprestitoUpdateRequest",
+    "ProyeccionEmprestitoUpdateResponse",
+    "ProyeccionEmprestitoUpdateRequest",
+    "ProyeccionEmprestitoUpdateResponse",
     # Response models
     "UserResponse",
     "AuthMethodsResponse",

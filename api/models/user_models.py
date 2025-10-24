@@ -92,7 +92,45 @@ class EmprestitoResponse(BaseModel):
     duplicate: Optional[bool] = False
     existing_data: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
-    email: EmailStr = Field(..., description="Email del usuario")
+
+class ProyeccionEmprestitoUpdateRequest(BaseModel):
+    """Modelo para actualización de proyecciones de empréstito"""
+    item: Optional[int] = Field(None, description="Número de ítem")
+    nombre_organismo_reducido: Optional[str] = Field(None, description="Nombre abreviado del organismo")
+    nombre_banco: Optional[str] = Field(None, description="Banco asociado")
+    BP: Optional[str] = Field(None, description="Código BP")
+    nombre_generico_proyecto: Optional[str] = Field(None, description="Nombre del proyecto")
+    nombre_resumido_proceso: Optional[str] = Field(None, description="Proyecto con contrato")
+    id_paa: Optional[str] = Field(None, description="ID del PAA")
+    urlProceso: Optional[str] = Field(None, description="Enlace al proceso")
+    valor_proyectado: Optional[float] = Field(None, ge=0, description="Valor total del proyecto")
+    
+    @validator('valor_proyectado')
+    def validate_valor_proyectado(cls, v):
+        """Validar que el valor proyectado sea positivo si se proporciona"""
+        if v is not None and v < 0:
+            raise ValueError('El valor proyectado debe ser mayor o igual a 0')
+        return v
+    
+    @validator('*', pre=True)
+    def strip_strings(cls, v):
+        """Limpiar strings de espacios en blanco si se proporcionan"""
+        if isinstance(v, str):
+            return v.strip() if v.strip() else None
+        return v
+
+class ProyeccionEmprestitoUpdateResponse(BaseModel):
+    """Respuesta para actualización de proyecciones de empréstito"""
+    success: bool
+    message: Optional[str] = None
+    referencia_proceso: Optional[str] = None
+    doc_id: Optional[str] = None
+    datos_previos: Optional[Dict[str, Any]] = None
+    datos_actualizados: Optional[Dict[str, Any]] = None
+    campos_modificados: Optional[List[str]] = None
+    timestamp: Optional[str] = None
+    coleccion: Optional[str] = None
+    error: Optional[str] = None
 
 class GoogleAuthRequest(BaseModel):
     """Autenticación con Google"""

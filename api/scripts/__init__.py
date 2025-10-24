@@ -143,6 +143,7 @@ try:
         crear_tabla_proyecciones_desde_sheets,
         leer_proyecciones_emprestito,
         get_proyecciones_sin_proceso,
+        actualizar_proyeccion_emprestito,
         EMPRESTITO_OPERATIONS_AVAILABLE
     )
     print(f"✅ Emprestito operations imported successfully - AVAILABLE: {EMPRESTITO_OPERATIONS_AVAILABLE}")
@@ -217,6 +218,9 @@ except ImportError as e:
     
     async def get_proyecciones_sin_proceso():
         return {"success": False, "error": "Emprestito operations not available", "data": [], "count": 0}
+    
+    async def actualizar_proyeccion_emprestito(referencia_proceso: str, datos_actualizacion: dict):
+        return {"success": False, "error": "Emprestito operations not available"}
     
 
 
@@ -420,6 +424,7 @@ __all__ = [
     "crear_tabla_proyecciones_desde_sheets",
     "leer_proyecciones_emprestito",
     "get_proyecciones_sin_proceso",
+    "actualizar_proyeccion_emprestito",
     
     # User management operations
     "validate_email",

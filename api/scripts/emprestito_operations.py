@@ -2284,3 +2284,83 @@ async def crear_tabla_proyecciones_desde_sheets(sheet_url: str) -> Dict[str, Any
             "error": f"Error en creación de tabla de proyecciones: {str(e)}"
         }
 
+
+async def actualizar_proyeccion_emprestito(referencia_proceso: str, datos_actualizacion: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Actualiza un registro específico en la colección proyecciones_emprestito según su referencia_proceso
+    
+    Args:
+        referencia_proceso (str): Referencia del proceso a actualizar
+        datos_actualizacion (dict): Datos a actualizar
+    
+    Returns:
+        Dict con el resultado de la operación
+    """
+    try:
+        if not FIRESTORE_AVAILABLE:
+            return {
+                "success": False,
+                "error": "Firebase no disponible"
+            }
+        
+        db = get_firestore_client()
+        if db is None:
+            return {
+                "success": False,
+                "error": "No se pudo conectar a Firestore"
+            }
+        
+        # Buscar el documento por referencia_proceso
+        collection_ref = db.collection('proyecciones_emprestito')
+        query = collection_ref.where('referencia_proceso', '==', referencia_proceso)
+        docs = list(query.stream())
+        
+        if not docs:
+            return {
+                "success": False,
+                "error": f"No se encontró ningún registro con referencia_proceso: {referencia_proceso}",
+                "count": 0
+            }
+        
+        if len(docs) > 1:
+            logger.warning(f"⚠️ Se encontraron {len(docs)} registros con la misma referencia_proceso: {referencia_proceso}")
+        
+        # Tomar el primer documento encontrado
+        doc = docs[0]
+        doc_ref = doc.reference
+        datos_actuales = doc.to_dict()
+        
+        # Preparar datos de actualización
+        datos_finales = datos_actualizacion.copy()
+        datos_finales["ultima_actualizacion"] = datetime.now()
+        datos_finales["referencia_proceso"] = referencia_proceso  # Mantener la referencia
+        
+        # Actualizar el documento
+        doc_ref.update(datos_finales)
+        
+        logger.info(f"✅ Proyección actualizada para referencia_proceso: {referencia_proceso}")
+        
+        # Obtener datos actualizados para respuesta
+        doc_actualizado = doc_ref.get()
+        datos_actualizados = serialize_datetime_objects(doc_actualizado.to_dict())
+        datos_actualizados['id'] = doc_actualizado.id
+        
+        return {
+            "success": True,
+            "message": f"Proyección actualizada exitosamente para referencia_proceso: {referencia_proceso}",
+            "referencia_proceso": referencia_proceso,
+            "doc_id": doc_actualizado.id,
+            "datos_previos": serialize_datetime_objects(datos_actuales),
+            "datos_actualizados": datos_actualizados,
+            "campos_modificados": list(datos_actualizacion.keys()),
+            "timestamp": datetime.now().isoformat(),
+            "coleccion": "proyecciones_emprestito"
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error actualizando proyección: {str(e)}")
+        return {
+            "success": False,
+            "error": f"Error actualizando proyección: {str(e)}"
+        }
+

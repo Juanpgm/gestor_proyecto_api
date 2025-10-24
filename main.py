@@ -108,6 +108,7 @@ try:
         crear_tabla_proyecciones_desde_sheets,
     leer_proyecciones_emprestito,
     get_proyecciones_sin_proceso,
+        actualizar_proyeccion_emprestito,
         # Reportes contratos operations
         create_reporte_contrato,
         get_reportes_contratos,
@@ -164,6 +165,8 @@ try:
         ValidationErrorResponse,
         EmprestitoRequest,
         EmprestitoResponse,
+        ProyeccionEmprestitoUpdateRequest,
+        ProyeccionEmprestitoUpdateResponse,
         USER_MODELS_AVAILABLE,
         # Reportes contratos models
         ReporteContratoRequest,
@@ -573,9 +576,9 @@ async def read_root():
     
     return create_utf8_response(response_data)
 
-@app.get("/ping", tags=["General"])
+@app.get("/ping", tags=["General"], summary="🔵 Ping Simple")
 async def ping():
-    """Health check super simple para Railway con soporte UTF-8"""
+    """🔵 GET | ❤️ Health Check | Health check super simple para Railway con soporte UTF-8"""
     response_data = {
         "status": "ok ✅", 
         "message": "Servidor funcionando correctamente",
@@ -742,9 +745,9 @@ async def railway_debug():
             "timestamp": datetime.now().isoformat()
         }
 
-@app.get("/health", tags=["General"])
+@app.get("/health", tags=["General"], summary="🔵 Estado de Salud API")
 async def health_check():
-    """Verificar estado de salud de la API"""
+    """🔵 GET | ❤️ Health Check | Verificar estado de salud de la API"""
     try:
         basic_response = {
             "status": "healthy",
@@ -973,10 +976,10 @@ async def get_firebase_collections_summary():
 # ENDPOINTS DE PROYECTOS DE INVERSIÓN
 # ============================================================================
 
-@app.get("/proyectos-presupuestales/all", tags=["Proyectos de Inversión"])
+@app.get("/proyectos-presupuestales/all", tags=["Proyectos de Inversión"], summary="🔵 Todos los Proyectos Presupuestales")
 async def get_proyectos_all():
     """
-    ## Obtener Todos los Proyectos Presupuestales
+    ## 🔵 GET | 📋 Listados | Obtener Todos los Proyectos Presupuestales
     
     **Propósito**: Retorna todos los documentos de la colección "proyectos_presupuestales".
     
@@ -1032,10 +1035,10 @@ async def get_proyectos_all():
             detail=f"Error procesando proyectos presupuestales: {str(e)}"
         )
 
-@app.get("/proyectos-presupuestales/bpin/{bpin}", tags=["Proyectos de Inversión"])
+@app.get("/proyectos-presupuestales/bpin/{bpin}", tags=["Proyectos de Inversión"], summary="🔵 Proyectos por BPIN")
 async def get_proyectos_by_bpin(bpin: str):
     """
-    ## Obtener Proyectos Presupuestales por BPIN
+    ## 🔵 GET | 🔍 Consultas | Obtener Proyectos por BPIN
     
     **Propósito**: Retorna proyectos presupuestales filtrados por código BPIN específico.
     
@@ -1255,13 +1258,13 @@ async def get_proyectos_by_centro_gestor(nombre_centro_gestor: str):
             detail=f"Error procesando consulta por centro gestor: {str(e)}"
         )
 
-@app.post("/proyectos-presupuestales/cargar-json", tags=["Proyectos de Inversión"])
+@app.post("/proyectos-presupuestales/cargar-json", tags=["Proyectos de Inversión"], summary="🟢 Cargar JSON Proyectos")
 async def cargar_proyectos_presupuestales_json(
     archivo_json: UploadFile = File(..., description="Archivo JSON con proyectos presupuestales"),
     update_mode: str = Form(default="merge", description="Modo de actualización: merge, replace, append")
 ):
     """
-    ## 📊 Cargar Proyectos Presupuestales desde Archivo JSON
+    ## � POST | �📊 Carga de Archivos | Cargar Proyectos desde JSON
     
     Endpoint POST para subir un archivo JSON con información de proyectos presupuestales 
     y cargarlo en la colección "proyectos_presupuestales".
@@ -1375,7 +1378,7 @@ async def cargar_proyectos_presupuestales_json(
 # ENDPOINTS DE UNIDADES DE PROYECTO
 # ============================================================================
 
-@app.get("/unidades-proyecto/geometry", tags=["Unidades de Proyecto"])
+@app.get("/unidades-proyecto/geometry", tags=["Unidades de Proyecto"], summary="🔵 Geometrías Completas")
 async def export_geometry_for_nextjs(
     # Filtros server-side optimizados
     nombre_centro_gestor: Optional[str] = Query(None, description="Centro gestor responsable"),
@@ -1399,7 +1402,7 @@ async def export_geometry_for_nextjs(
     force_refresh: Optional[str] = Query(None, description="Forzar limpieza de cache (debug)")
 ):
     """
-    ## Datos Geoespaciales Completos
+    ## 🔵 GET | 🗺️ Datos Geoespaciales | Datos Geoespaciales Completos
     
     **Propósito**: Retorna TODOS los registros de proyectos (646) en formato GeoJSON, incluyendo aquellos sin coordenadas válidas.
     
@@ -1531,7 +1534,7 @@ async def export_geometry_for_nextjs(
             detail=f"Error procesando geometrías: {str(e)}"
         )
 
-@app.get("/unidades-proyecto/attributes", tags=["Unidades de Proyecto"])
+@app.get("/unidades-proyecto/attributes", tags=["Unidades de Proyecto"], summary="🔵 GET | 📊 Datos Tabulares | Atributos Tabulares")
 async def export_attributes_for_nextjs(
     # Filtros básicos originales
     nombre_centro_gestor: Optional[str] = Query(None, description="Centro gestor responsable"),
@@ -1550,7 +1553,7 @@ async def export_attributes_for_nextjs(
     offset: Optional[int] = Query(None, ge=0, description="Saltar registros para paginación")
 ):
     """
-    ## Atributos Tabulares
+    ## 🔵 GET | 📊 Datos Tabulares | Atributos Tabulares
     
     **Propósito**: Retorna atributos completos de proyectos excluyendo datos geográficos.
     
@@ -3362,7 +3365,7 @@ def check_emprestito_availability():
             }
         )
 
-@app.post("/emprestito/cargar-proceso", tags=["Gestión de Empréstito"])
+@app.post("/emprestito/cargar-proceso", tags=["Gestión de Empréstito"], summary="🟢 Cargar Proceso de Empréstito")
 async def cargar_proceso_emprestito(
     referencia_proceso: str = Form(..., description="Referencia del proceso (obligatorio)"),
     nombre_centro_gestor: str = Form(..., description="Centro gestor responsable (obligatorio)"),
@@ -3374,7 +3377,7 @@ async def cargar_proceso_emprestito(
     valor_proyectado: Optional[float] = Form(None, description="Valor proyectado (opcional)")
 ):
     """
-    ## 📋 Cargar Proceso de Empréstito
+    ## � POST | 📥 Carga de Datos | Cargar Proceso de Empréstito
     
     Endpoint unificado para carga de procesos de empréstito con detección automática 
     de plataforma (SECOP/TVEC) y validación de duplicados.
@@ -3536,7 +3539,7 @@ async def cargar_proceso_emprestito(
             }
         )
 
-@app.post("/emprestito/cargar-orden-compra", tags=["Gestión de Empréstito"])
+@app.post("/emprestito/cargar-orden-compra", tags=["Gestión de Empréstito"], summary="🟢 Cargar Orden de Compra")
 async def cargar_orden_compra_emprestito(
     numero_orden: str = Form(..., description="Número de la orden de compra (obligatorio)"),
     nombre_centro_gestor: str = Form(..., description="Centro gestor responsable (obligatorio)"),
@@ -3546,7 +3549,7 @@ async def cargar_orden_compra_emprestito(
     bp: Optional[str] = Form(None, description="Código BP (opcional)")
 ):
     """
-    ## 📋 Cargar Orden de Compra de Empréstito
+    ## � POST | 📥 Carga de Datos | Cargar Orden de Compra de Empréstito
     
     Endpoint para carga directa de órdenes de compra de empréstito en la colección 
     `ordenes_compra_emprestito` sin procesamiento de APIs externas.
@@ -3692,10 +3695,10 @@ async def cargar_orden_compra_emprestito(
             }
         )
 
-@app.get("/emprestito/proceso/{referencia_proceso}", tags=["Gestión de Empréstito"])
+@app.get("/emprestito/proceso/{referencia_proceso}", tags=["Gestión de Empréstito"], summary="🔵 Verificar Proceso Existente")
 async def verificar_proceso_existente_endpoint(referencia_proceso: str):
     """
-    ## 🔍 Verificar Proceso Existente
+    ## � GET | �🔍 Consultas | Verificar Proceso Existente
     
     Verifica si ya existe un proceso con la referencia especificada en cualquiera 
     de las colecciones de empréstito.
@@ -3755,10 +3758,10 @@ async def verificar_proceso_existente_endpoint(referencia_proceso: str):
         )
 
 
-@app.delete("/emprestito/proceso/{referencia_proceso}", tags=["Gestión de Empréstito"])
+@app.delete("/emprestito/proceso/{referencia_proceso}", tags=["Gestión de Empréstito"], summary="🔴 Eliminar Proceso")
 async def eliminar_proceso_emprestito_endpoint(referencia_proceso: str):
     """
-    ## 🗑️ Eliminar Proceso de Empréstito
+    ## � DELETE | �🗑️ Eliminación | Eliminar Proceso de Empréstito
     
     Elimina un proceso de empréstito específico basado en su referencia_proceso.
     Busca automáticamente en ambas colecciones (SECOP y TVEC) y elimina el proceso encontrado.
@@ -3861,7 +3864,7 @@ async def eliminar_proceso_emprestito_endpoint(referencia_proceso: str):
         )
 
 
-@app.put("/emprestito/proceso/{referencia_proceso}", tags=["Gestión de Empréstito"])
+@app.put("/emprestito/proceso/{referencia_proceso}", tags=["Gestión de Empréstito"], summary="🟡 Actualizar Proceso")
 async def actualizar_proceso_emprestito_endpoint(
     referencia_proceso: str,
     bp: Optional[str] = Form(None, description="Código BP (opcional)"),
@@ -3870,7 +3873,7 @@ async def actualizar_proceso_emprestito_endpoint(
     valor_proyectado: Optional[float] = Form(None, description="Valor proyectado (opcional)")
 ):
     """
-    ## ✏️ Actualizar Proceso de Empréstito
+    ## 🟡 PUT | ✏️ Actualización | Actualizar Proceso de Empréstito
     
     Actualiza campos específicos de un proceso de empréstito existente sin crear registros nuevos.
     Solo se actualizan los campos proporcionados, manteniendo los demás valores sin cambios.
@@ -4004,10 +4007,10 @@ async def actualizar_proceso_emprestito_endpoint(
         )
 
 
-@app.post("/emprestito/obtener-contratos-secop", tags=["Gestión de Empréstito"])
+@app.post("/emprestito/obtener-contratos-secop", tags=["Gestión de Empréstito"], summary="🟢 Obtener Contratos SECOP")
 async def obtener_contratos_secop_endpoint():
     """
-    ## 🔍 Obtener Contratos de SECOP desde Todos los Procesos de Empréstito
+    ## � POST | 🔄 Procesamiento Masivo | Obtener Contratos de SECOP desde Todos los Procesos
     
     Procesa TODOS los registros de la colección 'procesos_emprestito', busca contratos en SECOP 
     para cada proceso y guarda los resultados en la nueva colección 'contratos_emprestito'.
@@ -4159,10 +4162,10 @@ async def obtener_contratos_secop_endpoint():
             }
         )
 
-@app.get("/contratos_emprestito_all", tags=["Gestión de Empréstito"])
+@app.get("/contratos_emprestito_all", tags=["Gestión de Empréstito"], summary="🔵 Todos los Contratos Empréstito")
 async def obtener_todos_contratos_emprestito():
     """
-    ## 📋 Obtener Todos los Contratos de Empréstito
+    ## � GET | �📋 Listados | Obtener Todos los Contratos de Empréstito
     
     **Propósito**: Retorna todos los registros de la colección "contratos_emprestito".
     
@@ -4237,10 +4240,10 @@ async def obtener_todos_contratos_emprestito():
             detail=f"Error procesando contratos de empréstito: {str(e)}"
         )
 
-@app.get("/contratos_emprestito/referencia/{referencia_contrato}", tags=["Gestión de Empréstito"])
+@app.get("/contratos_emprestito/referencia/{referencia_contrato}", tags=["Gestión de Empréstito"], summary="🔵 Contratos por Referencia")
 async def obtener_contratos_por_referencia(referencia_contrato: str):
     """
-    ## 🔍 Obtener Contratos de Empréstito por Referencia
+    ## � GET | �🔍 Consultas | Obtener Contratos por Referencia
     
     **Propósito**: Retorna contratos de empréstito filtrados por referencia_contrato específica.
     
@@ -5088,13 +5091,13 @@ async def obtener_procesos_secop_completo_endpoint():
 # ENDPOINTS DE FLUJO DE CAJA EMPRÉSTITO
 # ============================================================================
 
-@app.post("/emprestito/flujo-caja/cargar-excel", tags=["Gestión de Empréstito"])
+@app.post("/emprestito/flujo-caja/cargar-excel", tags=["Gestión de Empréstito"], summary="🟢 Cargar Flujos de Caja Excel")
 async def cargar_flujo_caja_excel(
     archivo_excel: UploadFile = File(..., description="Archivo Excel con flujos de caja"),
     update_mode: str = Form(default="merge", description="Modo de actualización: merge, replace, append")
 ):
     """
-    ## 📊 Cargar Flujos de Caja desde Archivo Excel
+    ## � POST | �📊 Carga de Archivos | Cargar Flujos de Caja desde Excel
     
     Endpoint para procesar archivos Excel con información de flujos de caja de proyectos
     y cargarlos en la colección "flujo_caja_emprestito".
@@ -5183,7 +5186,7 @@ async def cargar_flujo_caja_excel(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
-@app.get("/emprestito/flujo-caja/all", tags=["Gestión de Empréstito"])
+@app.get("/emprestito/flujo-caja/all", tags=["Gestión de Empréstito"], summary="🔵 Flujos de Caja")
 async def get_flujos_caja_all(
     responsable: Optional[str] = Query(None, description="Filtrar por responsable específico"),
     organismo: Optional[str] = Query(None, description="Filtrar por organismo específico"),
@@ -5195,7 +5198,7 @@ async def get_flujos_caja_all(
     limit: Optional[int] = Query(None, ge=1, le=1000, description="Límite de registros")
 ):
     """
-    ## 📊 Obtener Todos los Flujos de Caja
+    ## � GET | �📊 Consultas con Filtros | Obtener Todos los Flujos de Caja
     
     Endpoint para consultar flujos de caja almacenados en la colección "flujo_caja_emprestito".
     
@@ -5296,10 +5299,10 @@ async def get_flujos_caja_all(
             detail=f"Error procesando consulta de flujos de caja: {str(e)}"
         )
 
-@app.post("/emprestito/crear-tabla-proyecciones", tags=["Gestión de Empréstito"])
+@app.post("/emprestito/crear-tabla-proyecciones", tags=["Gestión de Empréstito"], summary="🟢 Crear Tabla Proyecciones")
 async def crear_tabla_proyecciones_endpoint():
     """
-    ## 📊 Crear Tabla de Proyecciones desde Google Sheets
+    ## � POST | 🔗 Integración Externa | Crear Tabla de Proyecciones desde Google Sheets
     
     **Propósito**: Lee datos de Google Sheets específico y los carga en la colección "proyecciones_emprestito".
     
@@ -5417,10 +5420,10 @@ async def crear_tabla_proyecciones_endpoint():
             detail=f"Error procesando creación de tabla de proyecciones: {str(e)}"
         )
 
-@app.get("/emprestito/leer-tabla-proyecciones", tags=["Gestión de Empréstito"])
+@app.get("/emprestito/leer-tabla-proyecciones", tags=["Gestión de Empréstito"], summary="🔵 Tabla de Proyecciones")
 async def leer_tabla_proyecciones_endpoint():
     """
-    ## 📋 Leer Tabla de Proyecciones de Empréstito
+    ## � GET | �📋 Listados | Leer Tabla de Proyecciones de Empréstito
     
     **Propósito**: Obtiene todos los registros de la colección "proyecciones_emprestito".
     
@@ -5539,6 +5542,143 @@ async def endpoint_proyecciones_sin_proceso():
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error procesando endpoint: {str(e)}")
+
+
+@app.put("/emprestito/proyecciones/{referencia_proceso}", tags=["Gestión de Empréstito"], summary="🟡 Actualizar Proyección")
+async def actualizar_proyeccion_emprestito_endpoint(
+    referencia_proceso: str,
+    datos_actualizacion: ProyeccionEmprestitoUpdateRequest
+):
+    """
+    ## � PUT | ✏️ Actualización | Actualizar Proyección de Empréstito
+    
+    **Propósito**: Actualiza cualquier campo de un registro específico en la colección "proyecciones_emprestito" 
+    según su "referencia_proceso".
+    
+    ### ✅ Casos de uso:
+    - Actualizar datos específicos de una proyección existente
+    - Corregir información incorrecta en proyecciones
+    - Modificar valores proyectados o información del banco
+    - Actualizar enlaces de procesos o información PAA
+    - Mantener datos sincronizados con fuentes externas
+    
+    ### 🎯 Funcionamiento:
+    1. **Busca** el registro por `referencia_proceso` (parámetro de ruta)
+    2. **Actualiza** solo los campos proporcionados en el body
+    3. **Mantiene** los campos no especificados sin cambios
+    4. **Registra** timestamp de última actualización
+    5. **Retorna** datos previos y actualizados para auditoría
+    
+    ### 📋 Campos actualizables:
+    - `item`: Número de ítem
+    - `nombre_organismo_reducido`: Nombre abreviado del organismo
+    - `nombre_banco`: Banco asociado
+    - `BP`: Código BP
+    - `nombre_generico_proyecto`: Nombre del proyecto
+    - `nombre_resumido_proceso`: Proyecto con contrato
+    - `id_paa`: ID del PAA
+    - `urlProceso`: Enlace al proceso
+    - `valor_proyectado`: Valor total del proyecto
+    
+    ### 🔒 Validaciones:
+    - **referencia_proceso**: Debe existir en la colección
+    - **valor_proyectado**: Debe ser >= 0 si se proporciona
+    - **strings**: Se limpian automáticamente de espacios
+    - **campos opcionales**: Solo se actualizan los proporcionados
+    
+    ### 📝 Ejemplo de uso:
+    ```javascript
+    const referencia = "PROC-2024-001";
+    const datosActualizar = {
+        valor_proyectado: 500000000,
+        nombre_banco: "Banco de Occidente",
+        urlProceso: "https://nuevo-enlace.com"
+    };
+    
+    const response = await fetch(`/emprestito/proyecciones/${referencia}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(datosActualizar)
+    });
+    ```
+    
+    ### ✅ Respuesta exitosa:
+    ```json
+    {
+        "success": true,
+        "message": "Proyección actualizada exitosamente",
+        "referencia_proceso": "PROC-2024-001",
+        "doc_id": "abc123",
+        "datos_previos": { ... },
+        "datos_actualizados": { ... },
+        "campos_modificados": ["valor_proyectado", "nombre_banco", "urlProceso"]
+    }
+    ```
+    
+    ### 💡 Características:
+    - **Actualización parcial**: Solo modifica campos especificados
+    - **Auditoría completa**: Guarda datos previos y nuevos
+    - **Búsqueda exacta**: Por referencia_proceso únicamente
+    - **UTF-8**: Soporte completo para caracteres especiales
+    - **Timestamp automático**: Registra fecha de modificación
+    - **Validación robusta**: Verifica existencia y tipos de datos
+    """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase o scripts no disponibles")
+    
+    if not EMPRESTITO_OPERATIONS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Operaciones de empréstito no disponibles")
+    
+    try:
+        # Convertir el modelo Pydantic a diccionario, excluyendo campos None
+        datos_dict = datos_actualizacion.dict(exclude_none=True)
+        
+        # Verificar que se proporcionen al menos algunos datos para actualizar
+        if not datos_dict:
+            raise HTTPException(
+                status_code=400,
+                detail="Debe proporcionar al menos un campo para actualizar"
+            )
+        
+        # Ejecutar actualización
+        result = await actualizar_proyeccion_emprestito(referencia_proceso, datos_dict)
+        
+        if not result["success"]:
+            # Manejo específico de errores
+            if "No se encontró" in result.get('error', ''):
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No se encontró proyección con referencia_proceso: {referencia_proceso}"
+                )
+            else:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Error actualizando proyección: {result.get('error', 'Error desconocido')}"
+                )
+        
+        # Agregar información del endpoint
+        result["last_updated"] = "2025-10-23T00:00:00Z"
+        result["endpoint_info"] = {
+            "metodo": "PUT",
+            "operacion": "actualizacion_parcial",
+            "campos_actualizables": [
+                "item", "nombre_organismo_reducido", "nombre_banco", "BP",
+                "nombre_generico_proyecto", "nombre_resumido_proceso", 
+                "id_paa", "urlProceso", "valor_proyectado"
+            ],
+            "validaciones_aplicadas": True,
+            "auditoria_completa": True
+        }
+        
+        return create_utf8_response(result)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error procesando actualización de proyección: {str(e)}"
+        )
 
 
 # ============================================================================
