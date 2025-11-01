@@ -522,7 +522,8 @@ async def read_root():
                 "/unidades-proyecto/geometry", 
                 "/unidades-proyecto/attributes",
                 "/unidades-proyecto/dashboard",
-                "/unidades-proyecto/filters"
+                "/unidades-proyecto/filters",
+                "/unidades-proyecto/download-geojson"
             ],
             "gestion_contractual": [
                 "/contratos/init_contratos_seguimiento"
@@ -2054,6 +2055,182 @@ async def insert_linestrings_from_kml(
         raise HTTPException(
             status_code=500,
             detail=f"Error interno procesando KML: {str(e)}"
+        )
+
+
+# ============================================================================
+# ENDPOINT PARA DESCARGA DE GEOJSON
+# ============================================================================
+
+@app.get("/unidades-proyecto/download-geojson", tags=["Unidades de Proyecto"], summary="🔵 Descarga GeoJSON")
+async def download_unidades_proyecto_geojson(
+    # Filtros de contenido
+    nombre_centro_gestor: Optional[str] = Query(None, description="Centro gestor responsable"),
+    tipo_intervencion: Optional[str] = Query(None, description="Tipo de intervención"),
+    estado: Optional[str] = Query(None, description="Estado del proyecto"),
+    upid: Optional[str] = Query(None, description="ID específico de unidad"),
+    
+    # Filtros geográficos
+    comuna_corregimiento: Optional[str] = Query(None, description="Comuna o corregimiento específico"),
+    barrio_vereda: Optional[str] = Query(None, description="Barrio o vereda específico"),
+    
+    # Configuración de descarga
+    include_all_records: Optional[bool] = Query(True, description="Incluir todos los registros (con y sin geometría)"),
+    only_with_geometry: Optional[bool] = Query(False, description="Solo registros con geometría válida"),
+    limit: Optional[int] = Query(None, ge=1, le=10000, description="Límite de registros"),
+    
+    # Parámetros de formato
+    include_metadata: Optional[bool] = Query(True, description="Incluir metadata en el GeoJSON")
+):
+    """
+    ## 🔵 GET | 📁 Descarga | Descargar Unidades de Proyecto en formato GeoJSON
+    
+    **Propósito**: Descarga datos de la colección "unidades_proyecto" en formato .geojson 
+    estándar para uso en aplicaciones SIG y herramientas geoespaciales.
+    
+    ### ✅ Características principales:
+    - **Formato estándar**: GeoJSON compatible con QGIS, ArcGIS, Leaflet, etc.
+    - **Filtros flexibles**: Permite filtrar por centro gestor, tipo, estado, ubicación
+    - **Geometría configurable**: Opción de incluir todos los registros o solo los que tienen geometría
+    - **Campos optimizados**: Incluye todos los campos relevantes para análisis SIG
+    - **Encoding UTF-8**: Soporte completo para caracteres especiales en español
+    
+    ### 🗺️ Estrategia de geometría:
+    - **include_all_records=true** (por defecto): Incluye todos los registros, los sin geometría usan coordenadas [0,0]
+    - **only_with_geometry=true**: Solo registros con coordenadas válidas
+    - Campo **has_valid_geometry** indica si las coordenadas son reales o placeholder
+    
+    ### 📊 Campos incluidos:
+    - **upid**: Identificador único del proyecto
+    - **nombre_up**: Nombre del proyecto
+    - **estado**: Estado actual del proyecto
+    - **tipo_intervencion**: Tipo de intervención urbana
+    - **nombre_centro_gestor**: Entidad responsable
+    - **comuna_corregimiento**: Ubicación administrativa
+    - **barrio_vereda**: Ubicación específica
+    - **presupuesto_base**: Valor del proyecto
+    - **avance_obra**: Porcentaje de avance
+    - **bpin**: Código BPIN del proyecto
+    - **has_valid_geometry**: Indica si tiene coordenadas reales
+    
+    ### 🎯 Casos de uso:
+    - **Análisis SIG**: Importar en QGIS, ArcGIS para análisis espacial
+    - **Mapas web**: Cargar en Leaflet, Mapbox, OpenLayers
+    - **Visualización**: Crear mapas temáticos y dashboards geográficos
+    - **Integración**: Conectar con otras plataformas geoespaciales
+    - **Backup**: Exportar datos para respaldo
+    
+    ### 📝 Ejemplo de uso:
+    ```bash
+    # Descargar todos los proyectos
+    GET /unidades-proyecto/download-geojson
+    
+    # Solo proyectos de una secretaría
+    GET /unidades-proyecto/download-geojson?nombre_centro_gestor=Secretaría de Infraestructura
+    
+    # Solo proyectos con geometría válida
+    GET /unidades-proyecto/download-geojson?only_with_geometry=true
+    
+    # Proyectos de una comuna específica
+    GET /unidades-proyecto/download-geojson?comuna_corregimiento=Comuna 1
+    ```
+    
+    ### 💡 Nota técnica:
+    - El archivo se descarga directamente como .geojson
+    - Content-Type: application/geo+json
+    - Encoding: UTF-8 para caracteres especiales
+    - Compatible con estándares RFC 7946 (GeoJSON)
+    """
+    
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
+    
+    try:
+        # Construir filtros
+        filters = {}
+        
+        if nombre_centro_gestor:
+            filters["nombre_centro_gestor"] = nombre_centro_gestor
+        if tipo_intervencion:
+            filters["tipo_intervencion"] = tipo_intervencion
+        if estado:
+            filters["estado"] = estado
+        if upid:
+            filters["upid"] = upid
+        if comuna_corregimiento:
+            filters["comuna_corregimiento"] = comuna_corregimiento
+        if barrio_vereda:
+            filters["barrio_vereda"] = barrio_vereda
+        if limit:
+            filters["limit"] = limit
+        
+        # Obtener datos geoespaciales
+        result = await get_unidades_proyecto_geometry(filters)
+        
+        # Verificar si el resultado es exitoso
+        if result.get("type") != "FeatureCollection":
+            if result.get("success") is False:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Error obteniendo datos: {result.get('error', 'Error desconocido')}"
+                )
+            else:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Formato de respuesta inesperado del servicio de geometrías"
+                )
+        
+        # Extraer features
+        features = result.get("features", [])
+        
+        # Aplicar filtro de geometría si se solicita
+        if only_with_geometry and not include_all_records:
+            features = [
+                feature for feature in features 
+                if feature.get("properties", {}).get("has_valid_geometry", False)
+            ]
+        
+        # Crear GeoJSON final
+        geojson_response = {
+            "type": "FeatureCollection",
+            "features": features
+        }
+        
+        # Agregar metadata si se solicita
+        if include_metadata:
+            geojson_response["metadata"] = {
+                "source": "unidades_proyecto collection",
+                "exported_at": datetime.now().isoformat(),
+                "total_features": len(features),
+                "filters_applied": filters,
+                "has_valid_geometry_count": len([
+                    f for f in features 
+                    if f.get("properties", {}).get("has_valid_geometry", False)
+                ]),
+                "coordinate_system": "WGS84 (EPSG:4326)",
+                "format": "GeoJSON (RFC 7946)",
+                "encoding": "UTF-8",
+                "api_version": "1.0.0",
+                "last_updated": "2025-10-28T00:00:00Z"
+            }
+        
+        # Retornar como respuesta JSON con headers apropiados para descarga
+        return JSONResponse(
+            content=geojson_response,
+            status_code=200,
+            headers={
+                "Content-Type": "application/geo+json; charset=utf-8",
+                "Content-Disposition": "attachment; filename=unidades_proyecto.geojson",
+                "Access-Control-Expose-Headers": "Content-Disposition"
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error procesando descarga GeoJSON: {str(e)}"
         )
 
 

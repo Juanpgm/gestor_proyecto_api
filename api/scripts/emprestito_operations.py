@@ -1896,13 +1896,14 @@ async def procesar_datos_proyecciones(df: pd.DataFrame) -> Dict[str, Any]:
             "NOMBRE ABREVIADO": "nombre_organismo_reducido", 
             "Banco": "nombre_banco",
             "BP": "BP",
-            "DESCRIPCION BP": "descripcion_bp",  # Campo adicional que aparece en la especificación
+            "DESCRIPCION BP": "descripcion_bp",
             "Proyecto": "nombre_generico_proyecto",
             "Proyecto con su respectivo contrato": "nombre_resumido_proceso",
             "ID PAA": "id_paa",
             "LINK DEL PROCESO": "urlProceso",
-            "VALOR\n TOTAL": "valor_proyectado",  # Puede tener salto de línea
-            "VALOR TOTAL": "valor_proyectado"  # Versión sin salto de línea
+            "VALOR\n TOTAL": "valor_proyectado",  # Con salto de línea literal
+            "VALOR TOTAL": "valor_proyectado",   # Sin salto de línea
+            "Valor Adjudicado": "valor_adjudicado"  # Columna adicional para valor adjudicado
         }
         
         # Verificar qué columnas están disponibles
@@ -1923,14 +1924,24 @@ async def procesar_datos_proyecciones(df: pd.DataFrame) -> Dict[str, Any]:
                     # Buscar la columna en el DataFrame (puede haber variaciones)
                     valor = None
                     
-                    for col_df in columnas_disponibles:
-                        if col_original.lower().strip() in col_df.lower().strip():
-                            valor = fila[col_df]
-                            break
-                    
-                    # Si no se encontró, intentar búsqueda exacta
-                    if valor is None and col_original in columnas_disponibles:
+                    # Búsqueda exacta primero
+                    if col_original in columnas_disponibles:
                         valor = fila[col_original]
+                    else:
+                        # Búsqueda flexible para manejar variaciones y saltos de línea
+                        col_original_clean = col_original.replace('\n', '').replace('\r', '').lower().strip()
+                        
+                        for col_df in columnas_disponibles:
+                            col_df_clean = col_df.replace('\n', '').replace('\r', '').lower().strip()
+                            
+                            # Busqueda exacta de versión limpia
+                            if col_original_clean == col_df_clean:
+                                valor = fila[col_df]
+                                break
+                            # Búsqueda parcial
+                            elif col_original_clean in col_df_clean or col_df_clean in col_original_clean:
+                                valor = fila[col_df]
+                                break
                     
                     # Procesar el valor
                     if pd.isna(valor) or valor is None:
@@ -1945,15 +1956,25 @@ async def procesar_datos_proyecciones(df: pd.DataFrame) -> Dict[str, Any]:
                             else:
                                 registro[campo_destino] = valor_str
                         # Procesamiento especial para valor_proyectado
-                        elif campo_destino == "valor_proyectado":
+                        elif campo_destino in ["valor_proyectado", "valor_adjudicado"]:
                             try:
-                                # Limpiar formato de número (comas, espacios, etc.)
-                                valor_limpio = re.sub(r'[^\d.-]', '', valor_str)
-                                if valor_limpio:
+                                # Limpiar formato de número (quitar $, espacios, comas, puntos como separadores de miles)
+                                valor_limpio = valor_str.replace('$', '').replace(',', '').replace(' ', '').strip()
+                                
+                                # Remover puntos que actúan como separadores de miles (formato colombiano)
+                                # Solo si hay más de un punto o si el punto no está en los últimos 3 caracteres
+                                if '.' in valor_limpio:
+                                    puntos = valor_limpio.count('.')
+                                    if puntos > 1 or (puntos == 1 and len(valor_limpio.split('.')[-1]) != 2):
+                                        # Es separador de miles, no decimal
+                                        valor_limpio = valor_limpio.replace('.', '')
+                                
+                                if valor_limpio and valor_limpio != '':
                                     registro[campo_destino] = float(valor_limpio)
                                 else:
                                     registro[campo_destino] = 0
                             except (ValueError, TypeError):
+                                logger.warning(f"⚠️ No se pudo convertir valor '{valor_str}' a número en fila {index + 1}")
                                 registro[campo_destino] = 0
                         else:
                             registro[campo_destino] = valor_str
@@ -1963,11 +1984,20 @@ async def procesar_datos_proyecciones(df: pd.DataFrame) -> Dict[str, Any]:
                 registro["fuente"] = "google_sheets"
                 registro["fila_origen"] = index + 1  # +1 porque pandas usa índice 0
                 
-                # Validar campos obligatorios mínimos
-                if not registro.get("referencia_proceso") or registro["referencia_proceso"] == "":
+                # Validar campos obligatorios mínimos (usar item en lugar de referencia_proceso)
+                if not registro.get("item") or registro["item"] == "":
                     filas_con_errores.append({
                         "fila": index + 1,
-                        "error": "referencia_proceso vacío o faltante",
+                        "error": "item vacío o faltante",
+                        "datos": registro
+                    })
+                    continue
+                
+                # Validar que al menos tenga un proyecto o descripción
+                if not registro.get("nombre_generico_proyecto") and not registro.get("nombre_resumido_proceso"):
+                    filas_con_errores.append({
+                        "fila": index + 1,
+                        "error": "sin proyecto o descripción válida",
                         "datos": registro
                     })
                     continue

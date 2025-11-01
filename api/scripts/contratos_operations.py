@@ -246,8 +246,30 @@ async def get_contratos_emprestito_init_data(filters: Optional[Dict[str, Any]] =
         }
 
 
+async def get_all_procesos_emprestito_map(db) -> Dict[str, str]:
+    """Obtener un mapa de referencia_proceso -> nombre_resumido_proceso de una sola vez"""
+    try:
+        procesos_ref = db.collection('procesos_emprestito')
+        docs = procesos_ref.stream()
+        
+        proceso_map = {}
+        for doc in docs:
+            doc_data = doc.to_dict()
+            referencia = doc_data.get('referencia_proceso', '')
+            nombre_resumido = doc_data.get('nombre_resumido_proceso', '')
+            
+            if referencia and nombre_resumido:
+                # Normalizar la referencia
+                referencia_clean = str(referencia).strip()
+                proceso_map[referencia_clean] = nombre_resumido
+        
+        return proceso_map
+    except Exception as e:
+        print(f"Error obteniendo mapa de procesos: {str(e)}")
+        return {}
+
 async def get_nombre_resumido_proceso_by_referencia(db, referencia_proceso: str) -> str:
-    """Obtener nombre_resumido_proceso desde la colección procesos_emprestito"""
+    """Obtener nombre_resumido_proceso desde la colección procesos_emprestito (función legacy para compatibilidad)"""
     try:
         if not referencia_proceso:
             return ""
@@ -300,7 +322,7 @@ def extract_orden_compra_fields_all(orden_data: dict) -> dict:
     return mapped_data
 
 async def get_ordenes_compra_all_data(db) -> list:
-    """Obtener datos de órdenes de compra mapeados para contratos_emprestito_all"""
+    """Obtener datos de órdenes de compra mapeados para contratos_emprestito_all (versión legacy)"""
     try:
         collection_ref = db.collection('ordenes_compra_emprestito')
         docs = collection_ref.stream()
@@ -336,14 +358,9 @@ async def get_ordenes_compra_all_data(db) -> list:
         print(f"Error obteniendo órdenes de compra: {str(e)}")
         return []
 
-async def get_contratos_emprestito_all() -> Dict[str, Any]:
-    """Obtener todos los registros de las colecciones contratos_emprestito y ordenes_compra_emprestito con campos unificados"""
+async def get_contratos_emprestito_all_optimized(db, proceso_map: Dict[str, str]) -> list:
+    """Obtener contratos de empréstito usando el mapa de procesos precargado"""
     try:
-        db = get_firestore_client()
-        if db is None:
-            return {"success": False, "error": "No se pudo conectar a Firestore", "data": [], "count": 0}
-        
-        # Obtener contratos de empréstito
         collection_ref = db.collection('contratos_emprestito')
         docs = collection_ref.stream()
         contratos_data = []
@@ -359,18 +376,85 @@ async def get_contratos_emprestito_all() -> Dict[str, Any]:
             if isinstance(referencia_proceso, list):
                 referencia_proceso = referencia_proceso[0] if referencia_proceso else ''
             
-            # Buscar nombre_resumido_proceso en procesos_emprestito
+            # Buscar nombre_resumido_proceso usando el mapa precargado
             if referencia_proceso:
-                nombre_resumido_proceso = await get_nombre_resumido_proceso_by_referencia(db, referencia_proceso)
-                if nombre_resumido_proceso:
-                    doc_data['nombre_resumido_proceso'] = nombre_resumido_proceso
+                referencia_clean = str(referencia_proceso).strip()
+                nombre_resumido = proceso_map.get(referencia_clean, '')
+                if nombre_resumido:
+                    doc_data['nombre_resumido_proceso'] = nombre_resumido
             
             # Limpiar datos de Firebase para serialización JSON
             doc_data_clean = clean_firebase_data(doc_data)
             contratos_data.append(doc_data_clean)
         
-        # Obtener órdenes de compra mapeadas
-        ordenes_data = await get_ordenes_compra_all_data(db)
+        return contratos_data
+        
+    except Exception as e:
+        print(f"Error obteniendo contratos: {str(e)}")
+        return []
+
+async def get_ordenes_compra_all_data_optimized(db, proceso_map: Dict[str, str]) -> list:
+    """Obtener datos de órdenes de compra mapeados usando el mapa de procesos precargado"""
+    try:
+        collection_ref = db.collection('ordenes_compra_emprestito')
+        docs = collection_ref.stream()
+        ordenes_data = []
+        
+        for doc in docs:
+            doc_data = doc.to_dict()
+            doc_data['id'] = doc.id
+            
+            # Obtener referencia_proceso (solicitud_id) de la orden
+            referencia_proceso = doc_data.get('solicitud_id', '')
+            
+            # Si referencia_proceso es una lista, tomar el primer elemento
+            if isinstance(referencia_proceso, list):
+                referencia_proceso = referencia_proceso[0] if referencia_proceso else ''
+            
+            # Buscar nombre_resumido_proceso usando el mapa precargado
+            if referencia_proceso:
+                referencia_clean = str(referencia_proceso).strip()
+                nombre_resumido = proceso_map.get(referencia_clean, '')
+                if nombre_resumido:
+                    doc_data['nombre_resumido_proceso'] = nombre_resumido
+            
+            # Mapear campos usando programación funcional
+            mapped_data = extract_orden_compra_fields_all(doc_data)
+            
+            # Limpiar datos de Firebase para serialización JSON
+            mapped_data_clean = clean_firebase_data(mapped_data)
+            ordenes_data.append(mapped_data_clean)
+        
+        return ordenes_data
+        
+    except Exception as e:
+        print(f"Error obteniendo órdenes de compra: {str(e)}")
+        return []
+
+async def get_contratos_emprestito_all() -> Dict[str, Any]:
+    """Obtener todos los registros de las colecciones contratos_emprestito y ordenes_compra_emprestito con campos unificados - VERSIÓN OPTIMIZADA"""
+    try:
+        db = get_firestore_client()
+        if db is None:
+            return {"success": False, "error": "No se pudo conectar a Firestore", "data": [], "count": 0}
+        
+        # 🚀 OPTIMIZACIÓN 1: Cargar mapa de procesos una sola vez
+        print("📊 Cargando mapa de procesos...")
+        proceso_map = await get_all_procesos_emprestito_map(db)
+        print(f"✅ Mapa de procesos cargado: {len(proceso_map)} procesos")
+        
+        # 🚀 OPTIMIZACIÓN 2: Usar funciones optimizadas con el mapa precargado
+        import asyncio
+        
+        # Ejecutar ambas consultas en paralelo
+        contratos_task = get_contratos_emprestito_all_optimized(db, proceso_map)
+        ordenes_task = get_ordenes_compra_all_data_optimized(db, proceso_map)
+        
+        print("🔄 Ejecutando consultas en paralelo...")
+        contratos_data, ordenes_data = await asyncio.gather(contratos_task, ordenes_task)
+        
+        print(f"✅ Contratos obtenidos: {len(contratos_data)}")
+        print(f"✅ Órdenes obtenidas: {len(ordenes_data)}")
         
         # Combinar ambas colecciones
         all_data = contratos_data + ordenes_data
@@ -383,7 +467,7 @@ async def get_contratos_emprestito_all() -> Dict[str, Any]:
             "ordenes_count": len(ordenes_data),
             "collections": ["contratos_emprestito", "ordenes_compra_emprestito"],
             "timestamp": datetime.now().isoformat(),
-            "message": f"Se obtuvieron {len(contratos_data)} contratos y {len(ordenes_data)} órdenes de compra exitosamente ({len(all_data)} registros totales)"
+            "message": f"🚀 OPTIMIZADO: Se obtuvieron {len(contratos_data)} contratos y {len(ordenes_data)} órdenes de compra exitosamente ({len(all_data)} registros totales)"
         }
         
     except Exception as e:
