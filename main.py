@@ -106,8 +106,9 @@ try:
         procesar_todos_procesos_emprestito_completo,
         # Nuevas funciones para proyecciones de empréstito
         crear_tabla_proyecciones_desde_sheets,
-    leer_proyecciones_emprestito,
-    get_proyecciones_sin_proceso,
+        leer_proyecciones_emprestito,
+        leer_proyecciones_no_guardadas,
+        get_proyecciones_sin_proceso,
         actualizar_proyeccion_emprestito,
         # Reportes contratos operations
         create_reporte_contrato,
@@ -5496,11 +5497,14 @@ async def crear_tabla_proyecciones_endpoint():
     - `NOMBRE ABREVIADO` → `nombre_organismo_reducido`
     - `Banco` → `nombre_banco`
     - `BP` → `BP` (con prefijo "BP" agregado)
+    - `DESCRIPCION BP` → `descripcion_bp`
     - `Proyecto` → `nombre_generico_proyecto`
     - `Proyecto con su respectivo contrato` → `nombre_resumido_proceso`
     - `ID PAA` → `id_paa`
     - `LINK DEL PROCESO` → `urlProceso`
-    - `VALOR TOTAL` → `valor_proyectado`
+    - `valor_proyectado` → `valor_proyectado` (mapeo directo)
+    
+    **NOTA**: La columna en Google Sheets ahora se llama "valor_proyectado" directamente
     
     ### ✅ Características:
     - **Reemplazo completo**: Elimina datos existentes y carga nuevos
@@ -5598,60 +5602,115 @@ async def crear_tabla_proyecciones_endpoint():
         )
 
 @app.get("/emprestito/leer-tabla-proyecciones", tags=["Gestión de Empréstito"], summary="🔵 Tabla de Proyecciones")
-async def leer_tabla_proyecciones_endpoint():
+async def leer_tabla_proyecciones_endpoint(
+    sheet_url: Optional[str] = Query(
+        None, 
+        description="URL de Google Sheets para detectar registros con Nro de Proceso que NO están en procesos_emprestito."
+    ),
+    solo_no_guardados: bool = Query(
+        False,
+        description="Si es True y se proporciona sheet_url, devuelve solo registros que NO están en procesos_emprestito pero tienen Nro de Proceso válido"
+    )
+):
     """
-    ## � GET | �📋 Listados | Leer Tabla de Proyecciones de Empréstito
+    ## 📋 GET | 📋 Listados | Leer Tabla de Proyecciones de Empréstito
     
-    **Propósito**: Obtiene todos los registros de la colección "proyecciones_emprestito".
+    **Propósito**: 
+    - **Sin parámetros**: Obtiene todos los registros de la colección "proyecciones_emprestito".
+    - **Con sheet_url**: Detecta registros de Google Sheets que NO están en procesos_emprestito.
     
     ### ✅ Casos de uso:
+    
+    #### Modo 1: Lectura de BD (sin parámetros)
     - Consultar proyecciones cargadas desde Google Sheets
     - Verificar datos después de carga
     - Exportar proyecciones para análisis
     - Integrar con dashboards y reportes
     - Auditar última fecha de actualización
     
-    ### 📊 Información incluida:
+    #### Modo 2: Detección de no guardados en procesos_emprestito (con sheet_url)
+    - **Identifica registros pendientes**: Encuentra qué datos de Sheets tienen Nro de Proceso pero NO están en procesos_emprestito
+    - **Validación de sincronización**: Verifica qué procesos faltan por crear en la BD
+    - **Detección de pendientes**: Lista proyecciones que necesitan ser guardadas como procesos
+    - **Control de calidad**: Asegura que todos los procesos válidos estén registrados
+    
+    ### 🔍 Condiciones para Modo 2 (Registros devueltos):
+    1. ✅ Tienen valor en columna "Nro de Proceso" (no vacío, no null)
+    2. ❌ El valor de "Nro de Proceso" NO existe en la colección `procesos_emprestito` con campo `referencia_proceso`
+    
+    ### 📊 Información incluida (Modo 1 - Sin sheet_url):
     - **Datos mapeados**: Todos los campos según mapeo definido
     - **Metadatos**: Fecha de carga, fuente, fila origen
     - **Timestamps**: Fecha de guardado y última actualización
     - **ID único**: Identificador de Firebase para cada registro
     - **Estadísticas**: Información de la última carga realizada
     
+    ### 🔍 Información incluida (Modo 2 - Con sheet_url):
+    - **Registros no guardados**: Solo los que tienen Nro de Proceso válido pero NO existen en procesos_emprestito
+    - **Comparación precisa**: Verifica contra la colección procesos_emprestito
+    - **Metadata de comparación**: Estadísticas sobre registros encontrados/no encontrados
+    - **Optimización**: Usa mapas en memoria para comparación rápida O(1)
+    
     ### 🔍 Campos de respuesta:
     - `item`: Número de ítem
-    - `referencia_proceso`: Número de proceso
+    - `referencia_proceso`: Número de proceso (Nro de Proceso de Sheets)
     - `nombre_organismo_reducido`: Nombre abreviado del organismo
     - `nombre_banco`: Banco asociado
     - `BP`: Código BP con prefijo agregado
+    - `descripcion_bp`: Descripción del BP
     - `nombre_generico_proyecto`: Nombre del proyecto
     - `nombre_resumido_proceso`: Proyecto con contrato
     - `id_paa`: ID del PAA
     - `urlProceso`: Enlace al proceso
-    - `valor_proyectado`: Valor total del proyecto
+    - `valor_proyectado`: Valor total del proyecto (única columna de valor)
+    - `_es_nuevo`: (Solo Modo 2) Indica que es un registro no guardado
+    - `_motivo`: (Solo Modo 2) Razón por la cual no está guardado
     
-    ### 📝 Ejemplo de uso:
+    **NOTA**: NO se incluyen campos duplicados como "VALOR TOTAL" o "Valor Adjudicado"
+    
+    ### 📝 Ejemplos de uso:
+    
+    #### Ejemplo 1: Leer todos los registros guardados en proyecciones_emprestito
     ```javascript
     const response = await fetch('/emprestito/leer-tabla-proyecciones');
     const data = await response.json();
     
     if (data.success) {
         console.log(`Proyecciones encontradas: ${data.count}`);
-        console.log(`Última carga: ${data.metadatos_carga.fecha_ultima_carga}`);
-        
-        // Procesar proyecciones
         data.data.forEach(proyeccion => {
             console.log(`${proyeccion.referencia_proceso}: ${proyeccion.valor_proyectado}`);
         });
     }
     ```
     
+    #### Ejemplo 2: Detectar registros pendientes de guardar en procesos_emprestito
+    ```javascript
+    const sheetUrl = 'https://docs.google.com/spreadsheets/d/ABC123/edit';
+    const response = await fetch(
+        `/emprestito/leer-tabla-proyecciones?sheet_url=${encodeURIComponent(sheetUrl)}&solo_no_guardados=true`
+    );
+    const data = await response.json();
+    
+    if (data.success) {
+        console.log(`Registros pendientes: ${data.count}`);
+        console.log(`Total en Sheets: ${data.metadata.total_sheets}`);
+        console.log(`Ya en procesos_emprestito: ${data.metadata.ya_en_procesos}`);
+        console.log(`Sin Nro de Proceso: ${data.metadata.sin_proceso}`);
+        
+        // Procesar registros pendientes
+        data.data.forEach(registro => {
+            console.log(`Pendiente: ${registro.referencia_proceso} - ${registro._motivo}`);
+        });
+    }
+    ```
+    
     ### 💡 Características:
-    - **Ordenamiento**: Por fecha de carga (más recientes primero)
-    - **Metadatos completos**: Información de la última actualización
-    - **Sin filtros**: Retorna todos los registros disponibles
+    - **Ordenamiento** (Modo 1): Por fecha de carga (más recientes primero)
+    - **Filtrado inteligente** (Modo 2): Solo registros con Nro Proceso válido que NO están en procesos_emprestito
+    - **Validación estricta**: Verifica que referencia_proceso no sea null, vacío o solo espacios
     - **UTF-8**: Soporte completo para caracteres especiales
     - **Auditoría**: Incluye información de trazabilidad
+    - **Optimización**: Búsqueda O(1) usando sets en memoria
     """
     if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
         raise HTTPException(status_code=503, detail="Firebase o scripts no disponibles")
@@ -5660,7 +5719,30 @@ async def leer_tabla_proyecciones_endpoint():
         raise HTTPException(status_code=503, detail="Operaciones de empréstito no disponibles")
     
     try:
-        # Obtener proyecciones de Firebase
+        # Modo 2: Comparar con Google Sheets y devolver no guardados en procesos_emprestito
+        if sheet_url and solo_no_guardados:
+            result = await leer_proyecciones_no_guardadas(sheet_url)
+            
+            if not result["success"]:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Error comparando con Google Sheets: {result.get('error', 'Error desconocido')}"
+                )
+            
+            # Agregar información del endpoint
+            result["last_updated"] = "2025-11-01T00:00:00Z"
+            result["endpoint_info"] = {
+                "modo": "deteccion_no_guardados",
+                "sheet_url": sheet_url,
+                "filtro": "no_en_procesos_emprestito_con_nro_proceso_valido",
+                "coleccion_comparada": "procesos_emprestito",
+                "campo_comparado": "referencia_proceso",
+                "optimizado": True
+            }
+            
+            return create_utf8_response(result)
+        
+        # Modo 1: Obtener proyecciones de Firebase (comportamiento original)
         result = await leer_proyecciones_emprestito()
         
         if not result["success"]:
@@ -5670,8 +5752,9 @@ async def leer_tabla_proyecciones_endpoint():
             )
         
         # Agregar información del endpoint
-        result["last_updated"] = "2025-10-22T00:00:00Z"
+        result["last_updated"] = "2025-11-01T00:00:00Z"
         result["endpoint_info"] = {
+            "modo": "lectura_bd",
             "coleccion_fuente": "proyecciones_emprestito",
             "ordenamiento": "por_fecha_carga_desc",
             "incluye_metadatos": True,

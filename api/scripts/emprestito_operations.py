@@ -4,6 +4,7 @@ Solo funcionalidades esenciales habilitadas
 """
 
 import logging
+import asyncio
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 import pandas as pd
@@ -16,7 +17,7 @@ logger = logging.getLogger(__name__)
 # Variables de disponibilidad
 FIRESTORE_AVAILABLE = True
 try:
-    from database.firebase_config import get_firestore_client
+    # Verificar disponibilidad de Firestore
     get_firestore_client()
 except Exception as e:
     FIRESTORE_AVAILABLE = False
@@ -1680,15 +1681,30 @@ async def leer_google_sheets_proyecciones(sheet_url: str) -> Dict[str, Any]:
         import gspread
         from google.oauth2.service_account import Credentials
         
-        # Extraer el ID del spreadsheet de la URL
+        # Extraer el ID del spreadsheet de la URL (múltiples formatos soportados)
+        sheet_id = None
+        
+        # Formato 1: URL completa con /spreadsheets/d/
         sheet_id_match = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', sheet_url)
-        if not sheet_id_match:
+        if sheet_id_match:
+            sheet_id = sheet_id_match.group(1)
+        else:
+            # Formato 2: URL corta docs.google.com/spreadsheets/u/0/d/
+            sheet_id_match = re.search(r'/spreadsheets/u/\d+/d/([a-zA-Z0-9-_]+)', sheet_url)
+            if sheet_id_match:
+                sheet_id = sheet_id_match.group(1)
+            else:
+                # Formato 3: Solo el ID (si viene sin URL completa)
+                if re.match(r'^[a-zA-Z0-9-_]+$', sheet_url.strip()):
+                    sheet_id = sheet_url.strip()
+        
+        if not sheet_id:
+            logger.error(f"❌ No se pudo extraer ID de la URL: {sheet_url}")
             return {
                 "success": False,
-                "error": "No se pudo extraer el ID del Google Sheet de la URL proporcionada"
+                "error": f"No se pudo extraer el ID del Google Sheet de la URL proporcionada. URL recibida: {sheet_url}"
             }
         
-        sheet_id = sheet_id_match.group(1)
         logger.info(f"📊 Accediendo a Google Sheets ID: {sheet_id}")
         
         # Obtener credenciales de Firebase para Google Sheets
@@ -1880,16 +1896,20 @@ async def procesar_datos_proyecciones(df: pd.DataFrame) -> Dict[str, Any]:
     - NOMBRE ABREVIADO: nombre_organismo_reducido
     - Banco: nombre_banco
     - BP: BP (con prefijo "BP" agregado)
+    - DESCRIPCION BP: descripcion_bp
     - Proyecto: nombre_generico_proyecto
     - Proyecto con su respectivo contrato: nombre_resumido_proceso
     - ID PAA: id_paa
     - LINK DEL PROCESO: urlProceso
-    - VALOR TOTAL: valor_proyectado
+    - valor_proyectado: valor_proyectado (mapeo directo)
+    
+    NOTA: La columna en Google Sheets ahora se llama "valor_proyectado" directamente
     """
     try:
         logger.info("🔄 Procesando datos de proyecciones...")
         
         # Mapeo de columnas original -> campo destino
+        # IMPORTANTE: Soporta tanto "VALOR \n TOTAL" (legacy) como "valor_proyectado" (nuevo)
         mapeo_campos = {
             "Item": "item",
             "Nro de Proceso": "referencia_proceso",
@@ -1901,9 +1921,9 @@ async def procesar_datos_proyecciones(df: pd.DataFrame) -> Dict[str, Any]:
             "Proyecto con su respectivo contrato": "nombre_resumido_proceso",
             "ID PAA": "id_paa",
             "LINK DEL PROCESO": "urlProceso",
-            "VALOR\n TOTAL": "valor_proyectado",  # Con salto de línea literal
-            "VALOR TOTAL": "valor_proyectado",   # Sin salto de línea
-            "Valor Adjudicado": "valor_adjudicado"  # Columna adicional para valor adjudicado
+            "valor_proyectado": "valor_proyectado",  # Nuevo nombre (preferido)
+            "VALOR\n TOTAL": "valor_proyectado",    # Legacy con salto de línea
+            "VALOR TOTAL": "valor_proyectado"        # Legacy sin salto de línea
         }
         
         # Verificar qué columnas están disponibles
@@ -1921,6 +1941,15 @@ async def procesar_datos_proyecciones(df: pd.DataFrame) -> Dict[str, Any]:
                 
                 # Mapear cada campo según la especificación
                 for col_original, campo_destino in mapeo_campos.items():
+                    # Si el campo destino ya fue asignado con un valor válido, no sobrescribir
+                    if campo_destino in registro and campo_destino == "valor_proyectado":
+                        # Para valor_proyectado, solo sobrescribir si el valor actual es 0
+                        if registro[campo_destino] != 0:
+                            continue
+                    elif campo_destino in registro and registro[campo_destino] != "":
+                        # Para otros campos, no sobrescribir si ya tiene valor
+                        continue
+                    
                     # Buscar la columna en el DataFrame (puede haber variaciones)
                     valor = None
                     
@@ -1945,7 +1974,7 @@ async def procesar_datos_proyecciones(df: pd.DataFrame) -> Dict[str, Any]:
                     
                     # Procesar el valor
                     if pd.isna(valor) or valor is None:
-                        registro[campo_destino] = "" if campo_destino != "valor_proyectado" else 0
+                        registro[campo_destino] = "" if campo_destino not in ["valor_proyectado"] else 0
                     else:
                         valor_str = str(valor).strip()
                         
@@ -1955,8 +1984,8 @@ async def procesar_datos_proyecciones(df: pd.DataFrame) -> Dict[str, Any]:
                                 registro[campo_destino] = f"BP{valor_str}"
                             else:
                                 registro[campo_destino] = valor_str
-                        # Procesamiento especial para valor_proyectado
-                        elif campo_destino in ["valor_proyectado", "valor_adjudicado"]:
+                        # Procesamiento especial para valor_proyectado (valores numéricos)
+                        elif campo_destino == "valor_proyectado":
                             try:
                                 # Limpiar formato de número (quitar $, espacios, comas, puntos como separadores de miles)
                                 valor_limpio = valor_str.replace('$', '').replace(',', '').replace(' ', '').strip()
@@ -2198,6 +2227,204 @@ async def leer_proyecciones_emprestito() -> Dict[str, Any]:
         }
 
 
+# FUNCIONES HELPER PARA OPTIMIZACIÓN DE CONSULTAS
+
+async def get_referencias_from_collection(db, collection_name: str, field_name: str) -> set:
+    """
+    Helper optimizado para obtener referencias de una colección en Firebase.
+    Reutilizable para múltiples colecciones y campos.
+    
+    Args:
+        db: Cliente de Firestore
+        collection_name: Nombre de la colección
+        field_name: Campo del que extraer las referencias
+    
+    Returns:
+        Set de referencias únicas (strings)
+    """
+    try:
+        collection_ref = db.collection(collection_name)
+        docs = collection_ref.stream()
+        referencias = set()
+        
+        for doc in docs:
+            doc_data = doc.to_dict()
+            ref = doc_data.get(field_name, '')
+            
+            if ref:
+                # Manejar listas y strings
+                if isinstance(ref, list):
+                    for r in ref:
+                        if r:
+                            referencias.add(str(r).strip())
+                else:
+                    referencias.add(str(ref).strip())
+        
+        return referencias
+        
+    except Exception as e:
+        logger.error(f"❌ Error obteniendo referencias de {collection_name}.{field_name}: {str(e)}")
+        return set()
+
+
+async def leer_proyecciones_no_guardadas(sheet_url: str) -> Dict[str, Any]:
+    """
+    Lee datos de Google Sheets y devuelve solo los registros que:
+    1. Tienen un número de proceso válido (no vacío en campo "Nro de Proceso")
+    2. Ese número de proceso NO existe en la colección procesos_emprestito
+    
+    Esta función NO guarda nada en Firebase, solo lee y compara.
+    Optimizada con consultas paralelas y mapas en memoria.
+    """
+    try:
+        if not FIRESTORE_AVAILABLE:
+            return {"success": False, "error": "Firebase no disponible", "data": [], "count": 0}
+        
+        db = get_firestore_client()
+        if db is None:
+            return {"success": False, "error": "No se pudo conectar a Firestore", "data": [], "count": 0}
+        
+        logger.info("🚀 Iniciando lectura de proyecciones no guardadas desde Google Sheets...")
+        
+        # PASO 1: Leer datos de Google Sheets (sin guardar)
+        resultado_lectura = await leer_google_sheets_proyecciones(sheet_url)
+        if not resultado_lectura["success"]:
+            return resultado_lectura
+        
+        df_temporal = resultado_lectura["data"]
+        logger.info(f"📊 Datos leídos de Sheets: {len(df_temporal)} filas")
+        
+        # PASO 2: Procesar y mapear datos (sin guardar)
+        resultado_procesamiento = await procesar_datos_proyecciones(df_temporal)
+        if not resultado_procesamiento["success"]:
+            return resultado_procesamiento
+        
+        registros_sheets = resultado_procesamiento["data"]
+        logger.info(f"✅ Datos procesados de Sheets: {len(registros_sheets)} registros")
+        
+        # LOG: Verificar que los primeros registros tengan valor_proyectado
+        if len(registros_sheets) > 0:
+            muestra = registros_sheets[0]
+            logger.info(f"📋 Muestra de registro procesado:")
+            logger.info(f"   - referencia_proceso: {muestra.get('referencia_proceso', 'N/A')}")
+            logger.info(f"   - valor_proyectado: {muestra.get('valor_proyectado', 'NO_ENCONTRADO')}")
+            logger.info(f"   - nombre_banco: {muestra.get('nombre_banco', 'N/A')}")
+            logger.info(f"   - Campos disponibles: {list(muestra.keys())}")
+        
+        # PASO 3: Obtener SOLO referencias de procesos_emprestito (única colección relevante)
+        logger.info("🔄 Cargando referencias de procesos_emprestito...")
+        referencias_procesos = await get_referencias_from_collection(db, 'procesos_emprestito', 'referencia_proceso')
+        
+        logger.info(f"✅ Referencias cargadas:")
+        logger.info(f"   - Procesos en BD: {len(referencias_procesos)}")
+        
+        # PASO 4: Filtrar PRIMERO solo registros con Nro de Proceso válido
+        registros_con_proceso_valido = []
+        count_sin_proceso = 0
+        
+        logger.info("🔍 Filtrando registros con Nro de Proceso válido...")
+        
+        for registro in registros_sheets:
+            referencia_proceso = registro.get('referencia_proceso', '')
+            
+            # Convertir a string y limpiar espacios
+            if referencia_proceso is None:
+                count_sin_proceso += 1
+                continue
+            
+            referencia_str = str(referencia_proceso).strip()
+            
+            # Lista de valores que se consideran inválidos
+            valores_invalidos = ['', '0', '0.0', 'null', 'none', 'n/a', 'na', 'nan', 'undefined']
+            
+            # Verificar que NO sea vacío o un valor inválido
+            if not referencia_str or referencia_str.lower() in valores_invalidos:
+                count_sin_proceso += 1
+                logger.debug(f"❌ Rechazado: '{referencia_proceso}' (valor inválido)")
+                continue
+            
+            # Verificar que no sea solo un número cero
+            try:
+                if float(referencia_str) == 0:
+                    count_sin_proceso += 1
+                    logger.debug(f"❌ Rechazado: '{referencia_proceso}' (es cero numérico)")
+                    continue
+            except (ValueError, TypeError):
+                # No es un número, está bien
+                pass
+            
+            # Tiene un número de proceso válido
+            logger.debug(f"✅ Válido: '{referencia_str}'")
+            registros_con_proceso_valido.append(registro)
+        
+        logger.info(f"📊 Filtro inicial:")
+        logger.info(f"   - Total en Sheets: {len(registros_sheets)}")
+        logger.info(f"   - Con Nro Proceso válido: {len(registros_con_proceso_valido)}")
+        logger.info(f"   - Sin Nro Proceso o inválido: {count_sin_proceso}")
+        
+        # PASO 5: Comparar SOLO los registros con proceso válido contra procesos_emprestito
+        registros_no_guardados = []
+        count_ya_en_procesos = 0
+        
+        logger.info("🔄 Comparando registros válidos con procesos_emprestito...")
+        
+        for registro in registros_con_proceso_valido:
+            referencia_proceso = str(registro.get('referencia_proceso', '')).strip()
+            
+            # Verificar si YA existe en procesos_emprestito (búsqueda O(1) en set)
+            existe_en_procesos = referencia_proceso in referencias_procesos
+            
+            if existe_en_procesos:
+                # Ya está guardado en procesos_emprestito - no incluir
+                count_ya_en_procesos += 1
+                logger.debug(f"✓ En BD: '{referencia_proceso}'")
+            else:
+                # NO está en procesos_emprestito - INCLUIR
+                registro['_es_nuevo'] = True
+                registro['_motivo'] = 'No existe en procesos_emprestito'
+                
+                # LOG: Verificar que valor_proyectado esté presente
+                valor_proy = registro.get('valor_proyectado', 'NO_ENCONTRADO')
+                logger.info(f"⚠️ NO en BD: '{referencia_proceso}' | valor_proyectado: {valor_proy}")
+                
+                registros_no_guardados.append(registro)
+        
+        logger.info(f"📊 Resultados de la comparación:")
+        logger.info(f"   - Registros válidos analizados: {len(registros_con_proceso_valido)}")
+        logger.info(f"   - NO en procesos_emprestito: {len(registros_no_guardados)}")
+        logger.info(f"   - Ya en procesos_emprestito: {count_ya_en_procesos}")
+        
+        # Limpiar DataFrame temporal
+        del df_temporal
+        
+        return {
+            "success": True,
+            "data": registros_no_guardados,
+            "count": len(registros_no_guardados),
+            "metadata": {
+                "total_sheets": len(registros_sheets),
+                "con_proceso_valido": len(registros_con_proceso_valido),
+                "sin_proceso_o_invalido": count_sin_proceso,
+                "no_en_procesos_emprestito": len(registros_no_guardados),
+                "ya_en_procesos_emprestito": count_ya_en_procesos,
+                "referencias_bd": {
+                    "procesos_emprestito": len(referencias_procesos)
+                }
+            },
+            "timestamp": datetime.now().isoformat(),
+            "message": f"De {len(registros_sheets)} registros en Sheets, {len(registros_con_proceso_valido)} tienen Nro de Proceso válido. De estos, {len(registros_no_guardados)} NO están en procesos_emprestito."
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error leyendo proyecciones no guardadas: {str(e)}")
+        return {
+            "success": False,
+            "error": f"Error leyendo proyecciones no guardadas: {str(e)}",
+            "data": [],
+            "count": 0
+        }
+
+
 async def get_proyecciones_sin_proceso() -> Dict[str, Any]:
     """
     Compara los valores de 'referencia_proceso' en 'proyecciones_emprestito' con
@@ -2222,17 +2449,50 @@ async def get_proyecciones_sin_proceso() -> Dict[str, Any]:
             if ref:
                 referencias_procesos.add(str(ref).strip())
 
-        # Obtener todas las proyecciones y filtrar
+        # Obtener todas las proyecciones
         proyecciones_ref = db.collection('proyecciones_emprestito')
         proyecciones_docs = list(proyecciones_ref.stream())
 
-        proyecciones_sin_proceso = []
+        # PASO 1: Filtrar PRIMERO solo registros con referencia_proceso VÁLIDA (no nulo, no vacío, no cero)
+        proyecciones_con_referencia_valida = []
+        valores_invalidos = ['', '0', '0.0', 'null', 'none', 'n/a', 'na', 'nan', 'undefined']
+        
         for doc in proyecciones_docs:
             pdata = doc.to_dict()
             refp = pdata.get('referencia_proceso')
-            refp_str = str(refp).strip() if refp is not None else None
-            if not refp_str or refp_str not in referencias_procesos:
-                pdata['id'] = doc.id
+            
+            # Verificar que no sea None
+            if refp is None:
+                continue
+            
+            # Convertir a string y limpiar
+            refp_str = str(refp).strip()
+            
+            # Verificar que NO sea vacío o valor inválido
+            if not refp_str or refp_str.lower() in valores_invalidos:
+                continue
+            
+            # Verificar que no sea cero numérico
+            try:
+                if float(refp_str) == 0:
+                    continue
+            except (ValueError, TypeError):
+                pass
+            
+            # Tiene referencia válida, guardar con su string limpio
+            pdata['id'] = doc.id
+            pdata['_referencia_limpia'] = refp_str
+            proyecciones_con_referencia_valida.append(pdata)
+        
+        # PASO 2: De las que tienen referencia válida, filtrar las que NO están en procesos_emprestito
+        proyecciones_sin_proceso = []
+        for pdata in proyecciones_con_referencia_valida:
+            refp_str = pdata['_referencia_limpia']
+            
+            # Si NO está en procesos_emprestito, incluir
+            if refp_str not in referencias_procesos:
+                # Limpiar campo temporal antes de devolver
+                del pdata['_referencia_limpia']
                 pdata_clean = serialize_datetime_objects(pdata)
                 proyecciones_sin_proceso.append(pdata_clean)
 

@@ -4,6 +4,7 @@ Función optimizada para el endpoint init_contratos_seguimiento
 """
 
 import re
+import asyncio
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 from database.firebase_config import get_firestore_client
@@ -444,8 +445,6 @@ async def get_contratos_emprestito_all() -> Dict[str, Any]:
         print(f"✅ Mapa de procesos cargado: {len(proceso_map)} procesos")
         
         # 🚀 OPTIMIZACIÓN 2: Usar funciones optimizadas con el mapa precargado
-        import asyncio
-        
         # Ejecutar ambas consultas en paralelo
         contratos_task = get_contratos_emprestito_all_optimized(db, proceso_map)
         ordenes_task = get_ordenes_compra_all_data_optimized(db, proceso_map)
