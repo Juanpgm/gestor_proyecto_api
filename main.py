@@ -42,7 +42,6 @@ from typing import Dict, Any, Optional, Union, List
 import uvicorn
 import asyncio
 from datetime import datetime
-import xml.etree.ElementTree as ET
 import json
 import re
 import uuid
@@ -1827,255 +1826,6 @@ async def get_filters_endpoint(
 
 
 # ============================================================================
-# FUNCIONES AUXILIARES PARA PROCESAMIENTO KML
-# ============================================================================
-
-def parse_kml_to_geojson_linestrings(kml_content: str) -> Dict[str, Any]:
-    """
-    Convierte contenido KML a GeoJSON con LineStrings y formato de base de datos
-    """
-    try:
-        # Parse del XML KML
-        root = ET.fromstring(kml_content)
-        
-        # Namespace de KML
-        kml_ns = {'kml': 'http://www.opengis.net/kml/2.2'}
-        
-        # Buscar todos los Placemarks
-        placemarks = root.findall('.//kml:Placemark', kml_ns)
-        
-        features = []
-        
-        for placemark in placemarks:
-            # Extraer nombre y descripción
-            name_elem = placemark.find('kml:name', kml_ns)
-            name = name_elem.text if name_elem is not None else f"Línea_{uuid.uuid4().hex[:8]}"
-            
-            desc_elem = placemark.find('kml:description', kml_ns)
-            description = desc_elem.text if desc_elem is not None else ""
-            
-            # Buscar LineString
-            linestring = placemark.find('.//kml:LineString', kml_ns)
-            if linestring is not None:
-                # Obtener coordenadas
-                coords_elem = linestring.find('kml:coordinates', kml_ns)
-                if coords_elem is not None:
-                    coords_text = coords_elem.text.strip()
-                    
-                    # Parsear coordenadas (formato: lng,lat,alt lng,lat,alt ...)
-                    coord_pairs = []
-                    for coord_str in coords_text.split():
-                        parts = coord_str.split(',')
-                        if len(parts) >= 2:
-                            try:
-                                lng = float(parts[0])
-                                lat = float(parts[1])
-                                coord_pairs.append([lng, lat])
-                            except ValueError:
-                                continue
-                    
-                    if len(coord_pairs) >= 2:  # LineString necesita al menos 2 puntos
-                        # Crear feature GeoJSON con formato de base de datos
-                        feature = {
-                            "type": "Feature",
-                            "properties": {
-                                # Campos básicos (upid se generará en el GET endpoint)
-                                "nombre_up": name,
-                                "descripcion": description,
-                                "estado": "En Planificación",
-                                "tipo_intervencion": "Infraestructura Vial",
-                                "nombre_centro_gestor": "Centro Gestor por Definir",
-                                "comuna_corregimiento": "Por Definir",
-                                "barrio_vereda": "Por Definir",
-                                "fuente_financiacion": "Por Definir",
-                                "ano": datetime.now().year,
-                                "presupuesto_base": 0,
-                                "avance_obra": 0.0,
-                                "fecha_inicio": None,
-                                "fecha_fin": None
-                            },
-                            "geometry": {
-                                "type": "LineString",
-                                "coordinates": coord_pairs
-                            }
-                        }
-                        features.append(feature)
-        
-        # Crear FeatureCollection GeoJSON
-        geojson = {
-            "type": "FeatureCollection",
-            "features": features,
-            "processing_metadata": {
-                "source": "KML Import",
-                "processed_at": datetime.now().isoformat(),
-                "total_features": len(features),
-                "geometry_type": "LineString",
-                "format_version": "1.0",
-                "upid_generation": "Will be handled by GET endpoint",
-                "coordinates_count_per_feature": [len(f["geometry"]["coordinates"]) for f in features],
-                "note": "This metadata is for processing info only, not for database insertion"
-            }
-        }
-        
-        return {
-            "success": True,
-            "geojson": geojson,
-            "summary": {
-                "features_processed": len(placemarks),
-                "linestrings_found": len(features),
-                "conversion_successful": True
-            }
-        }
-        
-    except ET.ParseError as e:
-        return {
-            "success": False,
-            "error": f"Error parsing KML: {str(e)}",
-            "geojson": None
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "error": f"Error processing KML: {str(e)}",
-            "geojson": None
-        }
-
-
-# ============================================================================
-# ENDPOINT PARA INSERCIÓN DE LINESTRINGS DESDE KML
-# ============================================================================
-
-@app.post("/unidades-proyecto/insert-linestrings", tags=["Unidades de Proyecto"], response_class=JSONResponse)
-async def insert_linestrings_from_kml(
-    kml_file: UploadFile = File(..., description="Archivo KML con geometrías tipo línea")
-):
-    """
-    **Convertir archivo KML a GeoJSON con LineStrings**
-    
-    Endpoint para procesar archivos KML y convertirlos a formato GeoJSON compatible 
-    con la estructura de base de datos de unidades de proyecto.
-    
-    **Características principales:**
-    - **Conversión KML → GeoJSON**: Procesa geometrías LineString desde KML
-    - **Formato de BD**: Aplica estructura estándar de unidades de proyecto
-    - **Sin persistencia**: Solo conversión y visualización (no guarda en BD)
-    - **Validación**: Verifica geometrías válidas y estructura correcta
-    
-    **Proceso de conversión:**
-    1. Parse del archivo KML
-    2. Extracción de geometrías LineString
-    3. Generación de propiedades por defecto
-    4. Formato GeoJSON compatible con base de datos
-    5. Validación de resultados
-    
-    **Campos generados automáticamente:**
-    - `nombre_up`: Nombre extraído desde KML o generado
-    - `estado`: "En Planificación" (por defecto)
-    - `tipo_intervencion`: "Infraestructura Vial" (por defecto)
-    - `geometry`: LineString con coordenadas del KML
-    - `ano`: Año actual
-    
-    **Campos por definir manualmente:**
-    - `upid`: Se generará automáticamente en el endpoint GET (no incluido aquí)
-    - `nombre_centro_gestor`: Centro gestor responsable
-    - `comuna_corregimiento`: Ubicación administrativa
-    - `barrio_vereda`: Ubicación específica
-    - `fuente_financiacion`: Fuente de recursos
-    - `presupuesto_base`: Valor del proyecto
-    
-    **Respuesta incluye:**
-    - GeoJSON completo con todas las features
-    - Resumen de conversión con estadísticas
-    - Metadata de procesamiento
-    - Estructura lista para revisión antes de inserción
-    
-    **Uso recomendado:**
-    1. Subir archivo KML
-    2. Revisar GeoJSON generado
-    3. Validar geometrías y propiedades
-    4. Ajustar campos faltantes si es necesario
-    5. Proceder con inserción manual posterior
-    """
-    
-    # Validar tipo de archivo
-    if not kml_file.filename.lower().endswith('.kml'):
-        raise HTTPException(
-            status_code=400,
-            detail="Solo se permiten archivos KML (.kml)"
-        )
-    
-    try:
-        # Leer contenido del archivo
-        kml_content = await kml_file.read()
-        kml_text = kml_content.decode('utf-8')
-        
-        # Procesar KML
-        result = parse_kml_to_geojson_linestrings(kml_text)
-        
-        if not result.get("success", False):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Error procesando KML: {result.get('error', 'Error desconocido')}"
-            )
-        
-        geojson = result["geojson"]
-        summary = result["summary"]
-        
-        # Crear respuesta completa
-        response_data = {
-            "success": True,
-            "message": "KML convertido exitosamente a GeoJSON",
-            "conversion_summary": {
-                "source_file": kml_file.filename,
-                "file_size_bytes": len(kml_content),
-                "features_processed": summary["features_processed"],
-                "linestrings_converted": summary["linestrings_found"],
-                "conversion_successful": summary["conversion_successful"]
-            },
-            "geojson": geojson,
-            "database_preview": {
-                "ready_for_insertion": True,
-                "format_validation": "✅ Compatible con estructura de BD",
-                "required_fields_status": "✅ Campos base generados (upid se creará en GET)",
-                "geometry_validation": "✅ LineStrings válidos",
-                "upid_status": "⏳ Se generará automáticamente en endpoint GET",
-                "next_steps": [
-                    "Revisar y ajustar campos por defecto",
-                    "Validar coordenadas geográficas",
-                    "Confirmar información de proyecto",
-                    "El upid se generará automáticamente al guardar",
-                    "Proceder con inserción manual"
-                ]
-            },
-            "metadata": {
-                "processed_at": datetime.now().isoformat(),
-                "geometry_type": "LineString",
-                "coordinate_system": "WGS84 (EPSG:4326)",
-                "format_version": "GeoJSON v1.0",
-                "database_compatible": True,
-                "persistence_status": "NOT_SAVED (Preview only)"
-            },
-            "type": "kml_conversion",
-            "timestamp": datetime.now().isoformat()
-        }
-        
-        return create_utf8_response(response_data)
-        
-    except UnicodeDecodeError:
-        raise HTTPException(
-            status_code=400,
-            detail="Error de codificación: El archivo KML debe estar en UTF-8"
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error interno procesando KML: {str(e)}"
-        )
-
-
-# ============================================================================
 # ENDPOINT PARA DESCARGA DE GEOJSON
 # ============================================================================
 
@@ -2248,6 +1998,508 @@ async def download_unidades_proyecto_geojson(
         raise HTTPException(
             status_code=500,
             detail=f"Error procesando descarga GeoJSON: {str(e)}"
+        )
+
+
+# ============================================================================
+# ENDPOINT PARA CARGAR GEOJSON A FIRESTORE
+# ============================================================================
+
+@app.post("/unidades-proyecto/cargar-geojson", tags=["Unidades de Proyecto"], summary="🟢 Cargar GeoJSON a Firestore (UPSERT)")
+async def cargar_geojson_a_firestore(
+    geojson_file: UploadFile = File(..., description="Archivo GeoJSON con unidades de proyecto"),
+    batch_size: int = Query(500, ge=1, le=500, description="Tamaño de lote para operaciones batch"),
+    override_existing: bool = Query(False, description="[DEPRECADO] Parámetro legacy, ahora siempre hace UPSERT"),
+    override_upid: bool = Query(False, description="Generar nuevos UPIDs aunque existan"),
+    dry_run: bool = Query(False, description="Simular carga sin escribir en Firebase")
+):
+    """
+    ## 🟢 POST | 📤 UPSERT | Importar/Actualizar Unidades de Proyecto desde GeoJSON a Firestore
+    
+    **Propósito**: Cargar o actualizar masivamente datos de unidades de proyecto desde un archivo GeoJSON 
+    a la colección 'unidades_proyecto' en Firebase Firestore usando estrategia **UPSERT**.
+    
+    ### ✅ Características principales:
+    - **🔄 UPSERT automático**: Si el documento existe, actualiza solo los campos modificados. Si no existe, lo crea.
+    - **Importación masiva**: Procesa múltiples features en un solo archivo
+    - **Validación automática**: Verifica estructura GeoJSON y campos requeridos
+    - **Procesamiento por lotes**: Optimizado para grandes volúmenes (hasta 500 por batch)
+    - **Generación de UPIDs consecutivos**: Mantiene el consecutivo UNP-{número}
+    - **Campo automático**: Agrega `tipo_equipamiento: "Vías"` a todos los elementos
+    - **Modo dry-run**: Simula la carga para validar datos sin escribir en BD
+    
+    ### 🔄 Comportamiento UPSERT:
+    - **Si el documento existe**: Actualiza solo los campos que cambiaron (merge)
+    - **Si el documento NO existe**: Crea un nuevo documento completo
+    - **Beneficios**: 
+      - No duplica datos
+      - Preserva campos que no están en el GeoJSON
+      - Actualiza solo lo necesario
+      - Más eficiente que sobrescribir completo
+    
+    ### 📋 Estructura esperada del GeoJSON:
+    ```json
+    {
+      "type": "FeatureCollection",
+      "features": [
+        {
+          "type": "Feature",
+          "geometry": {
+            "type": "LineString|Point|Polygon",
+            "coordinates": [[lng, lat], ...]
+          },
+          "properties": {
+            "nombre_up": "Nombre del proyecto",
+            "estado": "Finalizado|En Ejecución|etc.",
+            "clase_obra": "Obra Vial|etc.",
+            "comuna_corregimiento": "COMUNA XX",
+            "barrio_vereda": "Nombre del barrio",
+            "presupuesto_base": "123456.78",
+            "avance_obra": "100",
+            "ano": "2024",
+            "nombre_centro_gestor": "Secretaría de...",
+            "bpin": "2023760010180",
+            ...otros campos opcionales
+          }
+        }
+      ]
+    }
+    ```
+    
+    ### 🔧 Parámetros de configuración:
+    - **batch_size** (1-500): Número de documentos por lote (default: 500)
+    - **override_existing**: [DEPRECADO] Ya no se usa, siempre hace UPSERT
+    - **override_upid**: 
+      - `false` (default): Usa UPIDs del GeoJSON si existen, genera consecutivos si no
+      - `true`: Genera nuevos UPIDs consecutivos para todos
+    - **dry_run**: 
+      - `false` (default): Ejecuta la carga/actualización real
+      - `true`: Solo simula y muestra estadísticas
+    
+    ### 📊 Procesamiento automático:
+    - **UPID**: Genera `UNP-{número}` consecutivo si no existe
+    - **tipo_equipamiento**: Agrega automáticamente valor "Vías"
+    - **Geometría**: Detecta tipo (Point, LineString, Polygon, Multi*) y serializa como JSON string
+    - **Validación de coordenadas**: Identifica coordenadas válidas vs placeholders [0,0]
+    - **Conversión de tipos**: 
+      - `presupuesto_base` → float
+      - `avance_obra` → float (porcentaje)
+      - `cantidad` → int
+      - `bpin` → string limpia (sin prefijos '-')
+    - **Limpieza de datos**: Elimina valores null, NaN, vacíos
+    - **Timestamps**: Agrega `updated_at` y `loaded_at` automáticamente
+    
+    ### 📈 Respuesta incluye:
+    - **Estadísticas detalladas**:
+      - Total de features procesados
+      - Documentos **creados** (nuevos)
+      - Documentos **actualizados** (existentes modificados)
+      - Documentos omitidos (solo en dry-run)
+      - Errores encontrados
+    - **Detalles de errores**: Lista de features que fallaron con razón
+    - **Tasa de éxito**: Porcentaje de procesamiento exitoso
+    
+    ### 🎯 Casos de uso:
+    - **Migración inicial**: Cargar datos históricos desde sistemas SIG
+    - **Actualización masiva**: Importar nuevos proyectos desde herramientas externas
+    - **Sincronización**: Mantener datos actualizados desde fuentes GeoJSON
+    - **Backup/Restore**: Restaurar datos desde respaldos
+    - **Integración**: Importar desde QGIS, ArcGIS, u otras plataformas SIG
+    
+    ### ⚠️ Consideraciones:
+    - El archivo debe ser GeoJSON válido (RFC 7946)
+    - Máximo 500 documentos por batch (limitación de Firestore)
+    - Los UPIDs deben ser únicos en toda la colección
+    - Para archivos muy grandes (>1000 features), considerar múltiples cargas
+    - En modo dry-run, no se valida duplicidad de UPIDs
+    
+    ### 📝 Ejemplo de respuesta exitosa:
+    ```json
+    {
+      "success": true,
+      "message": "Carga completada: 646/646 features procesados",
+      "stats": {
+        "total_features": 646,
+        "processed": 646,
+        "created": 500,
+        "updated": 0,
+        "skipped": 146,
+        "errors": 0,
+        "error_details": []
+      },
+      "dry_run": false
+    }
+    ```
+    """
+    
+    # Verificar disponibilidad de Firebase
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(
+            status_code=503,
+            detail="Firebase no está disponible en este momento"
+        )
+    
+    # Validar tipo de archivo
+    if not geojson_file.filename.lower().endswith('.geojson') and not geojson_file.filename.lower().endswith('.json'):
+        raise HTTPException(
+            status_code=400,
+            detail="Solo se permiten archivos .geojson o .json"
+        )
+    
+    try:
+        # Leer contenido del archivo
+        print(f"📁 Leyendo archivo: {geojson_file.filename}")
+        geojson_content = await geojson_file.read()
+        
+        # Decodificar como UTF-8
+        try:
+            geojson_text = geojson_content.decode('utf-8')
+        except UnicodeDecodeError:
+            raise HTTPException(
+                status_code=400,
+                detail="El archivo debe estar codificado en UTF-8"
+            )
+        
+        # Parsear JSON
+        try:
+            geojson_data = json.loads(geojson_text)
+        except json.JSONDecodeError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Error parseando JSON: {str(e)}"
+            )
+        
+        # Importar función de carga
+        try:
+            from api.scripts.unidades_proyecto_loader import load_geojson_to_firestore
+        except ImportError as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error importando módulo de carga: {str(e)}"
+            )
+        
+        # Ejecutar carga
+        print(f"🚀 Iniciando carga de GeoJSON...")
+        print(f"   - Archivo: {geojson_file.filename}")
+        print(f"   - Tamaño: {len(geojson_content)} bytes")
+        print(f"   - Batch size: {batch_size}")
+        print(f"   - Override existing: {override_existing}")
+        print(f"   - Override UPID: {override_upid}")
+        print(f"   - Dry run: {dry_run}")
+        
+        result = await load_geojson_to_firestore(
+            geojson_data=geojson_data,
+            batch_size=batch_size,
+            override_existing=override_existing,
+            override_upid=override_upid,
+            dry_run=dry_run
+        )
+        
+        if not result.get('success'):
+            raise HTTPException(
+                status_code=400,
+                detail=result.get('error', 'Error desconocido durante la carga')
+            )
+        
+        # Preparar respuesta
+        response_data = {
+            "success": True,
+            "message": result.get('message'),
+            "stats": result.get('stats', {}),
+            "dry_run": dry_run,
+            "file_info": {
+                "filename": geojson_file.filename,
+                "size_bytes": len(geojson_content),
+                "processed_at": datetime.now().isoformat()
+            }
+        }
+        
+        # Agregar advertencias si hay
+        if result.get('stats', {}).get('errors', 0) > 0:
+            response_data['warnings'] = {
+                "message": "Algunos features no pudieron ser procesados",
+                "error_count": result['stats']['errors'],
+                "error_details": result['stats'].get('error_details', [])[:10]  # Limitar a 10 primeros errores
+            }
+        
+        return create_utf8_response(response_data)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        print(f"❌ ERROR CRÍTICO: {str(e)}")
+        print(traceback.format_exc())
+        
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno procesando archivo GeoJSON: {str(e)}"
+        )
+
+
+@app.delete("/unidades-proyecto/delete-by-centro-gestor", tags=["Unidades de Proyecto"], summary="🔴 Eliminar por Centro Gestor")
+async def delete_unidades_by_centro_gestor(
+    nombre_centro_gestor: str = Query(..., description="Nombre del centro gestor cuyos proyectos serán eliminados"),
+    confirm: bool = Query(False, description="Debe ser true para confirmar la eliminación")
+):
+    """
+    ## 🔴 DELETE | Eliminar Unidades de Proyecto por Centro Gestor
+    
+    **Propósito**: Eliminar todos los documentos de la colección 'unidades_proyecto' que 
+    correspondan a un centro gestor específico.
+    
+    ### ⚠️ ADVERTENCIA
+    Esta operación es **IRREVERSIBLE**. Todos los documentos que coincidan con el filtro 
+    serán eliminados permanentemente de Firebase.
+    
+    ### 🔧 Parámetros:
+    - **nombre_centro_gestor** (requerido): Nombre exacto del centro gestor
+    - **confirm** (requerido): Debe ser `true` para ejecutar la eliminación
+    
+    ### 📊 Proceso:
+    1. Busca todos los documentos con el `nombre_centro_gestor` especificado
+    2. Cuenta cuántos documentos serán eliminados
+    3. Si `confirm=true`, elimina los documentos en batches de 500
+    4. Retorna estadísticas de la operación
+    
+    ### 📝 Ejemplo de uso:
+    ```
+    DELETE /unidades-proyecto/delete-by-centro-gestor?nombre_centro_gestor=Secretaría de Infraestructura&confirm=true
+    ```
+    
+    ### 📈 Respuesta exitosa:
+    ```json
+    {
+      "success": true,
+      "message": "15 documentos eliminados correctamente",
+      "stats": {
+        "deleted_count": 15,
+        "nombre_centro_gestor": "Secretaría de Infraestructura"
+      }
+    }
+    ```
+    
+    ### ⚠️ Seguridad:
+    - Requiere `confirm=true` para ejecutar
+    - Sin `confirm=true`, solo muestra cuántos documentos serían eliminados
+    """
+    
+    # Verificar disponibilidad de Firebase
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(
+            status_code=503,
+            detail="Firebase no está disponible en este momento"
+        )
+    
+    try:
+        from database.firebase_config import get_firestore_client
+        
+        db = get_firestore_client()
+        if db is None:
+            raise HTTPException(
+                status_code=503,
+                detail="No se pudo conectar a Firestore"
+            )
+        
+        collection_ref = db.collection('unidades_proyecto')
+        
+        # Buscar documentos que coincidan con el filtro
+        print(f"🔍 Buscando documentos con nombre_centro_gestor='{nombre_centro_gestor}'...")
+        query = collection_ref.where('nombre_centro_gestor', '==', nombre_centro_gestor)
+        docs = list(query.stream())
+        
+        total_docs = len(docs)
+        
+        if total_docs == 0:
+            return create_utf8_response({
+                "success": False,
+                "message": f"No se encontraron documentos con nombre_centro_gestor='{nombre_centro_gestor}'",
+                "stats": {
+                    "deleted_count": 0,
+                    "nombre_centro_gestor": nombre_centro_gestor
+                }
+            })
+        
+        # Si no hay confirmación, solo reportar cuántos se eliminarían
+        if not confirm:
+            return create_utf8_response({
+                "success": False,
+                "message": f"Se encontraron {total_docs} documentos. Use confirm=true para eliminarlos.",
+                "warning": "La eliminación no se ejecutó porque confirm=false",
+                "stats": {
+                    "found_count": total_docs,
+                    "nombre_centro_gestor": nombre_centro_gestor
+                }
+            })
+        
+        # Eliminar en batches de 500 (límite de Firestore)
+        print(f"🗑️  Eliminando {total_docs} documentos...")
+        batch_size = 500
+        deleted_count = 0
+        
+        for i in range(0, total_docs, batch_size):
+            batch = db.batch()
+            batch_docs = docs[i:i + batch_size]
+            
+            for doc in batch_docs:
+                batch.delete(doc.reference)
+            
+            batch.commit()
+            deleted_count += len(batch_docs)
+            print(f"   Eliminados {deleted_count}/{total_docs} documentos...")
+        
+        print(f"✅ Eliminación completada: {deleted_count} documentos")
+        
+        return create_utf8_response({
+            "success": True,
+            "message": f"{deleted_count} documentos eliminados correctamente",
+            "stats": {
+                "deleted_count": deleted_count,
+                "nombre_centro_gestor": nombre_centro_gestor
+            }
+        })
+        
+    except Exception as e:
+        import traceback
+        print(f"❌ ERROR: {str(e)}")
+        print(traceback.format_exc())
+        
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error eliminando documentos: {str(e)}"
+        )
+
+
+@app.delete("/unidades-proyecto/delete-by-tipo-equipamiento", tags=["Unidades de Proyecto"], summary="🔴 Eliminar por Tipo de Equipamiento")
+async def delete_unidades_by_tipo_equipamiento(
+    tipo_equipamiento: str = Query(..., description="Tipo de equipamiento cuyos proyectos serán eliminados"),
+    confirm: bool = Query(False, description="Debe ser true para confirmar la eliminación")
+):
+    """
+    ## 🔴 DELETE | Eliminar Unidades de Proyecto por Tipo de Equipamiento
+    
+    **Propósito**: Eliminar todos los documentos de la colección 'unidades_proyecto' que 
+    correspondan a un tipo de equipamiento específico.
+    
+    ### ⚠️ ADVERTENCIA
+    Esta operación es **IRREVERSIBLE**. Todos los documentos que coincidan con el filtro 
+    serán eliminados permanentemente de Firebase.
+    
+    ### 🔧 Parámetros:
+    - **tipo_equipamiento** (requerido): Tipo de equipamiento exacto (ej: "Vías", "Parques y zonas verdes")
+    - **confirm** (requerido): Debe ser `true` para ejecutar la eliminación
+    
+    ### 📊 Proceso:
+    1. Busca todos los documentos con el `tipo_equipamiento` especificado
+    2. Cuenta cuántos documentos serán eliminados
+    3. Si `confirm=true`, elimina los documentos en batches de 500
+    4. Retorna estadísticas de la operación
+    
+    ### 📝 Ejemplo de uso:
+    ```
+    DELETE /unidades-proyecto/delete-by-tipo-equipamiento?tipo_equipamiento=Vías&confirm=true
+    ```
+    
+    ### 📈 Respuesta exitosa:
+    ```json
+    {
+      "success": true,
+      "message": "369 documentos eliminados correctamente",
+      "stats": {
+        "deleted_count": 369,
+        "tipo_equipamiento": "Vías"
+      }
+    }
+    ```
+    
+    ### ⚠️ Seguridad:
+    - Requiere `confirm=true` para ejecutar
+    - Sin `confirm=true`, solo muestra cuántos documentos serían eliminados
+    """
+    
+    # Verificar disponibilidad de Firebase
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(
+            status_code=503,
+            detail="Firebase no está disponible en este momento"
+        )
+    
+    try:
+        from database.firebase_config import get_firestore_client
+        
+        db = get_firestore_client()
+        if db is None:
+            raise HTTPException(
+                status_code=503,
+                detail="No se pudo conectar a Firestore"
+            )
+        
+        collection_ref = db.collection('unidades_proyecto')
+        
+        # Buscar documentos que coincidan con el filtro
+        print(f"🔍 Buscando documentos con tipo_equipamiento='{tipo_equipamiento}'...")
+        query = collection_ref.where('tipo_equipamiento', '==', tipo_equipamiento)
+        docs = list(query.stream())
+        
+        total_docs = len(docs)
+        
+        if total_docs == 0:
+            return create_utf8_response({
+                "success": False,
+                "message": f"No se encontraron documentos con tipo_equipamiento='{tipo_equipamiento}'",
+                "stats": {
+                    "deleted_count": 0,
+                    "tipo_equipamiento": tipo_equipamiento
+                }
+            })
+        
+        # Si no hay confirmación, solo reportar cuántos se eliminarían
+        if not confirm:
+            return create_utf8_response({
+                "success": False,
+                "message": f"Se encontraron {total_docs} documentos. Use confirm=true para eliminarlos.",
+                "warning": "La eliminación no se ejecutó porque confirm=false",
+                "stats": {
+                    "found_count": total_docs,
+                    "tipo_equipamiento": tipo_equipamiento
+                }
+            })
+        
+        # Eliminar en batches de 500 (límite de Firestore)
+        print(f"🗑️  Eliminando {total_docs} documentos...")
+        batch_size = 500
+        deleted_count = 0
+        
+        for i in range(0, total_docs, batch_size):
+            batch = db.batch()
+            batch_docs = docs[i:i + batch_size]
+            
+            for doc in batch_docs:
+                batch.delete(doc.reference)
+            
+            batch.commit()
+            deleted_count += len(batch_docs)
+            print(f"   Eliminados {deleted_count}/{total_docs} documentos...")
+        
+        print(f"✅ Eliminación completada: {deleted_count} documentos")
+        
+        return create_utf8_response({
+            "success": True,
+            "message": f"{deleted_count} documentos eliminados correctamente",
+            "stats": {
+                "deleted_count": deleted_count,
+                "tipo_equipamiento": tipo_equipamiento
+            }
+        })
+        
+    except Exception as e:
+        import traceback
+        print(f"❌ ERROR: {str(e)}")
+        print(traceback.format_exc())
+        
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error eliminando documentos: {str(e)}"
         )
 
 
