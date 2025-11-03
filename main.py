@@ -313,30 +313,23 @@ def get_cors_origins():
         "http://127.0.0.1:8080",
     ]
     
-    # Dominios de servicios de hosting conocidos
-    hosting_origins = [
-        # Netlify específicos
-        "https://captura-emprestito.netlify.app",  # Dominio específico reportado
-        "https://*.netlify.app",
-        "https://*.netlify.com", 
-        # Vercel patterns
-        "https://*.vercel.app",
-        "https://*.vercel.com",
-        # GitHub Pages
-        "https://*.github.io",
-        # Firebase Hosting
-        "https://*.firebaseapp.com",
-        "https://*.web.app",
+    # Dominios específicos de producción/hosting
+    production_origins = [
+        # Netlify apps
+        "https://captura-emprestito.netlify.app",
+        # Vercel apps
+        "https://gestor-proyectos-vercel.vercel.app",
+        "https://gestor-proyectos-vercel-5ogb5wph8-juan-pablos-projects-56fe2e60.vercel.app",
+        # Agrega aquí otros dominios específicos de producción según sea necesario
     ]
     
-    # Siempre incluir dominios de hosting (tanto en desarrollo como producción)
-    origins.extend(hosting_origins)
+    # Siempre incluir dominios de producción
+    origins.extend(production_origins)
     
-    # En desarrollo, también permitir localhost
-    if os.getenv("ENVIRONMENT") != "production":
-        origins.extend(local_origins)
+    # Siempre incluir dominios locales (para desarrollo)
+    origins.extend(local_origins)
     
-    # Orígenes de producción desde variables de entorno
+    # Orígenes desde variables de entorno
     frontend_url = os.getenv("FRONTEND_URL")
     if frontend_url:
         origins.append(frontend_url)
@@ -346,14 +339,10 @@ def get_cors_origins():
     if additional_origins:
         origins.extend([origin.strip() for origin in additional_origins.split(",")])
     
-    # Si no hay orígenes configurados, usar configuración permisiva para desarrollo
-    if not origins:
-        print("⚠️ Warning: No CORS origins configured, using default safe origins")
-        origins = local_origins + hosting_origins
+    # Eliminar duplicados
+    origins = list(set(origins))
     
     return origins
-
-origins = get_cors_origins()
 
 # 🔤 MIDDLEWARE UTF-8 PARA CARACTERES ESPECIALES
 @app.middleware("http")
@@ -367,34 +356,18 @@ async def utf8_middleware(request: Request, call_next):
     
     return response
 
-# 🌐 CORS CONFIGURADO PARA UTF-8 + HOSTING SERVICES
-origins = get_cors_origins()
+# 🌐 CONFIGURACIÓN DE CORS
+cors_origins = get_cors_origins()
+print(f"🌐 CORS configured for {len(cors_origins)} specific origins")
 
-# Siempre incluir dominios específicos importantes
-important_origins = [
-    "https://captura-emprestito.netlify.app",
-    "http://127.0.0.1:5500",
-    "http://localhost:3000",
-    "http://localhost:5500",
-    "https://gestor-proyectos-vercel.vercel.app",  # Frontend específico de Vercel
-    "https://gestor-proyectos-vercel-5ogb5wph8-juan-pablos-projects-56fe2e60.vercel.app"  # Branch dev de Vercel
-]
-
-# Combinar todos los orígenes
-all_origins = list(set(origins + important_origins))
-
-print(f"🌐 CORS configured for {len(all_origins)} origins including Netlify apps")
-
-# Usar configuración permisiva que funcione en producción
-cors_allow_origins = all_origins
-cors_allow_credentials = True
-
+# Configuración restrictiva con orígenes específicos
+# Permite credentials (cookies, tokens) de manera segura
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=cors_allow_origins,
-    allow_credentials=cors_allow_credentials,          
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"],  
-    allow_headers=[               
+    allow_origins=cors_origins,  # Lista específica de orígenes permitidos
+    allow_credentials=True,  # Permitir cookies y headers de autenticación
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"],
+    allow_headers=[
         "Authorization",
         "Content-Type", 
         "Accept",
@@ -404,8 +377,11 @@ app.add_middleware(
         "Origin", 
         "X-Requested-With",
         "Cache-Control",
-        "Pragma"
+        "Pragma",
+        "X-CSRF-Token",
     ],
+    expose_headers=["Content-Type", "Authorization"],
+    max_age=600,  # Cache de preflight requests por 10 minutos
 )
 
 # � FUNCIONES UTILITARIAS PARA UTF-8
@@ -1402,80 +1378,45 @@ async def export_geometry_for_nextjs(
     limit: Optional[int] = Query(None, ge=1, le=10000, description="Límite de registros"),
     
     # Parámetros de mantenimiento y debug
-    force_refresh: Optional[str] = Query(None, description="Forzar limpieza de cache (debug)")
+    force_refresh: Optional[str] = Query(None, description="Forzar limpieza de cache (debug)"),
+    debug: Optional[bool] = Query(False, description="Modo debug con información adicional")
 ):
     """
     ## 🔵 GET | 🗺️ Datos Geoespaciales | Datos Geoespaciales Completos
     
-    **Propósito**: Retorna TODOS los registros de proyectos (646) en formato GeoJSON, incluyendo aquellos sin coordenadas válidas.
+    **Propósito**: Retorna TODOS los registros de proyectos en formato GeoJSON con soporte completo para:
+    - LineString, MultiLineString, Polygon, MultiPolygon
+    - GeometryCollection (geometrías unificadas)
+    - Todas las propiedades del proyecto (nombre_up, centro_gestor, etc.)
     
-    ### Solución Implementada
+    ### Geometrías Soportadas
     
-    **TODOS los registros incluidos**: Proyectos con y sin geometría válida
-    **Marcador de geometría**: Campo `has_valid_geometry` indica si las coordenadas son reales
-    **Coordenadas placeholder**: Registros sin geometría usan [0,0] como placeholder
-    **Bounding box**: Disponible bajo demanda con `include_bbox=true`
+    **Simples**: Point, LineString, Polygon
+    **Multi**: MultiPoint, MultiLineString, MultiPolygon  
+    **Complejas**: GeometryCollection (resultado de unificación de features)
     
-    ### Estrategia de Filtrado
-    
-    **Sin filtros**: Dataset geográfico completo
-    **Con filtros**: Optimización server-side en Firestore + refinamiento client-side
-    
-    **Server-side**: upid, estado, tipo_intervencion, nombre_centro_gestor  
-    **Client-side**: comuna_corregimiento, barrio_vereda, presupuesto_base, avance_obra, bbox, include_bbox
-    
-    ### Parámetros
+    ### Parámetros de Filtrado
     
     | Filtro | Descripción |
     |--------|-------------|
+    | upid | ID específico de unidad (ej: UNP-1000) |
     | nombre_centro_gestor | Centro gestor responsable |
-    | tipo_intervencion | Tipo de intervención |
-    | estado | Estado del proyecto |
-    | upid | ID específico de unidad |
-    | clase_obra | Clase de obra del proyecto |
-    | tipo_equipamiento | Tipo de equipamiento del proyecto |
-    | comuna_corregimiento | Comuna o corregimiento específico |
-    | barrio_vereda | Barrio o vereda específico |
-    | presupuesto_base | Presupuesto mínimo del proyecto |
-    | avance_obra | Porcentaje mínimo de avance de obra (0-100) |
-    | include_bbox | Incluir bounding box calculado |
+    | tipo_equipamiento | Tipo de equipamiento (ej: Vías) |
+    | comuna_corregimiento | Comuna o corregimiento |
     | limit | Límite de resultados (1-10000) |
-    
-    ### Aplicaciones
-    
-    - Mapas interactivos mostrando el conteo total correcto (646 proyectos)
-    - Capas geográficas con opción de filtrar por `has_valid_geometry`
-    - Integración con bibliotecas cartográficas que manejan coordenadas [0,0]
-    - Visualización completa del portafolio de proyectos
+    | debug | Incluir información de depuración |
     """
-    # Verificación robusta de Firebase con reintentos
+    # Verificación robusta de Firebase
     if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
-        # Intentar reconfigurar Firebase como último recurso
-        try:
-            print("⚠️ Attempting Firebase reconfiguration...")
-            firebase_initialized, status = configure_firebase()
-            if firebase_initialized:
-                print("✅ Firebase reconfiguration successful")
-            else:
-                print(f"❌ Firebase reconfiguration failed: {status.get('error', 'Unknown error')}")
-                return {
-                    "success": False,
-                    "error": "Firebase not available - check Railway environment variables",
-                    "data": [],
-                    "count": 0,
-                    "type": "geometry",
-                    "help": "Verify FIREBASE_SERVICE_ACCOUNT_KEY or GOOGLE_APPLICATION_CREDENTIALS_JSON",
-                    "railway_fix": "Run generate_railway_fallback.py to create Service Account fallback"
-                }
-        except Exception as e:
-            return {
+        return create_utf8_response({
+            "type": "FeatureCollection",
+            "features": [],
+            "properties": {
                 "success": False,
-                "error": f"Firebase configuration failed: {str(e)}",
-                "data": [],
-                "count": 0,
-                "type": "geometry",
-                "help": "Check Railway environment variables or use Service Account fallback"
+                "error": "Firebase not available",
+                "count": 0
             }
+        }, status_code=503)
     
     try:
         # Construir filtros optimizados para geometrías
@@ -1510,16 +1451,18 @@ async def export_geometry_for_nextjs(
         
         result = await get_unidades_proyecto_geometry(filters)
         
+        # Agregar información de debug si se solicita
+        if debug and result.get("type") == "FeatureCollection":
+            result["properties"]["debug"] = {
+                "filters_applied": filters,
+                "server_version": "2.0-geometry-collection-support",
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        
         # Manejar el formato correcto de respuesta
         if result.get("type") == "FeatureCollection":
-            # Respuesta GeoJSON exitosa
-            if result.get("properties", {}).get("success", True):
-                return create_utf8_response(result)
-            else:
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Error obteniendo geometrías: {result.get('properties', {}).get('error', 'Error desconocido')}"
-                )
+            # Respuesta GeoJSON exitosa - retornar directamente
+            return create_utf8_response(result)
         elif result.get("success") is False:
             # Respuesta de error
             raise HTTPException(
@@ -1532,8 +1475,6 @@ async def export_geometry_for_nextjs(
                 status_code=500,
                 detail="Formato de respuesta inesperado del servicio de geometrías"
             )
-        
-        return create_utf8_response(response_data)
         
     except HTTPException:
         raise

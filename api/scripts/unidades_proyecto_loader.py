@@ -14,6 +14,90 @@ from api.models.unidades_proyecto_models import (
 )
 
 
+def process_geometry(geometry: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Procesar y validar geometría GeoJSON para Firebase
+    
+    Maneja todos los tipos: Point, LineString, Polygon, Multi*, GeometryCollection
+    Serializa como JSON string compatible con Firebase
+    Valida coordenadas reales vs placeholders [0,0]
+    
+    Args:
+        geometry: Objeto geometría GeoJSON o None
+        
+    Returns:
+        Dict con:
+            - geometry_json: String JSON serializado (None si no hay geometría)
+            - type: Tipo de geometría (Point, LineString, etc.)
+            - has_geometry: bool - True si hay geometría
+            - is_valid: bool - True si tiene coordenadas válidas (no [0,0])
+    """
+    if not geometry or not isinstance(geometry, dict):
+        return {
+            'geometry_json': None,
+            'type': None,
+            'has_geometry': False,
+            'is_valid': False
+        }
+    
+    geometry_type = geometry.get('type')
+    
+    # Validar si tiene coordenadas válidas (no placeholder [0,0])
+    is_valid = validate_geometry_coordinates(geometry)
+    
+    # Serializar como JSON string para Firebase
+    geometry_json = json.dumps(geometry, ensure_ascii=False)
+    
+    return {
+        'geometry_json': geometry_json,
+        'type': geometry_type,
+        'has_geometry': True,
+        'is_valid': is_valid
+    }
+
+
+def validate_geometry_coordinates(geometry: Dict[str, Any]) -> bool:
+    """
+    Validar si la geometría tiene coordenadas reales (no placeholders [0,0])
+    
+    Args:
+        geometry: Objeto geometría GeoJSON
+        
+    Returns:
+        bool: True si tiene coordenadas válidas
+    """
+    if not geometry:
+        return False
+    
+    geometry_type = geometry.get('type')
+    
+    # GeometryCollection: validar que al menos una geometría sea válida
+    if geometry_type == 'GeometryCollection':
+        geometries = geometry.get('geometries', [])
+        return any(validate_geometry_coordinates(geom) for geom in geometries)
+    
+    # Obtener coordenadas según el tipo
+    coords = geometry.get('coordinates', [])
+    if not coords:
+        return False
+    
+    # Point: verificar que no sea [0, 0]
+    if geometry_type == 'Point':
+        if len(coords) >= 2:
+            return not (coords[0] == 0 and coords[1] == 0)
+        return False
+    
+    # MultiPoint: verificar que tenga al menos un punto válido
+    if geometry_type == 'MultiPoint':
+        return any(not (pt[0] == 0 and pt[1] == 0) for pt in coords if len(pt) >= 2)
+    
+    # LineString, Polygon, y Multi*: si tienen coordenadas, son válidos
+    if geometry_type in ['LineString', 'Polygon', 'MultiLineString', 'MultiPolygon']:
+        return True
+    
+    return False
+
+
 def generate_upid() -> str:
     """
     Generar un UPID único (DEPRECADO)
@@ -167,37 +251,16 @@ def process_geojson_feature(
         # Limpiar UPID (asegurar que sea string válido)
         upid = str(upid).strip()
         
-        # Detectar tipo de geometría y validez
-        geometry_type = None
-        has_geometry = False
-        has_valid_geometry = False
-        
-        if geometry:
-            geometry_type = geometry.get('type')
-            has_geometry = True
-            
-            # Validar si tiene coordenadas reales (no [0,0])
-            coords = geometry.get('coordinates', [])
-            if coords:
-                if geometry_type == 'Point':
-                    has_valid_geometry = not (
-                        len(coords) >= 2 and 
-                        coords[0] == 0 and 
-                        coords[1] == 0
-                    )
-                elif geometry_type in ['LineString', 'MultiLineString', 'Polygon']:
-                    has_valid_geometry = True
+        # Procesar y validar geometría
+        geometry_info = process_geometry(geometry)
         
         # Crear documento para Firestore
-        # Serializar geometría como JSON string porque Firestore no acepta objetos anidados complejos
-        import json
-        
         firestore_doc = {
-            'upid': upid,  # Agregar UPID tanto como ID del documento como campo
-            'geometry': json.dumps(geometry) if geometry else None,
-            'geometry_type': geometry_type,
-            'has_geometry': has_geometry,
-            'has_valid_geometry': has_valid_geometry,
+            'upid': upid,
+            'geometry': geometry_info['geometry_json'],  # JSON string
+            'geometry_type': geometry_info['type'],
+            'has_geometry': geometry_info['has_geometry'],
+            'has_valid_geometry': geometry_info['is_valid'],
             'updated_at': datetime.utcnow().isoformat(),
             'loaded_at': datetime.utcnow().isoformat(),
         }
@@ -295,6 +358,99 @@ async def load_geojson_to_firestore(
         print(f"✅ {validation.get('message')}")
         
         features = geojson_data.get('features', [])
+        total_features = len(features)
+        
+        # 🔀 UNIFICACIÓN: Agrupar features por nombre_up idéntico
+        print("🔀 Unificando features con mismo nombre_up...")
+        unified_features = {}
+        duplicates_merged = 0
+        
+        for feature in features:
+            # Obtener nombre_up de forma segura
+            nombre_up = feature.get('properties', {}).get('nombre_up')
+            
+            # Manejar None, vacío o whitespace
+            if nombre_up and isinstance(nombre_up, str):
+                nombre_up = nombre_up.strip()
+            
+            if not nombre_up:
+                # Si no tiene nombre_up válido, usar un identificador único
+                nombre_up = f"SIN_NOMBRE_{uuid.uuid4().hex[:8]}"
+            
+            if nombre_up in unified_features:
+                # Ya existe una feature con este nombre_up
+                duplicates_merged += 1
+                existing_feature = unified_features[nombre_up]
+                
+                # Combinar geometrías si ambas existen
+                existing_geom = existing_feature.get('geometry')
+                new_geom = feature.get('geometry')
+                
+                if existing_geom and new_geom:
+                    # Si ambas geometrías existen, convertir a MultiGeometry o combinar
+                    existing_type = existing_geom.get('type')
+                    new_type = new_geom.get('type')
+                    
+                    if existing_type == 'GeometryCollection':
+                        # Ya es una colección, añadir la nueva geometría
+                        existing_geom['geometries'].append(new_geom)
+                    elif existing_type == new_type and existing_type in ['Point', 'LineString', 'Polygon']:
+                        # Convertir a Multi-tipo
+                        multi_type = f"Multi{existing_type}"
+                        if existing_type == 'Point':
+                            existing_feature['geometry'] = {
+                                'type': 'MultiPoint',
+                                'coordinates': [existing_geom['coordinates'], new_geom['coordinates']]
+                            }
+                        elif existing_type == 'LineString':
+                            existing_feature['geometry'] = {
+                                'type': 'MultiLineString',
+                                'coordinates': [existing_geom['coordinates'], new_geom['coordinates']]
+                            }
+                        elif existing_type == 'Polygon':
+                            existing_feature['geometry'] = {
+                                'type': 'MultiPolygon',
+                                'coordinates': [existing_geom['coordinates'], new_geom['coordinates']]
+                            }
+                    else:
+                        # Crear GeometryCollection
+                        existing_feature['geometry'] = {
+                            'type': 'GeometryCollection',
+                            'geometries': [existing_geom, new_geom]
+                        }
+                
+                # Actualizar propiedades (mantener las existentes, añadir nuevas)
+                new_props = feature.get('properties', {})
+                existing_props = existing_feature['properties']
+                
+                for key, value in new_props.items():
+                    if key not in existing_props or existing_props[key] is None:
+                        existing_props[key] = value
+                    elif key in ['presupuesto_base', 'valor_total']:
+                        # Sumar presupuestos
+                        try:
+                            existing_val = float(existing_props.get(key, 0) or 0)
+                            new_val = float(value or 0)
+                            existing_props[key] = existing_val + new_val
+                        except (ValueError, TypeError):
+                            pass
+                
+            else:
+                # Primera vez que vemos este nombre_up
+                unified_features[nombre_up] = feature
+        
+        # Convertir de vuelta a lista
+        features = list(unified_features.values())
+        
+        if duplicates_merged > 0:
+            print(f"✅ Unificación completada:")
+            print(f"   - Features originales: {total_features}")
+            print(f"   - Features duplicados unificados: {duplicates_merged}")
+            print(f"   - Features resultantes: {len(features)}")
+        else:
+            print(f"ℹ️  No se encontraron duplicados por nombre_up")
+        
+        # Actualizar total_features después de la unificación
         total_features = len(features)
         
         if dry_run:

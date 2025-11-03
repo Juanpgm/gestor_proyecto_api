@@ -424,7 +424,12 @@ async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = Non
         
         # Campos esenciales
         geo_fields = ['upid', 'coordenadas', 'geometry', 'coordinates', 'lat', 'lng']
-        viz_fields = ['comuna_corregimiento', 'barrio_vereda', 'estado', 'tipo_intervencion', 'clase_obra', 'nombre_centro_gestor', 'presupuesto_base', 'avance_obra', 'tipo_equipamiento']
+        viz_fields = [
+            'nombre_up', 'comuna_corregimiento', 'barrio_vereda', 'estado', 
+            'tipo_intervencion', 'clase_obra', 'nombre_centro_gestor', 'centro_gestor',
+            'presupuesto_base', 'presupuesto_total_up', 'avance_obra', 'tipo_equipamiento',
+            'bpin', 'direccion', 'ano', 'fuente_financiacion'
+        ]
         
         for doc in docs:
             total_docs_processed += 1
@@ -487,10 +492,34 @@ async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = Non
                                 import json
                                 geo_value = json.loads(geo_value)
                             
-                            geometry_data_obj = geo_value
-                            geometry_found = True
-                            break
-                        except:
+                            # Validar que sea una geometría GeoJSON válida
+                            if isinstance(geo_value, dict) and 'type' in geo_value:
+                                geom_type = geo_value.get('type')
+                                
+                                # Validar tipos de geometría soportados
+                                valid_types = [
+                                    'Point', 'MultiPoint', 
+                                    'LineString', 'MultiLineString',
+                                    'Polygon', 'MultiPolygon',
+                                    'GeometryCollection'
+                                ]
+                                
+                                if geom_type in valid_types:
+                                    # Para GeometryCollection, validar que tenga geometries
+                                    if geom_type == 'GeometryCollection':
+                                        if 'geometries' in geo_value and len(geo_value['geometries']) > 0:
+                                            geometry_data_obj = geo_value
+                                            geometry_found = True
+                                            break
+                                    # Para otros tipos, validar que tenga coordinates
+                                    elif 'coordinates' in geo_value:
+                                        geometry_data_obj = geo_value
+                                        geometry_found = True
+                                        break
+                        except Exception as e:
+                            # Debug: mostrar error solo para primeros documentos
+                            if total_docs_processed <= 3:
+                                print(f"   ⚠️ Error parseando geometría {geo_name}: {e}")
                             continue
                 
                 # 4. Si no hay geometría compleja, crear desde lat/lng
@@ -516,6 +545,22 @@ async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = Non
                         "coordinates": [0, 0]  # Coordenadas nulas, el frontend puede decidir cómo manejarlas
                     }
                 
+                # Función auxiliar para extraer valor de múltiples ubicaciones
+                def get_field_value(field_name):
+                    """Buscar campo en: doc_data directo > properties > record"""
+                    # 1. Nivel superior del documento (nuevo formato)
+                    if field_name in doc_data and doc_data[field_name] is not None:
+                        return doc_data[field_name]
+                    # 2. Dentro de properties (formato antiguo)
+                    if isinstance(doc_data.get('properties'), dict):
+                        props = doc_data['properties']
+                        if field_name in props and props[field_name] is not None:
+                            return props[field_name]
+                    # 3. Dentro de record (fallback)
+                    if field_name in record and record[field_name] is not None:
+                        return record[field_name]
+                    return None
+                
                 # Crear registro completo con estructura GeoJSON (TODOS los registros incluidos)
                 feature = {
                     "type": "Feature",
@@ -523,33 +568,50 @@ async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = Non
                     "properties": {
                         "upid": upid_value,
                         "has_valid_geometry": geometry_found,  # Marcar si tiene geometría real
-                        # Campos originales  
-                        "comuna_corregimiento": record.get('comuna_corregimiento') or doc_data.get('properties', {}).get('comuna_corregimiento'),
-                        "barrio_vereda": record.get('barrio_vereda') or doc_data.get('properties', {}).get('barrio_vereda'),
-                        "estado": record.get('estado') or doc_data.get('properties', {}).get('estado'),
-                        # NUEVOS CAMPOS SOLICITADOS CON CONVERSIÓN DE TIPOS
-                        "presupuesto_base": _convert_to_int(record.get('presupuesto_base') or doc_data.get('properties', {}).get('presupuesto_base')),
-                        "tipo_intervencion": record.get('tipo_intervencion') or doc_data.get('properties', {}).get('tipo_intervencion'),
-                        "clase_obra": record.get('clase_obra') or doc_data.get('properties', {}).get('clase_obra'),
-                        "avance_obra": _convert_to_float(record.get('avance_obra') or doc_data.get('properties', {}).get('avance_obra')),
-                        # BPIN convertido a entero positivo (sin prefijo '-')
-                        "bpin": _convert_bpin_to_positive_int(record.get('bpin') or doc_data.get('properties', {}).get('bpin')),
-                        # Campos adicionales útiles
-                        "nombre_centro_gestor": record.get('nombre_centro_gestor') or doc_data.get('properties', {}).get('nombre_centro_gestor'),
-                        "tipo_equipamiento": record.get('tipo_equipamiento') or doc_data.get('properties', {}).get('tipo_equipamiento'),
+                        # Extraer todos los campos usando la función auxiliar
+                        "nombre_up": get_field_value('nombre_up'),
+                        "comuna_corregimiento": get_field_value('comuna_corregimiento'),
+                        "barrio_vereda": get_field_value('barrio_vereda'),
+                        "estado": get_field_value('estado'),
+                        "direccion": get_field_value('direccion'),
+                        "ano": get_field_value('ano'),
+                        # Campos numéricos con conversión
+                        "presupuesto_base": _convert_to_int(get_field_value('presupuesto_base')),
+                        "presupuesto_total_up": _convert_to_int(get_field_value('presupuesto_total_up')),
+                        "avance_obra": _convert_to_float(get_field_value('avance_obra')),
+                        "bpin": _convert_bpin_to_positive_int(get_field_value('bpin')),
+                        # Campos de clasificación
+                        "tipo_intervencion": get_field_value('tipo_intervencion'),
+                        "clase_obra": get_field_value('clase_obra'),
+                        "nombre_centro_gestor": get_field_value('nombre_centro_gestor'),
+                        "centro_gestor": get_field_value('centro_gestor'),
+                        "tipo_equipamiento": get_field_value('tipo_equipamiento'),
+                        "fuente_financiacion": get_field_value('fuente_financiacion'),
                     }
                 }
                 geometry_data.append(feature)
         
         print(f"🗺️ DEBUG: Procesados {total_docs_processed} docs, incluidos {len(geometry_data)} registros totales (con y sin geometría)")
         
-        # Aplicar filtros
+        # Aplicar filtros client-side
         if filters:
+            # Filtro especial por upid (puede ser único o lista)
+            if 'upid' in filters and filters['upid']:
+                upid_filter = filters['upid']
+                if isinstance(upid_filter, list):
+                    geometry_data = [item for item in geometry_data 
+                                   if item.get('properties', {}).get('upid') in upid_filter]
+                else:
+                    geometry_data = [item for item in geometry_data 
+                                   if item.get('properties', {}).get('upid') == upid_filter]
+                print(f"🔍 DEBUG: Filtro por upid aplicado: {len(geometry_data)} registros")
+            
+            # Otros filtros de contenido
             content_filters = {k: v for k, v in filters.items() 
                              if k in ['comuna_corregimiento', 'barrio_vereda', 'estado', 'tipo_intervencion', 'clase_obra', 'nombre_centro_gestor', 'presupuesto_base', 'avance_obra', 'tipo_equipamiento']}
             if content_filters:
                 geometry_data = apply_client_side_filters(geometry_data, content_filters)
-                print(f"�️ DEBUG: Filtros aplicados: {len(geometry_data)} registros")
+                print(f"🔧 DEBUG: Filtros de contenido aplicados: {len(geometry_data)} registros")
             
             # Aplicar límite
             if 'limit' in filters and filters['limit']:
