@@ -92,6 +92,7 @@ def apply_client_side_filters(data: List[Dict[str, Any]], filters: Optional[Dict
     - upid: filtrar por ID específico o lista de IDs
     - estado: filtrar por estado del proyecto
     - tipo_intervencion: filtrar por tipo de intervención
+    - clase_obra: filtrar por clase de obra
     - departamento: filtrar por departamento
     - municipio: filtrar por municipio
     - comuna_corregimiento: filtrar por comuna o corregimiento específico
@@ -132,6 +133,20 @@ def apply_client_side_filters(data: List[Dict[str, Any]], filters: Optional[Dict
             filtered_data = [item for item in filtered_data
                            if item.get('tipo_intervencion') == tipo_value or
                               item.get('properties', {}).get('tipo_intervencion') == tipo_value]
+        
+        # Filtro por clase_obra
+        if 'clase_obra' in filters and filters['clase_obra']:
+            clase_value = filters['clase_obra']
+            filtered_data = [item for item in filtered_data
+                           if item.get('clase_obra') == clase_value or
+                              item.get('properties', {}).get('clase_obra') == clase_value]
+        
+        # Filtro por tipo_equipamiento
+        if 'tipo_equipamiento' in filters and filters['tipo_equipamiento']:
+            tipo_equip_value = filters['tipo_equipamiento']
+            filtered_data = [item for item in filtered_data
+                           if item.get('tipo_equipamiento') == tipo_equip_value or
+                              item.get('properties', {}).get('tipo_equipamiento') == tipo_equip_value]
         
         # Filtro por nombre_centro_gestor
         if 'nombre_centro_gestor' in filters and filters['nombre_centro_gestor']:
@@ -236,7 +251,7 @@ def apply_client_side_filters(data: List[Dict[str, Any]], filters: Optional[Dict
 def search_in_record(record: Dict[str, Any], search_term: str) -> bool:
     """Buscar término en campos principales del registro"""
     searchable_fields = [
-        'upid', 'nombre', 'descripcion', 'estado', 'tipo_intervencion',
+        'upid', 'nombre', 'descripcion', 'estado', 'tipo_intervencion', 'clase_obra',
         'departamento', 'municipio', 'comuna_corregimiento', 'barrio_vereda', 'nombre_proyecto'
     ]
     
@@ -373,6 +388,8 @@ async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = Non
     - upid: ID específico o lista de IDs
     - estado: estado del proyecto
     - tipo_intervencion: tipo de intervención
+    - clase_obra: clase de obra
+    - tipo_equipamiento: tipo de equipamiento del proyecto
     - nombre_centro_gestor: centro gestor específico
     - comuna_corregimiento: comuna o corregimiento específico
     - barrio_vereda: barrio o vereda específico
@@ -407,7 +424,7 @@ async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = Non
         
         # Campos esenciales
         geo_fields = ['upid', 'coordenadas', 'geometry', 'coordinates', 'lat', 'lng']
-        viz_fields = ['comuna_corregimiento', 'barrio_vereda', 'estado', 'tipo_intervencion', 'nombre_centro_gestor', 'presupuesto_base', 'avance_obra']
+        viz_fields = ['comuna_corregimiento', 'barrio_vereda', 'estado', 'tipo_intervencion', 'clase_obra', 'nombre_centro_gestor', 'presupuesto_base', 'avance_obra', 'tipo_equipamiento']
         
         for doc in docs:
             total_docs_processed += 1
@@ -513,11 +530,13 @@ async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = Non
                         # NUEVOS CAMPOS SOLICITADOS CON CONVERSIÓN DE TIPOS
                         "presupuesto_base": _convert_to_int(record.get('presupuesto_base') or doc_data.get('properties', {}).get('presupuesto_base')),
                         "tipo_intervencion": record.get('tipo_intervencion') or doc_data.get('properties', {}).get('tipo_intervencion'),
+                        "clase_obra": record.get('clase_obra') or doc_data.get('properties', {}).get('clase_obra'),
                         "avance_obra": _convert_to_float(record.get('avance_obra') or doc_data.get('properties', {}).get('avance_obra')),
                         # BPIN convertido a entero positivo (sin prefijo '-')
                         "bpin": _convert_bpin_to_positive_int(record.get('bpin') or doc_data.get('properties', {}).get('bpin')),
                         # Campos adicionales útiles
                         "nombre_centro_gestor": record.get('nombre_centro_gestor') or doc_data.get('properties', {}).get('nombre_centro_gestor'),
+                        "tipo_equipamiento": record.get('tipo_equipamiento') or doc_data.get('properties', {}).get('tipo_equipamiento'),
                     }
                 }
                 geometry_data.append(feature)
@@ -527,7 +546,7 @@ async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = Non
         # Aplicar filtros
         if filters:
             content_filters = {k: v for k, v in filters.items() 
-                             if k in ['comuna_corregimiento', 'barrio_vereda', 'estado', 'tipo_intervencion', 'nombre_centro_gestor', 'presupuesto_base', 'avance_obra']}
+                             if k in ['comuna_corregimiento', 'barrio_vereda', 'estado', 'tipo_intervencion', 'clase_obra', 'nombre_centro_gestor', 'presupuesto_base', 'avance_obra', 'tipo_equipamiento']}
             if content_filters:
                 geometry_data = apply_client_side_filters(geometry_data, content_filters)
                 print(f"�️ DEBUG: Filtros aplicados: {len(geometry_data)} registros")
@@ -589,6 +608,11 @@ async def get_unidades_proyecto_attributes(
     - upid: ID específico o lista de IDs
     - estado: estado del proyecto
     - tipo_intervencion: tipo de intervención
+    - clase_obra: clase de obra
+    - tipo_equipamiento: tipo de equipamiento del proyecto
+    - nombre_centro_gestor: centro gestor específico
+    - comuna_corregimiento: comuna o corregimiento
+    - barrio_vereda: barrio o vereda
     """
     try:
         # ============================================
@@ -608,7 +632,8 @@ async def get_unidades_proyecto_attributes(
         has_filters = filters and any(
             key in filters and filters[key] 
             for key in ['upid', 'estado', 'tipo_intervencion', 'nombre_centro_gestor', 
-                       'search', 'comuna_corregimiento', 'barrio_vereda', 'nombre_up', 'direccion']
+                       'search', 'comuna_corregimiento', 'barrio_vereda', 'nombre_up', 'direccion', 
+                       'clase_obra', 'tipo_equipamiento']
         )
         
         print(f"📋 DEBUG: get_unidades_proyecto_attributes - Filtros detectados: {has_filters}")
@@ -740,6 +765,14 @@ async def get_unidades_proyecto_attributes(
             if 'tipo_intervencion' in filters and filters['tipo_intervencion']:
                 client_side_filters['tipo_intervencion'] = filters['tipo_intervencion']
                 client_side_filters_applied.append('tipo_intervencion')
+                
+            if 'clase_obra' in filters and filters['clase_obra']:
+                client_side_filters['clase_obra'] = filters['clase_obra']
+                client_side_filters_applied.append('clase_obra')
+                
+            if 'tipo_equipamiento' in filters and filters['tipo_equipamiento']:
+                client_side_filters['tipo_equipamiento'] = filters['tipo_equipamiento']
+                client_side_filters_applied.append('tipo_equipamiento')
                 
             if 'nombre_centro_gestor' in filters and filters['nombre_centro_gestor']:
                 client_side_filters['nombre_centro_gestor'] = filters['nombre_centro_gestor']
@@ -1377,7 +1410,9 @@ async def get_filter_options(field: Optional[str] = None, limit: Optional[int] =
             'comunas': 'comuna_corregimiento',
             'barrios_veredas': 'barrio_vereda',
             'fuentes_financiacion': 'fuente_financiacion',
-            'anos': 'ano'
+            'anos': 'ano',
+            'clases_obra': 'clase_obra',
+            'tipos_equipamiento': 'tipo_equipamiento'
         }
         
         # ✅ FUNCIONAL: Obtener TODOS los datos frescos siempre (sin límite para filtros)

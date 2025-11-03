@@ -1387,6 +1387,8 @@ async def export_geometry_for_nextjs(
     tipo_intervencion: Optional[str] = Query(None, description="Tipo de intervención"),
     estado: Optional[str] = Query(None, description="Estado del proyecto"),
     upid: Optional[str] = Query(None, description="ID específico de unidad"),
+    clase_obra: Optional[str] = Query(None, description="Clase de obra del proyecto"),
+    tipo_equipamiento: Optional[str] = Query(None, description="Tipo de equipamiento del proyecto"),
     
     # Filtros geográficos adicionales
     comuna_corregimiento: Optional[str] = Query(None, description="Comuna o corregimiento específico"),
@@ -1431,6 +1433,8 @@ async def export_geometry_for_nextjs(
     | tipo_intervencion | Tipo de intervención |
     | estado | Estado del proyecto |
     | upid | ID específico de unidad |
+    | clase_obra | Clase de obra del proyecto |
+    | tipo_equipamiento | Tipo de equipamiento del proyecto |
     | comuna_corregimiento | Comuna o corregimiento específico |
     | barrio_vereda | Barrio o vereda específico |
     | presupuesto_base | Presupuesto mínimo del proyecto |
@@ -1486,6 +1490,10 @@ async def export_geometry_for_nextjs(
             filters["estado"] = estado
         if upid:
             filters["upid"] = upid
+        if clase_obra:
+            filters["clase_obra"] = clase_obra
+        if tipo_equipamiento:
+            filters["tipo_equipamiento"] = tipo_equipamiento
         if comuna_corregimiento:
             filters["comuna_corregimiento"] = comuna_corregimiento
         if barrio_vereda:
@@ -1543,6 +1551,8 @@ async def export_attributes_for_nextjs(
     tipo_intervencion: Optional[str] = Query(None, description="Tipo de intervención"),
     estado: Optional[str] = Query(None, description="Estado del proyecto"),
     upid: Optional[str] = Query(None, description="ID específico de unidad"),
+    clase_obra: Optional[str] = Query(None, description="Clase de obra del proyecto"),
+    tipo_equipamiento: Optional[str] = Query(None, description="Tipo de equipamiento del proyecto"),
     nombre_up: Optional[str] = Query(None, description="Búsqueda parcial en nombre (contiene texto)"),
     comuna_corregimiento: Optional[str] = Query(None, description="Comuna o corregimiento"),
     barrio_vereda: Optional[str] = Query(None, description="Barrio o vereda"),
@@ -1581,6 +1591,8 @@ async def export_attributes_for_nextjs(
     | tipo_intervencion | Tipo de intervención |
     | estado | Estado del proyecto |
     | upid | ID específico de unidad |
+    | clase_obra | Clase de obra del proyecto |
+    | tipo_equipamiento | Tipo de equipamiento del proyecto |
     | nombre_up | Búsqueda parcial en nombre |
     | comuna_corregimiento | Comuna o corregimiento |
     | barrio_vereda | Barrio o vereda |
@@ -1638,6 +1650,10 @@ async def export_attributes_for_nextjs(
             filters["estado"] = estado
         if upid:
             filters["upid"] = upid
+        if clase_obra:
+            filters["clase_obra"] = clase_obra
+        if tipo_equipamiento:
+            filters["tipo_equipamiento"] = tipo_equipamiento
         if nombre_up:
             filters["nombre_up"] = nombre_up
         if comuna_corregimiento:
@@ -1699,7 +1715,7 @@ async def get_filters_endpoint(
         enum=[
             "estado", "tipo_intervencion", "nombre_centro_gestor", 
             "comuna_corregimiento", "barrio_vereda", "fuente_financiacion", 
-            "ano"
+            "ano", "clase_obra"
         ]
     ),
     limit: Optional[int] = Query(
