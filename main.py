@@ -167,6 +167,8 @@ try:
         EmprestitoResponse,
         ProyeccionEmprestitoUpdateRequest,
         ProyeccionEmprestitoUpdateResponse,
+        ProyeccionEmprestitoRegistroRequest,
+        ProyeccionEmprestitoRegistroResponse,
         USER_MODELS_AVAILABLE,
         # Reportes contratos models
         ReporteContratoRequest,
@@ -6147,6 +6149,148 @@ async def actualizar_proyeccion_emprestito_endpoint(
         raise HTTPException(
             status_code=500,
             detail=f"Error procesando actualización de proyección: {str(e)}"
+        )
+
+
+@app.post("/emprestito/registrar-proyeccion", tags=["Gestión de Empréstito"], summary="🟢 Registrar Nueva Proyección")
+async def registrar_proyeccion_emprestito_endpoint(
+    referencia_proceso: str = Form(..., description="Referencia única del proceso"),
+    nombre_centro_gestor: str = Form(..., description="Nombre del centro gestor"),
+    nombre_banco: str = Form(..., description="Nombre del banco"),
+    bp: str = Form(..., description="Código BP", alias="BP"),
+    proyecto_generico: str = Form(..., description="Proyecto genérico"),
+    estado_proyeccion: Optional[str] = Form(None, description="Estado de la proyección"),
+    nombre_resumido_proceso: Optional[str] = Form(None, description="Nombre resumido del proceso"),
+    id_paa: Optional[str] = Form(None, description="ID del PAA"),
+    valor_proyectado: Optional[float] = Form(None, ge=0, description="Valor proyectado (debe ser >= 0)"),
+    urlProceso: Optional[str] = Form(None, description="URL del proceso")
+):
+    """
+    ## 🟢 POST | ➕ Creación | Registrar Nueva Proyección de Empréstito
+    
+    **Propósito**: Crea un nuevo registro en la colección "proyecciones_emprestito" con todos los 
+    campos necesarios para el seguimiento de proyecciones de empréstito.
+    
+    ### ✅ Casos de uso:
+    - Registrar nuevas proyecciones de empréstito
+    - Crear registros preliminares antes de la formalización
+    - Documentar proyecciones en etapas tempranas
+    - Vincular proyecciones con procesos PAA
+    - Establecer valores proyectados para presupuestación
+    
+    ### ✅ Casos de uso:
+    - Registrar nuevas proyecciones de empréstito
+    - Crear registros preliminares antes de la formalización
+    - Documentar proyecciones en etapas tempranas
+    - Vincular proyecciones con procesos PAA
+    - Establecer valores proyectados para presupuestación
+    
+    ### 🎯 Funcionamiento:
+    1. **Valida** que no exista una proyección con la misma referencia_proceso
+    2. **Verifica** que todos los campos requeridos estén presentes
+    3. **Limpia** y normaliza los datos ingresados
+    4. **Crea** el registro en Firebase con timestamp
+    5. **Retorna** confirmación con ID del documento creado
+    
+    ### 📋 Campos del registro:
+    
+    #### Campos Requeridos:
+    - `referencia_proceso`: Identificador único del proceso
+    - `nombre_centro_gestor`: Nombre del centro gestor responsable
+    - `nombre_banco`: Entidad bancaria asociada
+    - `bp`: Código BP del proyecto
+    - `proyecto_generico`: Nombre genérico del proyecto
+    
+    #### Campos Opcionales:
+    - `estado_proyeccion`: Estado actual de la proyección
+    - `nombre_resumido_proceso`: Nombre resumido para identificación
+    - `id_paa`: Identificador del Plan Anual de Adquisiciones
+    - `valor_proyectado`: Monto proyectado (debe ser >= 0)
+    - `urlProceso`: URL del proceso en plataforma SECOP
+    
+    ### 🔒 Validaciones:
+    - **referencia_proceso**: No debe existir previamente en la colección
+    - **valor_proyectado**: Debe ser >= 0 si se proporciona
+    - **strings**: Se limpian automáticamente de espacios
+    - **campos requeridos**: Todos los marcados como obligatorios deben proporcionarse
+    """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase o scripts no disponibles")
+    
+    try:
+        # Construir diccionario con los datos del formulario
+        datos_dict = {
+            'referencia_proceso': referencia_proceso.strip() if referencia_proceso else None,
+            'nombre_centro_gestor': nombre_centro_gestor.strip() if nombre_centro_gestor else None,
+            'nombre_banco': nombre_banco.strip() if nombre_banco else None,
+            'BP': bp.strip() if bp else None,
+            'proyecto_generico': proyecto_generico.strip() if proyecto_generico else None,
+        }
+        
+        # Agregar campos opcionales solo si tienen valor
+        if estado_proyeccion:
+            datos_dict['estado_proyeccion'] = estado_proyeccion.strip()
+        if nombre_resumido_proceso:
+            datos_dict['nombre_resumido_proceso'] = nombre_resumido_proceso.strip()
+        if id_paa:
+            datos_dict['id_paa'] = id_paa.strip()
+        if valor_proyectado is not None:
+            if valor_proyectado < 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="El valor_proyectado debe ser mayor o igual a 0"
+                )
+            datos_dict['valor_proyectado'] = valor_proyectado
+        if urlProceso:
+            datos_dict['urlProceso'] = urlProceso.strip()
+        
+        # Verificar que la referencia_proceso no exista ya
+        db = firestore.Client()
+        coleccion = db.collection('proyecciones_emprestito')
+        
+        # Buscar si ya existe
+        existing_docs = coleccion.where('referencia_proceso', '==', datos_dict['referencia_proceso']).limit(1).stream()
+        
+        if any(existing_docs):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Ya existe una proyección con referencia_proceso: {datos_dict['referencia_proceso']}"
+            )
+        
+        # Agregar timestamp de creación
+        from datetime import datetime
+        datos_dict['created_at'] = datetime.utcnow().isoformat()
+        datos_dict['updated_at'] = datetime.utcnow().isoformat()
+        
+        # Crear el documento
+        doc_ref = coleccion.document()
+        doc_ref.set(datos_dict)
+        
+        # Preparar respuesta exitosa
+        response = {
+            "success": True,
+            "message": "Proyección registrada exitosamente",
+            "referencia_proceso": datos_dict['referencia_proceso'],
+            "doc_id": doc_ref.id,
+            "datos_registrados": datos_dict,
+            "timestamp": datos_dict['created_at'],
+            "coleccion": "proyecciones_emprestito",
+            "endpoint_info": {
+                "metodo": "POST",
+                "operacion": "registro_nuevo",
+                "campos_registrados": list(datos_dict.keys()),
+                "validaciones_aplicadas": True
+            }
+        }
+        
+        return create_utf8_response(response)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error registrando proyección: {str(e)}"
         )
 
 

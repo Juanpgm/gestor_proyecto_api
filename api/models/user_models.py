@@ -132,6 +132,47 @@ class ProyeccionEmprestitoUpdateResponse(BaseModel):
     coleccion: Optional[str] = None
     error: Optional[str] = None
 
+class ProyeccionEmprestitoRegistroRequest(BaseModel):
+    """Modelo para registrar nueva proyección de empréstito"""
+    referencia_proceso: str = Field(..., description="Referencia única del proceso")
+    nombre_centro_gestor: str = Field(..., description="Nombre del centro gestor")
+    estado_proyeccion: Optional[str] = Field(None, description="Estado de la proyección")
+    nombre_banco: str = Field(..., description="Nombre del banco")
+    bp: str = Field(..., description="Código BP", alias="BP")
+    proyecto_generico: str = Field(..., description="Proyecto genérico")
+    nombre_resumido_proceso: Optional[str] = Field(None, description="Nombre resumido del proceso")
+    id_paa: Optional[str] = Field(None, description="ID del PAA")
+    valor_proyectado: Optional[float] = Field(None, ge=0, description="Valor proyectado")
+    urlProceso: Optional[str] = Field(None, description="URL del proceso")
+    
+    class Config:
+        populate_by_name = True
+    
+    @validator('valor_proyectado')
+    def validate_valor_proyectado(cls, v):
+        """Validar que el valor proyectado sea positivo si se proporciona"""
+        if v is not None and v < 0:
+            raise ValueError('El valor proyectado debe ser mayor o igual a 0')
+        return v
+    
+    @validator('*', pre=True)
+    def strip_strings(cls, v):
+        """Limpiar strings de espacios en blanco"""
+        if isinstance(v, str):
+            return v.strip() if v.strip() else None
+        return v
+
+class ProyeccionEmprestitoRegistroResponse(BaseModel):
+    """Respuesta para registro de nueva proyección de empréstito"""
+    success: bool
+    message: Optional[str] = None
+    referencia_proceso: Optional[str] = None
+    doc_id: Optional[str] = None
+    datos_registrados: Optional[Dict[str, Any]] = None
+    timestamp: Optional[str] = None
+    coleccion: Optional[str] = None
+    error: Optional[str] = None
+
 class GoogleAuthRequest(BaseModel):
     """Autenticación con Google"""
     email: EmailStr
