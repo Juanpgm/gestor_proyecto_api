@@ -469,13 +469,23 @@ async def obtener_datos_tvec(referencia_proceso: str) -> Dict[str, Any]:
                 logger.warning(f"⚠️ Error convertiendo valor_publicacion TVEC '{orden_raw['total']}': {e}")
                 valor_publicacion = 0
 
+        # Extraer nombre_banco de agregacion si está disponible
+        agregacion = orden_raw.get("agregacion", "")
+        nombre_banco = orden_raw.get("nombre_banco", "")
+        
+        # Si nombre_banco no está disponible, usar agregacion como banco
+        # (ya que agregacion puede contener información del banco financiador)
+        if not nombre_banco and agregacion:
+            nombre_banco = agregacion
+        
         # Mapear campos según especificaciones
         orden_datos = {
             "referencia_proceso": orden_raw.get("identificador_de_la_orden", referencia_proceso),
             "fecha_publicacion": orden_raw.get("fecha", ""),
             "fecha_vence": orden_raw.get("fecha_vence", ""),
             "estado": orden_raw.get("estado", ""),
-            "agregacion": orden_raw.get("agregacion", ""),
+            "agregacion": agregacion,
+            "nombre_banco": nombre_banco,  # Agregar nombre_banco al resultado
             "valor_publicacion": valor_publicacion
         }
 
@@ -572,6 +582,16 @@ async def guardar_orden_compra_emprestito(datos: Dict[str, Any]) -> Dict[str, An
                 "success": False,
                 "error": "Error obteniendo cliente Firestore"
             }
+
+        # Si nombre_banco no está presente pero agregacion sí, usar agregacion como nombre_banco
+        if not datos.get("nombre_banco") and datos.get("agregacion"):
+            datos["nombre_banco"] = datos.get("agregacion")
+            logger.info(f"nombre_banco derivado de agregacion: {datos['nombre_banco']}")
+        
+        # Si aún no hay nombre_banco, establecer valor por defecto
+        if not datos.get("nombre_banco"):
+            datos["nombre_banco"] = "No especificado"
+            logger.warning("nombre_banco no disponible, usando valor por defecto")
 
         # Agregar timestamp
         datos['fecha_creacion'] = datetime.now()
