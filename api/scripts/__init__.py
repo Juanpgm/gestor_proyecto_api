@@ -148,6 +148,56 @@ try:
         EMPRESTITO_OPERATIONS_AVAILABLE
     )
     print(f"✅ Emprestito operations imported successfully - AVAILABLE: {EMPRESTITO_OPERATIONS_AVAILABLE}")
+    
+    # Importar funciones optimizadas si están disponibles
+    try:
+        from .emprestito_optimized import (
+            get_procesos_emprestito_optimized,
+            get_contratos_emprestito_optimized,
+            get_bancos_emprestito_optimized,
+            EMPRESTITO_OPTIMIZED_AVAILABLE
+        )
+        from .emprestito_cache import (
+            get_cache_stats,
+            invalidate_contratos_cache,
+            invalidate_procesos_cache,
+            invalidate_bancos_cache,
+            invalidate_all_emprestito_cache,
+            clear_cache
+        )
+        print(f"✅ Emprestito optimized functions loaded - OPTIMIZED_AVAILABLE: {EMPRESTITO_OPTIMIZED_AVAILABLE}")
+    except ImportError as opt_e:
+        print(f"Warning: Emprestito optimized functions not available: {opt_e}")
+        EMPRESTITO_OPTIMIZED_AVAILABLE = False
+        
+        # Funciones dummy que usan las versiones no optimizadas
+        async def get_procesos_emprestito_optimized(*args, **kwargs):
+            return await get_procesos_emprestito_all()
+        
+        async def get_contratos_emprestito_optimized(*args, **kwargs):
+            from .contratos_operations import get_contratos_emprestito_all
+            return await get_contratos_emprestito_all()
+        
+        async def get_bancos_emprestito_optimized(*args, **kwargs):
+            return await get_bancos_emprestito_all()
+        
+        def get_cache_stats():
+            return {"enabled": False, "message": "Cache not available"}
+        
+        async def invalidate_contratos_cache():
+            pass
+        
+        async def invalidate_procesos_cache():
+            pass
+        
+        async def invalidate_bancos_cache():
+            pass
+        
+        async def invalidate_all_emprestito_cache():
+            pass
+        
+        async def clear_cache(pattern=None):
+            pass
 except ImportError as e:
     print(f"Warning: Emprestito operations not available: {e}")
     EMPRESTITO_OPERATIONS_AVAILABLE = False
@@ -430,6 +480,17 @@ __all__ = [
     "leer_proyecciones_no_guardadas",
     "get_proyecciones_sin_proceso",
     "actualizar_proyeccion_emprestito",
+    # Funciones optimizadas de empréstito
+    "get_procesos_emprestito_optimized",
+    "get_contratos_emprestito_optimized",
+    "get_bancos_emprestito_optimized",
+    # Cache management
+    "get_cache_stats",
+    "invalidate_contratos_cache",
+    "invalidate_procesos_cache",
+    "invalidate_bancos_cache",
+    "invalidate_all_emprestito_cache",
+    "clear_cache",
     
     # User management operations
     "validate_email",
@@ -488,6 +549,7 @@ __all__ = [
     "CONTRATOS_OPERATIONS_AVAILABLE",
     "REPORTES_CONTRATOS_AVAILABLE",
     "EMPRESTITO_OPERATIONS_AVAILABLE",
+    "EMPRESTITO_OPTIMIZED_AVAILABLE",
     "USER_MANAGEMENT_AVAILABLE",
     "AUTH_OPERATIONS_AVAILABLE",
     "WORKLOAD_IDENTITY_AVAILABLE",
