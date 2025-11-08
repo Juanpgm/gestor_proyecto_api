@@ -210,6 +210,10 @@ unidad-cumplimiento-drive.json
 *-drive.json
 google-service-account-*.json
 
+# Context directory
+context/
+context/**
+
 # Railway configuration files with real values
 railway-config-summary.txt
 railway-workload-identity.json
