@@ -36,6 +36,7 @@ orden_datos = {
 ```
 
 **Cambios:**
+
 - Se extrae el campo `agregacion` que puede contener información del banco
 - Se usa `agregacion` como fallback si `nombre_banco` no está presente en TVEC
 - Se agrega `nombre_banco` al diccionario de datos retornado
@@ -55,6 +56,7 @@ if not datos.get("nombre_banco"):
 ```
 
 **Cambios:**
+
 - Se valida que `nombre_banco` exista antes de guardar
 - Fallback 1: Si falta `nombre_banco` pero existe `agregacion`, se usa `agregacion`
 - Fallback 2: Si ambos faltan, se establece "No especificado"
@@ -63,6 +65,7 @@ if not datos.get("nombre_banco"):
 ## 📊 Flujo de Datos
 
 ### Antes del Fix:
+
 ```
 TVEC API → obtener_datos_tvec() → { sin nombre_banco }
          ↓
@@ -72,6 +75,7 @@ TVEC API → obtener_datos_tvec() → { sin nombre_banco }
 ```
 
 ### Después del Fix:
+
 ```
 TVEC API → obtener_datos_tvec() → { nombre_banco: "agregacion" o "" }
          ↓
@@ -84,12 +88,12 @@ TVEC API → obtener_datos_tvec() → { nombre_banco: "agregacion" o "" }
 
 ## 🧪 Escenarios Cubiertos
 
-| Escenario | Fuente TVEC | Resultado |
-|-----------|-------------|-----------|
-| TVEC tiene `nombre_banco` | `nombre_banco: "Banco Mundial"` | Usa valor directo |
-| TVEC solo tiene `agregacion` | `agregacion: "BID"` | `nombre_banco = "BID"` |
-| TVEC no tiene ninguno | Ambos vacíos | `nombre_banco = "No especificado"` |
-| Orden manual POST | Usuario provee `nombre_banco` | Usa valor del usuario |
+| Escenario                    | Fuente TVEC                     | Resultado                          |
+| ---------------------------- | ------------------------------- | ---------------------------------- |
+| TVEC tiene `nombre_banco`    | `nombre_banco: "Banco Mundial"` | Usa valor directo                  |
+| TVEC solo tiene `agregacion` | `agregacion: "BID"`             | `nombre_banco = "BID"`             |
+| TVEC no tiene ninguno        | Ambos vacíos                    | `nombre_banco = "No especificado"` |
+| Orden manual POST            | Usuario provee `nombre_banco`   | Usa valor del usuario              |
 
 ## 📝 Archivos Modificados
 
@@ -100,10 +104,12 @@ TVEC API → obtener_datos_tvec() → { nombre_banco: "agregacion" o "" }
 ## 🎯 Impacto
 
 ### Órdenes Nuevas
+
 - ✅ Todas las órdenes creadas después del fix tendrán `nombre_banco`
 - ✅ Compatible con órdenes TVEC y órdenes manuales
 
 ### Órdenes Existentes
+
 - ⚠️ Las órdenes ya guardadas en Firebase sin `nombre_banco` seguirán sin el campo
 - 💡 **Recomendación**: Crear un script de migración para agregar `nombre_banco = "No especificado"` a órdenes existentes
 
@@ -116,24 +122,24 @@ async def migrar_ordenes_sin_nombre_banco():
     """
     db = get_firestore_client()
     ordenes_ref = db.collection('ordenes_compra_emprestito')
-    
+
     docs = ordenes_ref.stream()
     actualizadas = 0
-    
+
     for doc in docs:
         doc_data = doc.to_dict()
-        
+
         if not doc_data.get("nombre_banco"):
             # Usar agregacion si existe, sino "No especificado"
             nuevo_nombre_banco = doc_data.get("agregacion", "No especificado")
-            
+
             doc.reference.update({
                 "nombre_banco": nuevo_nombre_banco,
                 "fecha_actualizacion": datetime.now()
             })
             actualizadas += 1
             logger.info(f"Orden {doc.id} actualizada con nombre_banco: {nuevo_nombre_banco}")
-    
+
     return {
         "success": True,
         "ordenes_actualizadas": actualizadas
@@ -158,6 +164,7 @@ async def migrar_ordenes_sin_nombre_banco():
 ## 🎉 Resultado Final
 
 El campo `nombre_banco` ahora estará **garantizado** en todas las órdenes de compra retornadas por el endpoint GET, ya sea:
+
 - Provisto directamente por TVEC
 - Derivado del campo `agregacion` de TVEC
 - Establecido como "No especificado" por defecto

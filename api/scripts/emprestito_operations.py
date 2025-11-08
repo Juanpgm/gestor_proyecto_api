@@ -1734,90 +1734,88 @@ async def leer_google_sheets_proyecciones(sheet_url: str) -> Dict[str, Any]:
         import json
         import base64
         
+        # ESTRATEGIA DE CREDENCIALES (prioridad en orden):
+        # 1. Archivo local service account (desarrollo)
+        # 2. Variable de entorno FIREBASE_SERVICE_ACCOUNT_KEY (producción)
+        # 3. Application Default Credentials (último recurso)
+        
+        gc = None
+        service_account_file = "credentials/unidad-cumplimiento-drive.json"
+        service_account_email = "unidad-cumplimiento-drive@unidad-cumplimiento.iam.gserviceaccount.com"
+        scopes = [
+            'https://www.googleapis.com/auth/spreadsheets.readonly',
+            'https://www.googleapis.com/auth/drive.readonly'
+        ]
+        
         try:
-            # Opción 1: Intentar usar el service account específico del archivo de credenciales
-            service_account_file = "credentials/unidad-cumplimiento-drive.json"
-            service_account_email = "unidad-cumplimiento-drive@unidad-cumplimiento.iam.gserviceaccount.com"
-            
-            try:
-                # Verificar si el archivo de credenciales existe
-                import os
-                if os.path.exists(service_account_file):
-                    from google.oauth2.service_account import Credentials
-                    
-                    # Scopes necesarios para Google Sheets
-                    scopes = [
-                        'https://www.googleapis.com/auth/spreadsheets.readonly',
-                        'https://www.googleapis.com/auth/drive.readonly'
-                    ]
-                    
-                    sheets_credentials = Credentials.from_service_account_file(
-                        service_account_file, 
-                        scopes=scopes
-                    )
-                    logger.info(f"🔑 Usando service account desde archivo: {service_account_email}")
-                    
-                    # Crear cliente gspread
-                    gc = gspread.authorize(sheets_credentials)
-                    logger.info("✅ Cliente gspread autorizado exitosamente")
-                else:
-                    # Fallback a ADC
-                    raise FileNotFoundError("Archivo de service account no encontrado")
+            # OPCIÓN 1: Intentar archivo local (desarrollo)
+            import os
+            if os.path.exists(service_account_file):
+                from google.oauth2.service_account import Credentials
                 
-            except Exception as service_account_error:
-                logger.warning(f"⚠️ Service account desde archivo no disponible: {str(service_account_error)}")
-                
-                # Opción 2: Intentar usar las credenciales por defecto de Google Cloud
-                from google.auth import default
-                
-                # Obtener credenciales por defecto con scopes específicos
-                scopes = [
-                    'https://www.googleapis.com/auth/spreadsheets.readonly',
-                    'https://www.googleapis.com/auth/drive.readonly'
-                ]
-                
-                sheets_credentials, project_id = default(scopes=scopes)
-                logger.info(f"🔑 Usando Application Default Credentials para Google Sheets")
-                logger.info(f"🆔 Proyecto detectado: {project_id}")
-                
-                # Crear cliente gspread
-                gc = gspread.authorize(sheets_credentials)
-                logger.info("✅ Cliente gspread autorizado exitosamente")
-                
-            except Exception as default_error:
-                logger.warning(f"⚠️ ADC no disponible: {str(default_error)}")
-                
-                # Opción 2: Usar credenciales de Firebase desde variable de entorno
-                firebase_key = os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY")
-                if not firebase_key:
-                    raise Exception("FIREBASE_SERVICE_ACCOUNT_KEY no encontrada en variables de entorno")
-                
-                # Decodificar las credenciales
-                service_account_info = json.loads(base64.b64decode(firebase_key).decode('utf-8'))
-                service_account_email = service_account_info.get('client_email', service_account_email)
-                
-                logger.info(f"🔑 Usando service account desde env: {service_account_email}")
-                
-                # Crear credenciales específicas para Google Sheets API
-                scopes = [
-                    'https://www.googleapis.com/auth/spreadsheets.readonly',
-                    'https://www.googleapis.com/auth/drive.readonly'
-                ]
-                
-                # Crear credenciales con los scopes necesarios
-                sheets_credentials = Credentials.from_service_account_info(
-                    service_account_info, 
+                sheets_credentials = Credentials.from_service_account_file(
+                    service_account_file, 
                     scopes=scopes
                 )
-                
-                # Crear cliente gspread
+                logger.info(f"🔑 Usando service account desde archivo: {service_account_email}")
                 gc = gspread.authorize(sheets_credentials)
+                logger.info("✅ Cliente gspread autorizado con archivo local")
+            else:
+                raise FileNotFoundError("Archivo de service account no encontrado en desarrollo")
+                
+        except Exception as file_error:
+            logger.warning(f"⚠️ Service account desde archivo no disponible: {str(file_error)}")
             
-        except Exception as cred_error:
-            logger.error(f"❌ Error obteniendo credenciales: {str(cred_error)}")
+            try:
+                # OPCIÓN 2: Variable de entorno (producción - Railway, etc)
+                firebase_key = os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY")
+                if firebase_key:
+                    # Decodificar las credenciales
+                    service_account_info = json.loads(base64.b64decode(firebase_key).decode('utf-8'))
+                    service_account_email = service_account_info.get('client_email', service_account_email)
+                    
+                    logger.info(f"🔑 Usando service account desde env: {service_account_email}")
+                    
+                    # Crear credenciales con los scopes necesarios
+                    from google.oauth2.service_account import Credentials
+                    sheets_credentials = Credentials.from_service_account_info(
+                        service_account_info, 
+                        scopes=scopes
+                    )
+                    
+                    gc = gspread.authorize(sheets_credentials)
+                    logger.info("✅ Cliente gspread autorizado con variable de entorno")
+                else:
+                    raise ValueError("FIREBASE_SERVICE_ACCOUNT_KEY no encontrada en variables de entorno")
+                    
+            except Exception as env_error:
+                logger.warning(f"⚠️ Credenciales desde variable de entorno no disponibles: {str(env_error)}")
+                
+                try:
+                    # OPCIÓN 3: Application Default Credentials (último recurso)
+                    from google.auth import default
+                    
+                    sheets_credentials, project_id = default(scopes=scopes)
+                    logger.info(f"🔑 Usando Application Default Credentials para Google Sheets")
+                    logger.info(f"🆔 Proyecto detectado: {project_id}")
+                    
+                    gc = gspread.authorize(sheets_credentials)
+                    logger.info("✅ Cliente gspread autorizado con ADC")
+                    
+                except Exception as adc_error:
+                    logger.error(f"❌ Todas las opciones de credenciales fallaron")
+                    logger.error(f"   - Archivo local: {str(file_error)}")
+                    logger.error(f"   - Variable entorno: {str(env_error)}")
+                    logger.error(f"   - ADC: {str(adc_error)}")
+                    return {
+                        "success": False,
+                        "error": f"Error obteniendo credenciales para Google Sheets: {str(adc_error)}"
+                    }
+        
+        if gc is None:
             return {
                 "success": False,
-                "error": f"Error obteniendo credenciales para Google Sheets: {str(cred_error)}"
+                "error": "No se pudo crear cliente de Google Sheets con ninguna credencial disponible"
             }
         
         try:
