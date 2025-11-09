@@ -3725,6 +3725,8 @@ try:
         obtener_contratos_desde_proceso_contractual,
         get_emprestito_operations_status,
         cargar_orden_compra_directa,
+        cargar_convenio_transferencia,
+        get_convenios_transferencia_emprestito_all,
         obtener_ordenes_compra_tvec_enriquecidas,
         get_tvec_enrich_status,
         get_ordenes_compra_emprestito_all,
@@ -4080,6 +4082,337 @@ async def cargar_orden_compra_emprestito(
                 "success": False,
                 "error": "Error interno del servidor",
                 "message": "Por favor, inténtelo de nuevo más tarde",
+                "code": "INTERNAL_SERVER_ERROR"
+            }
+        )
+
+@app.post("/emprestito/cargar-convenio-transferencia", tags=["Gestión de Empréstito"], summary="🟢 Cargar Convenio de Transferencia")
+async def cargar_convenio_transferencia_emprestito(
+    referencia_contrato: str = Form(..., description="Referencia del contrato/convenio (obligatorio)"),
+    nombre_centro_gestor: str = Form(..., description="Centro gestor responsable (obligatorio)"),
+    banco: str = Form(..., description="Nombre del banco (obligatorio)"),
+    objeto_contrato: str = Form(..., description="Objeto del contrato (obligatorio)"),
+    valor_contrato: float = Form(..., description="Valor del contrato (obligatorio)"),
+    bp: Optional[str] = Form(None, description="Código BP (opcional)"),
+    bpin: Optional[str] = Form(None, description="Código BPIN (opcional)"),
+    valor_convenio: Optional[float] = Form(None, description="Valor del convenio (opcional)"),
+    urlproceso: Optional[str] = Form(None, description="URL del proceso (opcional)"),
+    fecha_inicio_contrato: Optional[str] = Form(None, description="Fecha de inicio del contrato (opcional)"),
+    fecha_fin_contrato: Optional[str] = Form(None, description="Fecha de fin del contrato (opcional)"),
+    modalidad_contrato: Optional[str] = Form(None, description="Modalidad del contrato (opcional)"),
+    ordenador_gastor: Optional[str] = Form(None, description="Ordenador del gasto (opcional)"),
+    tipo_contrato: Optional[str] = Form(None, description="Tipo de contrato (opcional)"),
+    estado_contrato: Optional[str] = Form(None, description="Estado del contrato (opcional)"),
+    sector: Optional[str] = Form(None, description="Sector (opcional)")
+):
+    """
+    ## 📝 POST | 📥 Carga de Datos | Cargar Convenio de Transferencia de Empréstito
+    
+    Endpoint para carga directa de convenios de transferencia de empréstito en la colección 
+    `convenios_transferencias_emprestito` sin procesamiento de APIs externas.
+    
+    ### ✅ Funcionalidades principales:
+    - **Carga directa**: Registra directamente en `convenios_transferencias_emprestito`
+    - **Validación de duplicados**: Verifica existencia previa usando `referencia_contrato`
+    - **Validación de campos**: Verifica que todos los campos obligatorios estén presentes
+    - **Timestamps automáticos**: Agrega fecha de creación y actualización
+    
+    ### ⚙️ Campos obligatorios:
+    - `referencia_contrato`: Referencia única del contrato/convenio
+    - `nombre_centro_gestor`: Centro gestor responsable
+    - `banco`: Nombre del banco
+    - `objeto_contrato`: Descripción del objeto del contrato
+    - `valor_contrato`: Valor del contrato en pesos colombianos
+    
+    ### 📝 Campos opcionales:
+    - `bp`: Código BP
+    - `bpin`: Código BPIN (Banco de Programas y Proyectos de Inversión Nacional)
+    - `valor_convenio`: Valor específico del convenio
+    - `urlproceso`: URL del proceso de contratación
+    - `fecha_inicio_contrato`: Fecha de inicio del contrato
+    - `fecha_fin_contrato`: Fecha de finalización del contrato
+    - `modalidad_contrato`: Modalidad de contratación
+    - `ordenador_gastor`: Ordenador del gasto
+    - `tipo_contrato`: Tipo de contrato
+    - `estado_contrato`: Estado actual del contrato
+    - `sector`: Sector al que pertenece
+    
+    ### 🛡️ Validación de duplicados:
+    Busca `referencia_contrato` en la colección `convenios_transferencias_emprestito` antes de crear nuevo registro.
+    
+    ### 📊 Estructura de datos guardados:
+    ```json
+    {
+        "referencia_contrato": "CONV-2024-001",
+        "nombre_centro_gestor": "Secretaría de Salud",
+        "banco": "Banco Mundial",
+        "objeto_contrato": "Convenio de transferencia para equipamiento médico",
+        "valor_contrato": 1500000000.0,
+        "valor_convenio": 1200000000.0,
+        "bp": "BP-2024-001",
+        "bpin": "2024000010001",
+        "urlproceso": "https://...",
+        "fecha_inicio_contrato": "2024-01-15",
+        "fecha_fin_contrato": "2024-12-31",
+        "modalidad_contrato": "Convenio de Transferencia",
+        "ordenador_gastor": "Juan Pérez",
+        "tipo_contrato": "Transferencia",
+        "estado_contrato": "Activo",
+        "sector": "Salud",
+        "fecha_creacion": "2024-10-14T10:30:00",
+        "fecha_actualizacion": "2024-10-14T10:30:00",
+        "estado": "activo",
+        "tipo": "convenio_transferencia_manual"
+    }
+    ```
+    
+    ### 📋 Ejemplo de request:
+    ```json
+    {
+        "referencia_contrato": "CONV-SALUD-003-2024",
+        "nombre_centro_gestor": "Secretaría de Salud",
+        "banco": "Banco Mundial",
+        "objeto_contrato": "Convenio de transferencia para equipamiento médico",
+        "valor_contrato": 1500000000.0,
+        "valor_convenio": 1200000000.0,
+        "bp": "BP-2024-001",
+        "modalidad_contrato": "Convenio de Transferencia",
+        "estado_contrato": "Activo"
+    }
+    ```
+    
+    ### ✅ Respuesta exitosa (201):
+    ```json
+    {
+        "success": true,
+        "message": "Convenio de transferencia CONV-SALUD-003-2024 guardado exitosamente",
+        "doc_id": "abc123def456",
+        "data": { ... },
+        "coleccion": "convenios_transferencias_emprestito"
+    }
+    ```
+    
+    ### ❌ Respuesta de duplicado (409):
+    ```json
+    {
+        "success": false,
+        "error": "Ya existe un convenio de transferencia con referencia: CONV-SALUD-003-2024",
+        "duplicate": true,
+        "existing_data": { ... }
+    }
+    ```
+    """
+    try:
+        check_emprestito_availability()
+        
+        # Crear diccionario con los datos del formulario
+        datos_convenio = {
+            "referencia_contrato": referencia_contrato,
+            "nombre_centro_gestor": nombre_centro_gestor,
+            "banco": banco,
+            "objeto_contrato": objeto_contrato,
+            "valor_contrato": valor_contrato,
+            "bp": bp,
+            "bpin": bpin,
+            "valor_convenio": valor_convenio,
+            "urlproceso": urlproceso,
+            "fecha_inicio_contrato": fecha_inicio_contrato,
+            "fecha_fin_contrato": fecha_fin_contrato,
+            "modalidad_contrato": modalidad_contrato,
+            "ordenador_gastor": ordenador_gastor,
+            "tipo_contrato": tipo_contrato,
+            "estado_contrato": estado_contrato,
+            "sector": sector
+        }
+        
+        # Procesar convenio de transferencia
+        resultado = await cargar_convenio_transferencia(datos_convenio)
+        
+        # Manejar respuesta según el resultado
+        if not resultado.get("success"):
+            # Manejar caso especial de duplicado
+            if resultado.get("duplicate"):
+                return JSONResponse(
+                    content={
+                        "success": False,
+                        "error": resultado.get("error"),
+                        "duplicate": True,
+                        "existing_data": resultado.get("existing_data"),
+                        "message": "Ya existe un convenio de transferencia con esta referencia",
+                        "timestamp": datetime.now().isoformat()
+                    },
+                    status_code=409,  # Conflict
+                    headers={"Content-Type": "application/json; charset=utf-8"}
+                )
+            else:
+                # Error general
+                return JSONResponse(
+                    content={
+                        "success": False,
+                        "error": resultado.get("error"),
+                        "message": "Error al procesar el convenio de transferencia",
+                        "timestamp": datetime.now().isoformat()
+                    },
+                    status_code=400,
+                    headers={"Content-Type": "application/json; charset=utf-8"}
+                )
+        
+        # Respuesta exitosa
+        return JSONResponse(
+            content={
+                "success": True,
+                "message": resultado.get("message"),
+                "data": resultado.get("data"),
+                "doc_id": resultado.get("doc_id"),
+                "coleccion": resultado.get("coleccion"),
+                "timestamp": datetime.now().isoformat()
+            },
+            status_code=201,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en endpoint de convenio de transferencia: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "success": False,
+                "error": "Error interno del servidor",
+                "message": "Por favor, inténtelo de nuevo más tarde",
+                "code": "INTERNAL_SERVER_ERROR"
+            }
+        )
+
+@app.get("/convenios_transferencias_all", tags=["Gestión de Empréstito"], summary="🔵 Obtener Todos los Convenios de Transferencia")
+async def get_all_convenios_transferencia_emprestito():
+    """
+    ## 🔵 GET | 📋 Consultas | Obtener Todos los Convenios de Transferencia
+    
+    Endpoint para obtener todos los convenios de transferencia de empréstito 
+    almacenados en la colección `convenios_transferencias_emprestito`.
+    
+    ### ✅ Funcionalidades principales:
+    - **Listado completo**: Retorna todos los convenios registrados
+    - **Ordenamiento**: Por fecha de creación (más recientes primero)
+    - **Datos completos**: Incluye todos los campos de cada convenio
+    - **Metadatos**: Incluye ID del documento, conteo total y timestamp
+    
+    ### 📊 Información incluida:
+    - Todos los campos del convenio
+    - ID del documento para referencia
+    - Conteo total de registros
+    - Timestamp de la consulta
+    - Datos serializados correctamente para JSON
+    
+    ### 🗄️ Campos principales esperados:
+    - **referencia_contrato**: Referencia única del contrato/convenio
+    - **nombre_centro_gestor**: Centro gestor responsable
+    - **banco**: Nombre del banco
+    - **bp**: Código BP
+    - **bpin**: Código BPIN
+    - **objeto_contrato**: Descripción del objeto del contrato
+    - **valor_contrato**: Valor del contrato
+    - **valor_convenio**: Valor específico del convenio
+    - **fecha_inicio_contrato**: Fecha de inicio
+    - **fecha_fin_contrato**: Fecha de finalización
+    - **modalidad_contrato**: Modalidad de contratación
+    - **ordenador_gastor**: Ordenador del gasto
+    - **tipo_contrato**: Tipo de contrato
+    - **estado_contrato**: Estado actual
+    - **sector**: Sector al que pertenece
+    - **fecha_creacion**: Fecha de creación del registro
+    - **fecha_actualizacion**: Última actualización
+    - **estado**: Estado del registro (activo/inactivo)
+    - **tipo**: Tipo de registro
+    
+    ### 💡 Casos de uso:
+    - Obtener listado completo de convenios de transferencia
+    - Exportación de datos para análisis
+    - Integración con sistemas externos
+    - Reportes y dashboards
+    - Monitoreo del estado de convenios
+    
+    ### ✅ Respuesta exitosa (200):
+    ```json
+    {
+        "success": true,
+        "data": [
+            {
+                "id": "abc123",
+                "referencia_contrato": "CONV-2024-001",
+                "nombre_centro_gestor": "Secretaría de Salud",
+                "banco": "Banco Mundial",
+                "objeto_contrato": "Convenio de transferencia...",
+                "valor_contrato": 1500000000.0,
+                "bpin": "2024000010001",
+                ...
+            }
+        ],
+        "count": 15,
+        "collection": "convenios_transferencias_emprestito",
+        "timestamp": "2024-11-09T...",
+        "message": "Se obtuvieron 15 convenios de transferencia exitosamente"
+    }
+    ```
+    
+    ### ❌ Respuesta de error (500):
+    ```json
+    {
+        "success": false,
+        "error": "Error obteniendo convenios de transferencia: ...",
+        "data": [],
+        "count": 0
+    }
+    ```
+    
+    ### 🔗 Endpoints relacionados:
+    - `POST /emprestito/cargar-convenio-transferencia` - Para crear nuevos convenios
+    - `GET /bancos_emprestito_all` - Para consultar bancos disponibles
+    """
+    try:
+        check_emprestito_availability()
+        
+        # Obtener todos los convenios de transferencia
+        result = await get_convenios_transferencia_emprestito_all()
+        
+        if not result["success"]:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error obteniendo convenios de transferencia: {result.get('error', 'Error desconocido')}"
+            )
+        
+        return JSONResponse(
+            content={
+                "success": True,
+                "data": result["data"],
+                "count": result["count"],
+                "collection": result["collection"],
+                "timestamp": result["timestamp"],
+                "message": result["message"],
+                "metadata": {
+                    "sorted_by": "fecha_creacion",
+                    "order": "desc",
+                    "utf8_enabled": True,
+                    "spanish_support": True,
+                    "purpose": "Lista completa de convenios de transferencia de empréstito"
+                }
+            },
+            status_code=200,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en endpoint de convenios de transferencia: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "success": False,
+                "error": "Error interno del servidor",
+                "message": "Error al obtener convenios de transferencia",
                 "code": "INTERNAL_SERVER_ERROR"
             }
         )
@@ -4556,7 +4889,7 @@ async def obtener_todos_contratos_emprestito():
     """
     ## � GET | �📋 Listados | Obtener Todos los Contratos de Empréstito
     
-    **Propósito**: Retorna todos los registros de la colección "contratos_emprestito".
+    **Propósito**: Retorna todos los registros de las colecciones "contratos_emprestito", "ordenes_compra_emprestito" y "convenios_transferencias_emprestito".
     
     ### ✅ Casos de uso:
     - Obtener listado completo de contratos de empréstito
@@ -4565,10 +4898,15 @@ async def obtener_todos_contratos_emprestito():
     - Reportes y dashboards de contratos
     
     ### 📊 Información incluida:
-    - Todos los campos disponibles en la colección
+    - Todos los campos disponibles en las tres colecciones
     - ID del documento para referencia
-    - Conteo total de registros
+    - Conteo total de registros y por tipo
     - Timestamp de la consulta
+    
+    ### 🗄️ Colecciones incluidas:
+    1. **contratos_emprestito**: Contratos principales
+    2. **ordenes_compra_emprestito**: Órdenes de compra
+    3. **convenios_transferencias_emprestito**: Convenios de transferencia
     
     ### 🗄️ Campos principales:
     - **referencia_contrato**: Referencia del contrato
@@ -4583,6 +4921,7 @@ async def obtener_todos_contratos_emprestito():
     - **entidad_contratante**: Entidad que contrata
     - **contratista**: Empresa contratista
     - **nombre_resumido_proceso**: 🔄 Heredado desde procesos_emprestito
+    - **tipo_registro**: Identificador del tipo de registro (convenio_transferencia, contrato, orden)
     
     ### 🔄 Campos heredados desde procesos_emprestito:
     - **nombre_resumido_proceso**: Nombre resumido del proceso obtenido automáticamente usando referencia_proceso
@@ -4592,7 +4931,10 @@ async def obtener_todos_contratos_emprestito():
     const response = await fetch('/contratos_emprestito_all');
     const data = await response.json();
     if (data.success) {
-        console.log('Contratos encontrados:', data.count);
+        console.log('Total de registros:', data.count);
+        console.log('Contratos:', data.contratos_count);
+        console.log('Órdenes:', data.ordenes_count);
+        console.log('Convenios:', data.convenios_count);
         console.log('Datos:', data.data);
     }
     ```
@@ -4615,6 +4957,7 @@ async def obtener_todos_contratos_emprestito():
             "count": result["count"],
             "contratos_count": result["contratos_count"],
             "ordenes_count": result["ordenes_count"],
+            "convenios_count": result.get("convenios_count", 0),
             "collections": result["collections"],
             "timestamp": datetime.now().isoformat(),
             "last_updated": "2025-10-10T00:00:00Z",

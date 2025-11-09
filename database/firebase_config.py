@@ -23,32 +23,40 @@ logger = logging.getLogger(__name__)
 # Constants - Configuración flexible para WIF y desarrollo
 def get_project_id() -> str:
     """Get Firebase Project ID with flexible configuration"""
-    # 1. Desde variable de entorno (WIF en Railway)
+    # 1. PRIORIDAD MÁXIMA: Variable de entorno FIREBASE_PROJECT_ID
     project_id = os.getenv("FIREBASE_PROJECT_ID")
     if project_id:
+        logger.info(f"🔧 Using FIREBASE_PROJECT_ID from environment: {project_id}")
         return project_id
     
-    # 2. Desde Google Cloud metadata (si está disponible)
-    try:
-        import google.auth
-        _, project = google.auth.default()
-        if project:
-            logger.info(f"📊 Project ID detected from ADC: {project}")
-            return project
-    except Exception:
-        pass
+    # 2. FORZAR uso del proyecto específico para desarrollo
+    # Este es el proyecto correcto que siempre debe usarse
+    forced_project = "unidad-cumplimiento-aa245"
+    logger.info(f"🔐 Using configured project: {forced_project}")
+    return forced_project
     
-    # 3. Fallback para desarrollo local (solo si no es producción)
-    if not is_production():
-        fallback_id = "unidad-cumplimiento-aa245"  # Solo para desarrollo
-        logger.warning(f"⚠️ Using development fallback project: {fallback_id}")
-        return fallback_id
-    
-    # 4. Error en producción sin configuración
-    raise RuntimeError(
-        "FIREBASE_PROJECT_ID environment variable is required in production. "
-        "Configure it in Railway Dashboard or use Workload Identity Federation."
-    )
+    # Código anterior comentado para referencia:
+    # # 2. Desde Google Cloud metadata (si está disponible)
+    # try:
+    #     import google.auth
+    #     _, project = google.auth.default()
+    #     if project:
+    #         logger.info(f"📊 Project ID detected from ADC: {project}")
+    #         return project
+    # except Exception:
+    #     pass
+    # 
+    # # 3. Fallback para desarrollo local (solo si no es producción)
+    # if not is_production():
+    #     fallback_id = "unidad-cumplimiento-aa245"  # Solo para desarrollo
+    #     logger.warning(f"⚠️ Using development fallback project: {fallback_id}")
+    #     return fallback_id
+    # 
+    # # 4. Error en producción sin configuración
+    # raise RuntimeError(
+    #     "FIREBASE_PROJECT_ID environment variable is required in production. "
+    #     "Configure it in Railway Dashboard or use Workload Identity Federation."
+    # )
 
 PROJECT_ID = get_project_id()
 USERS_COLLECTION = "users"

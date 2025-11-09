@@ -136,6 +136,8 @@ try:
         get_bancos_emprestito_all,
         get_procesos_emprestito_all,
         cargar_orden_compra_directa,
+        cargar_convenio_transferencia,
+        get_convenios_transferencia_emprestito_all,
         obtener_datos_secop_completos,
         actualizar_proceso_emprestito_completo,
         procesar_todos_procesos_emprestito_completo,
@@ -235,6 +237,12 @@ except ImportError as e:
     
     async def cargar_orden_compra_directa(datos_orden):
         return {"success": False, "error": "Emprestito operations not available"}
+    
+    async def cargar_convenio_transferencia(datos_convenio):
+        return {"success": False, "error": "Emprestito operations not available"}
+    
+    async def get_convenios_transferencia_emprestito_all():
+        return {"success": False, "error": "Emprestito operations not available", "data": [], "count": 0}
     
     async def buscar_y_poblar_contratos_secop(referencia_proceso: str, proceso_contractual: str):
         return {"success": False, "error": "Emprestito operations not available"}

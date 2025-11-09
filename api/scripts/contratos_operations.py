@@ -432,8 +432,32 @@ async def get_ordenes_compra_all_data_optimized(db, proceso_map: Dict[str, str])
         print(f"Error obteniendo órdenes de compra: {str(e)}")
         return []
 
+async def get_convenios_transferencias_all_data(db) -> list:
+    """Obtener todos los convenios de transferencia de la colección convenios_transferencias_emprestito"""
+    try:
+        collection_ref = db.collection('convenios_transferencias_emprestito')
+        docs = collection_ref.stream()
+        convenios_data = []
+        
+        for doc in docs:
+            doc_data = doc.to_dict()
+            doc_data['id'] = doc.id  # Agregar ID del documento
+            
+            # Agregar marcador de tipo para identificar la fuente
+            doc_data['tipo_registro'] = 'convenio_transferencia'
+            
+            # Limpiar datos de Firebase para serialización JSON
+            doc_data_clean = clean_firebase_data(doc_data)
+            convenios_data.append(doc_data_clean)
+        
+        return convenios_data
+        
+    except Exception as e:
+        print(f"Error obteniendo convenios de transferencia: {str(e)}")
+        return []
+
 async def get_contratos_emprestito_all() -> Dict[str, Any]:
-    """Obtener todos los registros de las colecciones contratos_emprestito y ordenes_compra_emprestito con campos unificados - VERSIÓN OPTIMIZADA"""
+    """Obtener todos los registros de las colecciones contratos_emprestito, ordenes_compra_emprestito y convenios_transferencias_emprestito con campos unificados - VERSIÓN OPTIMIZADA"""
     try:
         db = get_firestore_client()
         if db is None:
@@ -445,18 +469,20 @@ async def get_contratos_emprestito_all() -> Dict[str, Any]:
         print(f"✅ Mapa de procesos cargado: {len(proceso_map)} procesos")
         
         # 🚀 OPTIMIZACIÓN 2: Usar funciones optimizadas con el mapa precargado
-        # Ejecutar ambas consultas en paralelo
+        # Ejecutar las tres consultas en paralelo
         contratos_task = get_contratos_emprestito_all_optimized(db, proceso_map)
         ordenes_task = get_ordenes_compra_all_data_optimized(db, proceso_map)
+        convenios_task = get_convenios_transferencias_all_data(db)
         
         print("🔄 Ejecutando consultas en paralelo...")
-        contratos_data, ordenes_data = await asyncio.gather(contratos_task, ordenes_task)
+        contratos_data, ordenes_data, convenios_data = await asyncio.gather(contratos_task, ordenes_task, convenios_task)
         
         print(f"✅ Contratos obtenidos: {len(contratos_data)}")
         print(f"✅ Órdenes obtenidas: {len(ordenes_data)}")
+        print(f"✅ Convenios de transferencia obtenidos: {len(convenios_data)}")
         
-        # Combinar ambas colecciones
-        all_data = contratos_data + ordenes_data
+        # Combinar las tres colecciones
+        all_data = contratos_data + ordenes_data + convenios_data
         
         return {
             "success": True,
@@ -464,9 +490,10 @@ async def get_contratos_emprestito_all() -> Dict[str, Any]:
             "count": len(all_data),
             "contratos_count": len(contratos_data),
             "ordenes_count": len(ordenes_data),
-            "collections": ["contratos_emprestito", "ordenes_compra_emprestito"],
+            "convenios_count": len(convenios_data),
+            "collections": ["contratos_emprestito", "ordenes_compra_emprestito", "convenios_transferencias_emprestito"],
             "timestamp": datetime.now().isoformat(),
-            "message": f"🚀 OPTIMIZADO: Se obtuvieron {len(contratos_data)} contratos y {len(ordenes_data)} órdenes de compra exitosamente ({len(all_data)} registros totales)"
+            "message": f"🚀 OPTIMIZADO: Se obtuvieron {len(contratos_data)} contratos, {len(ordenes_data)} órdenes de compra y {len(convenios_data)} convenios de transferencia exitosamente ({len(all_data)} registros totales)"
         }
         
     except Exception as e:

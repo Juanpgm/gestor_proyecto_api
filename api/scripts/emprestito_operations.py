@@ -1033,6 +1033,47 @@ async def get_bancos_emprestito_all() -> Dict[str, Any]:
             "count": 0
         }
 
+async def get_convenios_transferencia_emprestito_all() -> Dict[str, Any]:
+    """Obtener todos los registros de la colección convenios_transferencias_emprestito"""
+    try:
+        if not FIRESTORE_AVAILABLE:
+            return {"success": False, "error": "Firebase no disponible", "data": [], "count": 0}
+        
+        db = get_firestore_client()
+        if db is None:
+            return {"success": False, "error": "No se pudo conectar a Firestore", "data": [], "count": 0}
+        
+        collection_ref = db.collection('convenios_transferencias_emprestito')
+        docs = collection_ref.stream()
+        convenios_data = []
+        
+        for doc in docs:
+            doc_data = doc.to_dict()
+            doc_data['id'] = doc.id  # Agregar ID del documento
+            # Limpiar datos de Firebase para serialización JSON
+            doc_data_clean = serialize_datetime_objects(doc_data)
+            convenios_data.append(doc_data_clean)
+        
+        # Ordenar por fecha de creación (más recientes primero)
+        convenios_data.sort(key=lambda x: x.get('fecha_creacion', ''), reverse=True)
+        
+        return {
+            "success": True,
+            "data": convenios_data,
+            "count": len(convenios_data),
+            "collection": "convenios_transferencias_emprestito",
+            "timestamp": datetime.now().isoformat(),
+            "message": f"Se obtuvieron {len(convenios_data)} convenios de transferencia exitosamente"
+        }
+        
+    except Exception as e:
+        return {
+            "success": False, 
+            "error": f"Error obteniendo todos los convenios de transferencia: {str(e)}",
+            "data": [],
+            "count": 0
+        }
+
 async def eliminar_proceso_emprestito(*args, **kwargs):
     """Función stub - No implementada temporalmente"""
     return {"success": False, "error": "Función no implementada temporalmente"}
@@ -1321,6 +1362,104 @@ async def cargar_orden_compra_directa(datos_orden: Dict[str, Any]) -> Dict[str, 
 
     except Exception as e:
         logger.error(f"Error cargando orden de compra: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+async def cargar_convenio_transferencia(datos_convenio: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Cargar convenio de transferencia directamente en la colección convenios_transferencias_emprestito
+    sin procesamiento adicional de APIs externas
+    """
+    if not FIRESTORE_AVAILABLE:
+        return {
+            "success": False,
+            "error": "Firebase no disponible"
+        }
+
+    try:
+        # Validar campos obligatorios
+        campos_obligatorios = [
+            "referencia_contrato",
+            "nombre_centro_gestor",
+            "banco",
+            "objeto_contrato",
+            "valor_contrato"
+        ]
+        
+        for campo in campos_obligatorios:
+            if not datos_convenio.get(campo):
+                return {
+                    "success": False,
+                    "error": f"El campo '{campo}' es obligatorio"
+                }
+
+        # Verificar si ya existe un convenio con la misma referencia
+        referencia_contrato = datos_convenio.get("referencia_contrato", "").strip()
+        
+        db_client = get_firestore_client()
+        if not db_client:
+            return {
+                "success": False,
+                "error": "Error obteniendo cliente Firestore"
+            }
+
+        # Buscar duplicados por referencia_contrato
+        convenios_ref = db_client.collection('convenios_transferencias_emprestito')
+        query_resultado = convenios_ref.where('referencia_contrato', '==', referencia_contrato).get()
+
+        if len(query_resultado) > 0:
+            return {
+                "success": False,
+                "error": f"Ya existe un convenio de transferencia con referencia: {referencia_contrato}",
+                "duplicate": True,
+                "existing_data": {
+                    "doc_id": query_resultado[0].id,
+                    "referencia_contrato": referencia_contrato
+                }
+            }
+
+        # Preparar datos para guardar
+        datos_completos = {
+            "referencia_contrato": referencia_contrato,
+            "nombre_centro_gestor": datos_convenio.get("nombre_centro_gestor", "").strip(),
+            "bp": datos_convenio.get("bp", "").strip() if datos_convenio.get("bp") else None,
+            "bpin": datos_convenio.get("bpin", "").strip() if datos_convenio.get("bpin") else None,
+            "objeto_contrato": datos_convenio.get("objeto_contrato", "").strip(),
+            "valor_contrato": float(datos_convenio.get("valor_contrato", 0)),
+            "valor_convenio": float(datos_convenio.get("valor_convenio", 0)) if datos_convenio.get("valor_convenio") else None,
+            "urlproceso": datos_convenio.get("urlproceso", "").strip() if datos_convenio.get("urlproceso") else None,
+            "banco": datos_convenio.get("banco", "").strip(),
+            "fecha_inicio_contrato": datos_convenio.get("fecha_inicio_contrato", "").strip() if datos_convenio.get("fecha_inicio_contrato") else None,
+            "fecha_fin_contrato": datos_convenio.get("fecha_fin_contrato", "").strip() if datos_convenio.get("fecha_fin_contrato") else None,
+            "modalidad_contrato": datos_convenio.get("modalidad_contrato", "").strip() if datos_convenio.get("modalidad_contrato") else None,
+            "ordenador_gastor": datos_convenio.get("ordenador_gastor", "").strip() if datos_convenio.get("ordenador_gastor") else None,
+            "tipo_contrato": datos_convenio.get("tipo_contrato", "").strip() if datos_convenio.get("tipo_contrato") else None,
+            "estado_contrato": datos_convenio.get("estado_contrato", "").strip() if datos_convenio.get("estado_contrato") else None,
+            "sector": datos_convenio.get("sector", "").strip() if datos_convenio.get("sector") else None,
+            "fecha_creacion": datetime.now(),
+            "fecha_actualizacion": datetime.now(),
+            "estado": "activo",
+            "tipo": "convenio_transferencia_manual"
+        }
+
+        # Guardar en Firestore
+        doc_ref = db_client.collection('convenios_transferencias_emprestito').add(datos_completos)
+        doc_id = doc_ref[1].id
+
+        logger.info(f"Convenio de transferencia creado exitosamente: {doc_id}")
+
+        return {
+            "success": True,
+            "doc_id": doc_id,
+            "data": serialize_datetime_objects(datos_completos),
+            "message": f"Convenio de transferencia {referencia_contrato} guardado exitosamente",
+            "coleccion": "convenios_transferencias_emprestito"
+        }
+
+    except Exception as e:
+        logger.error(f"Error cargando convenio de transferencia: {e}")
         return {
             "success": False,
             "error": str(e)
