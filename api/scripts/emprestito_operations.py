@@ -1465,6 +1465,118 @@ async def cargar_convenio_transferencia(datos_convenio: Dict[str, Any]) -> Dict[
             "error": str(e)
         }
 
+async def cargar_rpc_emprestito(datos_rpc: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Cargar RPC (Registro Presupuestal de Compromiso) directamente en la colección rpc_contratos_emprestito
+    sin procesamiento adicional de APIs externas
+    """
+    if not FIRESTORE_AVAILABLE:
+        return {
+            "success": False,
+            "error": "Firebase no disponible"
+        }
+
+    try:
+        # Validar campos obligatorios
+        campos_obligatorios = [
+            "numero_rpc",
+            "beneficiario_id",
+            "beneficiario_nombre",
+            "descripcion_rpc",
+            "fecha_contabilizacion",
+            "fecha_impresion",
+            "estado_liberacion",
+            "bp",
+            "valor_rpc",
+            "nombre_centro_gestor",
+            "referencia_contrato"
+        ]
+        
+        for campo in campos_obligatorios:
+            if not datos_rpc.get(campo):
+                return {
+                    "success": False,
+                    "error": f"El campo '{campo}' es obligatorio"
+                }
+
+        # Verificar si ya existe un RPC con el mismo número
+        numero_rpc = datos_rpc.get("numero_rpc", "").strip()
+        
+        db_client = get_firestore_client()
+        if not db_client:
+            return {
+                "success": False,
+                "error": "Error obteniendo cliente Firestore"
+            }
+
+        # Buscar duplicados por numero_rpc
+        rpc_ref = db_client.collection('rpc_contratos_emprestito')
+        query_resultado = rpc_ref.where('numero_rpc', '==', numero_rpc).get()
+
+        if len(query_resultado) > 0:
+            return {
+                "success": False,
+                "error": f"Ya existe un RPC con número: {numero_rpc}",
+                "duplicate": True,
+                "existing_data": {
+                    "doc_id": query_resultado[0].id,
+                    "numero_rpc": numero_rpc
+                }
+            }
+
+        # Preparar datos para guardar
+        # Procesar cdp_asociados: puede venir como lista o string separado por comas
+        cdp_asociados_list = []
+        if datos_rpc.get("cdp_asociados"):
+            cdp_value = datos_rpc.get("cdp_asociados")
+            if isinstance(cdp_value, list):
+                # Si ya es una lista, limpiar cada elemento
+                cdp_asociados_list = [str(cdp).strip() for cdp in cdp_value if cdp]
+            elif isinstance(cdp_value, str):
+                # Si es string, dividir por comas y limpiar
+                cdp_asociados_list = [cdp.strip() for cdp in cdp_value.split(",") if cdp.strip()]
+        
+        datos_completos = {
+            "numero_rpc": numero_rpc,
+            "beneficiario_id": datos_rpc.get("beneficiario_id", "").strip(),
+            "beneficiario_nombre": datos_rpc.get("beneficiario_nombre", "").strip(),
+            "descripcion_rpc": datos_rpc.get("descripcion_rpc", "").strip(),
+            "fecha_contabilizacion": datos_rpc.get("fecha_contabilizacion", "").strip(),
+            "fecha_impresion": datos_rpc.get("fecha_impresion", "").strip(),
+            "estado_liberacion": datos_rpc.get("estado_liberacion", "").strip(),
+            "bp": datos_rpc.get("bp", "").strip(),
+            "valor_rpc": float(datos_rpc.get("valor_rpc", 0)),
+            "cdp_asociados": cdp_asociados_list if cdp_asociados_list else [],
+            "programacion_pac": datos_rpc.get("programacion_pac", {}) if isinstance(datos_rpc.get("programacion_pac"), dict) else {},
+            "nombre_centro_gestor": datos_rpc.get("nombre_centro_gestor", "").strip(),
+            "referencia_contrato": datos_rpc.get("referencia_contrato", "").strip(),
+            "fecha_creacion": datetime.now(),
+            "fecha_actualizacion": datetime.now(),
+            "estado": "activo",
+            "tipo": "rpc_manual"
+        }
+
+        # Guardar en Firestore
+        doc_ref = db_client.collection('rpc_contratos_emprestito').add(datos_completos)
+        doc_id = doc_ref[1].id
+
+        logger.info(f"RPC creado exitosamente: {doc_id}")
+
+        return {
+            "success": True,
+            "doc_id": doc_id,
+            "data": serialize_datetime_objects(datos_completos),
+            "message": f"RPC {numero_rpc} guardado exitosamente",
+            "coleccion": "rpc_contratos_emprestito"
+        }
+
+    except Exception as e:
+        logger.error(f"Error cargando RPC: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
 async def obtener_datos_secop_completos(referencia_proceso: str) -> Dict[str, Any]:
     """
     Obtener datos completos de un proceso desde la API del SECOP

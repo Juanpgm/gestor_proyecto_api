@@ -3726,6 +3726,7 @@ try:
         get_emprestito_operations_status,
         cargar_orden_compra_directa,
         cargar_convenio_transferencia,
+        cargar_rpc_emprestito,
         get_convenios_transferencia_emprestito_all,
         obtener_ordenes_compra_tvec_enriquecidas,
         get_tvec_enrich_status,
@@ -4275,6 +4276,239 @@ async def cargar_convenio_transferencia_emprestito(
         raise
     except Exception as e:
         logger.error(f"Error en endpoint de convenio de transferencia: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "success": False,
+                "error": "Error interno del servidor",
+                "message": "Por favor, inténtelo de nuevo más tarde",
+                "code": "INTERNAL_SERVER_ERROR"
+            }
+        )
+
+@app.post("/emprestito/cargar-rpc", tags=["Gestión de Empréstito"], summary="🟢 Cargar RPC de Empréstito")
+async def cargar_rpc_emprestito_endpoint(
+    numero_rpc: str = Form(..., description="Número del RPC (obligatorio)"),
+    beneficiario_id: str = Form(..., description="ID del beneficiario (obligatorio)"),
+    beneficiario_nombre: str = Form(..., description="Nombre del beneficiario (obligatorio)"),
+    descripcion_rpc: str = Form(..., description="Descripción del RPC (obligatorio)"),
+    fecha_contabilizacion: str = Form(..., description="Fecha de contabilización (obligatorio)"),
+    fecha_impresion: str = Form(..., description="Fecha de impresión (obligatorio)"),
+    estado_liberacion: str = Form(..., description="Estado de liberación (obligatorio)"),
+    bp: str = Form(..., description="Código BP (obligatorio)"),
+    valor_rpc: float = Form(..., description="Valor del RPC (obligatorio)"),
+    nombre_centro_gestor: str = Form(..., description="Centro gestor responsable (obligatorio)"),
+    referencia_contrato: str = Form(..., description="Referencia del contrato (obligatorio)"),
+    cdp_asociados: Optional[str] = Form(None, description="CDPs asociados separados por comas o JSON array (opcional)"),
+    programacion_pac: Optional[str] = Form(None, description="Programación PAC en formato JSON (opcional)")
+):
+    """
+    ## 📝 POST | 📥 Carga de Datos | Cargar RPC (Registro Presupuestal de Compromiso) de Empréstito
+    
+    Endpoint para carga directa de RPC de empréstito en la colección 
+    `rpc_contratos_emprestito` sin procesamiento de APIs externas.
+    
+    ### ✅ Funcionalidades principales:
+    - **Carga directa**: Registra directamente en `rpc_contratos_emprestito`
+    - **Validación de duplicados**: Verifica existencia previa usando `numero_rpc`
+    - **Validación de campos**: Verifica que todos los campos obligatorios estén presentes
+    - **Timestamps automáticos**: Agrega fecha de creación y actualización
+    - **Programación PAC**: Soporte para objeto JSON con valores mensuales
+    
+    ### ⚙️ Campos obligatorios:
+    - `numero_rpc`: Número único del RPC
+    - `beneficiario_id`: Identificación del beneficiario
+    - `beneficiario_nombre`: Nombre completo del beneficiario
+    - `descripcion_rpc`: Descripción del compromiso
+    - `fecha_contabilizacion`: Fecha de contabilización del RPC
+    - `fecha_impresion`: Fecha de impresión del documento
+    - `estado_liberacion`: Estado de liberación del RPC
+    - `bp`: Código BP (Banco de Programas)
+    - `valor_rpc`: Valor monetario del RPC
+    - `nombre_centro_gestor`: Centro gestor responsable
+    - `referencia_contrato`: Referencia del contrato asociado
+    
+    ### 📝 Campos opcionales:
+    - `cdp_asociados`: Lista de CDPs (Certificados de Disponibilidad Presupuestal) asociados
+      - Puede enviarse como: `"CDP-001,CDP-002,CDP-003"` (separados por comas)
+      - O como JSON array: `["CDP-001", "CDP-002", "CDP-003"]`
+    - `programacion_pac`: Objeto JSON con programación mensual del PAC (Plan Anual de Caja)
+      - Formato: `{"mes-año": "valor", "enero-2024": "1000000", "febrero-2024": "500000"}`
+    
+    ### 🛡️ Validación de duplicados:
+    Busca `numero_rpc` en la colección `rpc_contratos_emprestito` antes de crear nuevo registro.
+    
+    ### 📊 Estructura de datos guardados:
+    ```json
+    {
+        "numero_rpc": "RPC-2024-001",
+        "beneficiario_id": "890123456",
+        "beneficiario_nombre": "Proveedor XYZ S.A.S.",
+        "descripcion_rpc": "Suministro de equipos médicos",
+        "fecha_contabilizacion": "2024-10-15",
+        "fecha_impresion": "2024-10-16",
+        "estado_liberacion": "Liberado",
+        "bp": "BP-2024-001",
+        "valor_rpc": 50000000.0,
+        "cdp_asociados": ["CDP-2024-100", "CDP-2024-101", "CDP-2024-102"],
+        "programacion_pac": {
+            "enero-2024": "10000000",
+            "febrero-2024": "20000000",
+            "marzo-2024": "20000000"
+        },
+        "nombre_centro_gestor": "Secretaría de Salud",
+        "referencia_contrato": "CONT-SALUD-003-2024",
+        "fecha_creacion": "2024-10-14T10:30:00",
+        "fecha_actualizacion": "2024-10-14T10:30:00",
+        "estado": "activo",
+        "tipo": "rpc_manual"
+    }
+    ```
+    
+    ### 📋 Ejemplo de request:
+    ```json
+    {
+        "numero_rpc": "RPC-SALUD-003-2024",
+        "beneficiario_id": "890123456",
+        "beneficiario_nombre": "Proveedor XYZ S.A.S.",
+        "descripcion_rpc": "Suministro de equipos médicos",
+        "fecha_contabilizacion": "2024-10-15",
+        "fecha_impresion": "2024-10-16",
+        "estado_liberacion": "Liberado",
+        "bp": "BP-2024-001",
+        "valor_rpc": 50000000.0,
+        "nombre_centro_gestor": "Secretaría de Salud",
+        "referencia_contrato": "CONT-SALUD-003-2024",
+        "cdp_asociados": "CDP-2024-100",
+        "programacion_pac": "{\\"enero-2024\\": \\"10000000\\", \\"febrero-2024\\": \\"20000000\\"}"
+    }
+    ```
+    
+    ### ✅ Respuesta exitosa (201):
+    ```json
+    {
+        "success": true,
+        "message": "RPC RPC-SALUD-003-2024 guardado exitosamente",
+        "doc_id": "abc123def456",
+        "data": { ... },
+        "coleccion": "rpc_contratos_emprestito"
+    }
+    ```
+    
+    ### ❌ Respuesta de duplicado (409):
+    ```json
+    {
+        "success": false,
+        "error": "Ya existe un RPC con número: RPC-SALUD-003-2024",
+        "duplicate": true,
+        "existing_data": { ... }
+    }
+    ```
+    """
+    try:
+        check_emprestito_availability()
+        
+        # Procesar cdp_asociados: puede venir como string separado por comas o como JSON array
+        cdp_asociados_processed = None
+        if cdp_asociados:
+            # Intentar parsear como JSON array primero
+            try:
+                cdp_parsed = json.loads(cdp_asociados)
+                if isinstance(cdp_parsed, list):
+                    cdp_asociados_processed = cdp_parsed
+                else:
+                    # Si es un string simple, usar directamente
+                    cdp_asociados_processed = cdp_asociados
+            except json.JSONDecodeError:
+                # Si no es JSON válido, asumir que es string separado por comas
+                cdp_asociados_processed = cdp_asociados
+        
+        # Procesar programacion_pac si viene como string JSON
+        programacion_pac_dict = {}
+        if programacion_pac:
+            try:
+                programacion_pac_dict = json.loads(programacion_pac)
+                if not isinstance(programacion_pac_dict, dict):
+                    raise ValueError("programacion_pac debe ser un objeto JSON")
+            except json.JSONDecodeError:
+                return JSONResponse(
+                    content={
+                        "success": False,
+                        "error": "programacion_pac debe ser un JSON válido",
+                        "message": "El formato de programacion_pac no es válido",
+                        "timestamp": datetime.now().isoformat()
+                    },
+                    status_code=400,
+                    headers={"Content-Type": "application/json; charset=utf-8"}
+                )
+        
+        # Crear diccionario con los datos del formulario
+        datos_rpc = {
+            "numero_rpc": numero_rpc,
+            "beneficiario_id": beneficiario_id,
+            "beneficiario_nombre": beneficiario_nombre,
+            "descripcion_rpc": descripcion_rpc,
+            "fecha_contabilizacion": fecha_contabilizacion,
+            "fecha_impresion": fecha_impresion,
+            "estado_liberacion": estado_liberacion,
+            "bp": bp,
+            "valor_rpc": valor_rpc,
+            "cdp_asociados": cdp_asociados_processed,
+            "programacion_pac": programacion_pac_dict,
+            "nombre_centro_gestor": nombre_centro_gestor,
+            "referencia_contrato": referencia_contrato
+        }
+        
+        # Procesar RPC
+        resultado = await cargar_rpc_emprestito(datos_rpc)
+        
+        # Manejar respuesta según el resultado
+        if not resultado.get("success"):
+            # Manejar caso especial de duplicado
+            if resultado.get("duplicate"):
+                return JSONResponse(
+                    content={
+                        "success": False,
+                        "error": resultado.get("error"),
+                        "duplicate": True,
+                        "existing_data": resultado.get("existing_data"),
+                        "message": "Ya existe un RPC con este número",
+                        "timestamp": datetime.now().isoformat()
+                    },
+                    status_code=409,  # Conflict
+                    headers={"Content-Type": "application/json; charset=utf-8"}
+                )
+            else:
+                # Error general
+                return JSONResponse(
+                    content={
+                        "success": False,
+                        "error": resultado.get("error"),
+                        "message": "Error al procesar el RPC",
+                        "timestamp": datetime.now().isoformat()
+                    },
+                    status_code=400,
+                    headers={"Content-Type": "application/json; charset=utf-8"}
+                )
+        
+        # Respuesta exitosa
+        return JSONResponse(
+            content={
+                "success": True,
+                "message": resultado.get("message"),
+                "data": resultado.get("data"),
+                "doc_id": resultado.get("doc_id"),
+                "coleccion": resultado.get("coleccion"),
+                "timestamp": datetime.now().isoformat()
+            },
+            status_code=201,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en endpoint de RPC: {e}")
         raise HTTPException(
             status_code=500,
             detail={

@@ -137,6 +137,7 @@ try:
         get_procesos_emprestito_all,
         cargar_orden_compra_directa,
         cargar_convenio_transferencia,
+        cargar_rpc_emprestito,
         get_convenios_transferencia_emprestito_all,
         obtener_datos_secop_completos,
         actualizar_proceso_emprestito_completo,
@@ -239,6 +240,9 @@ except ImportError as e:
         return {"success": False, "error": "Emprestito operations not available"}
     
     async def cargar_convenio_transferencia(datos_convenio):
+        return {"success": False, "error": "Emprestito operations not available"}
+    
+    async def cargar_rpc_emprestito(datos_rpc):
         return {"success": False, "error": "Emprestito operations not available"}
     
     async def get_convenios_transferencia_emprestito_all():
