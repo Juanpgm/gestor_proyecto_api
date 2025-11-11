@@ -4332,8 +4332,11 @@ async def cargar_rpc_emprestito_endpoint(
     - `cdp_asociados`: Lista de CDPs (Certificados de Disponibilidad Presupuestal) asociados
       - Puede enviarse como: `"CDP-001,CDP-002,CDP-003"` (separados por comas)
       - O como JSON array: `["CDP-001", "CDP-002", "CDP-003"]`
+      - Si se deja vacío, se guardará como lista vacía `[]`
     - `programacion_pac`: Objeto JSON con programación mensual del PAC (Plan Anual de Caja)
-      - Formato: `{"mes-año": "valor", "enero-2024": "1000000", "febrero-2024": "500000"}`
+      - Formato: `{"enero-2024": "1000000", "febrero-2024": "500000"}`
+      - **IMPORTANTE**: Debe ser un objeto JSON válido si se proporciona
+      - Si no es JSON válido, se ignorará y se guardará como objeto vacío `{}`
     
     ### 🛡️ Validación de duplicados:
     Busca `numero_rpc` en la colección `rpc_contratos_emprestito` antes de crear nuevo registro.
@@ -4410,37 +4413,56 @@ async def cargar_rpc_emprestito_endpoint(
         
         # Procesar cdp_asociados: puede venir como string separado por comas o como JSON array
         cdp_asociados_processed = None
-        if cdp_asociados:
-            # Intentar parsear como JSON array primero
-            try:
-                cdp_parsed = json.loads(cdp_asociados)
-                if isinstance(cdp_parsed, list):
-                    cdp_asociados_processed = cdp_parsed
-                else:
-                    # Si es un string simple, usar directamente
+        if cdp_asociados and cdp_asociados.strip():
+            # Si parece JSON array, intentar parsear
+            if cdp_asociados.strip().startswith('['):
+                try:
+                    cdp_parsed = json.loads(cdp_asociados)
+                    if isinstance(cdp_parsed, list):
+                        cdp_asociados_processed = cdp_parsed
+                    else:
+                        # Si no es lista, usar como string
+                        cdp_asociados_processed = cdp_asociados
+                except json.JSONDecodeError:
+                    # Si falla el parseo, usar como string
                     cdp_asociados_processed = cdp_asociados
-            except json.JSONDecodeError:
-                # Si no es JSON válido, asumir que es string separado por comas
+            else:
+                # Si no parece JSON, asumir que es string separado por comas o simple
                 cdp_asociados_processed = cdp_asociados
         
         # Procesar programacion_pac si viene como string JSON
         programacion_pac_dict = {}
-        if programacion_pac:
-            try:
-                programacion_pac_dict = json.loads(programacion_pac)
-                if not isinstance(programacion_pac_dict, dict):
-                    raise ValueError("programacion_pac debe ser un objeto JSON")
-            except json.JSONDecodeError:
-                return JSONResponse(
-                    content={
-                        "success": False,
-                        "error": "programacion_pac debe ser un JSON válido",
-                        "message": "El formato de programacion_pac no es válido",
-                        "timestamp": datetime.now().isoformat()
-                    },
-                    status_code=400,
-                    headers={"Content-Type": "application/json; charset=utf-8"}
-                )
+        if programacion_pac and programacion_pac.strip():
+            # Solo intentar parsear si parece ser JSON (empieza con { o [)
+            if programacion_pac.strip().startswith('{') or programacion_pac.strip().startswith('['):
+                try:
+                    programacion_pac_dict = json.loads(programacion_pac)
+                    if not isinstance(programacion_pac_dict, dict):
+                        return JSONResponse(
+                            content={
+                                "success": False,
+                                "error": "programacion_pac debe ser un objeto JSON (diccionario)",
+                                "message": "El formato de programacion_pac debe ser un objeto JSON como {\"enero-2024\": \"1000000\"}",
+                                "timestamp": datetime.now().isoformat()
+                            },
+                            status_code=400,
+                            headers={"Content-Type": "application/json; charset=utf-8"}
+                        )
+                except json.JSONDecodeError as e:
+                    return JSONResponse(
+                        content={
+                            "success": False,
+                            "error": f"programacion_pac tiene formato JSON inválido: {str(e)}",
+                            "message": "El formato de programacion_pac no es un JSON válido. Debe ser un objeto como {\"enero-2024\": \"1000000\"}",
+                            "timestamp": datetime.now().isoformat()
+                        },
+                        status_code=400,
+                        headers={"Content-Type": "application/json; charset=utf-8"}
+                    )
+            else:
+                # Si no parece JSON, ignorar el campo con un warning
+                logger.warning(f"programacion_pac no parece ser JSON, ignorando valor: {programacion_pac[:50]}")
+                programacion_pac_dict = {}
         
         # Crear diccionario con los datos del formulario
         datos_rpc = {
@@ -4459,8 +4481,8 @@ async def cargar_rpc_emprestito_endpoint(
             "referencia_contrato": referencia_contrato
         }
         
-        # Procesar RPC
-        resultado = await cargar_rpc_emprestito(datos_rpc)
+        # Procesar RPC (función síncrona)
+        resultado = cargar_rpc_emprestito(datos_rpc)
         
         # Manejar respuesta según el resultado
         if not resultado.get("success"):

@@ -1465,7 +1465,7 @@ async def cargar_convenio_transferencia(datos_convenio: Dict[str, Any]) -> Dict[
             "error": str(e)
         }
 
-async def cargar_rpc_emprestito(datos_rpc: Dict[str, Any]) -> Dict[str, Any]:
+def cargar_rpc_emprestito(datos_rpc: Dict[str, Any]) -> Dict[str, Any]:
     """
     Cargar RPC (Registro Presupuestal de Compromiso) directamente en la colección rpc_contratos_emprestito
     sin procesamiento adicional de APIs externas
