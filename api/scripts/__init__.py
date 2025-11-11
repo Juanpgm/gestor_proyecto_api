@@ -138,6 +138,8 @@ try:
         cargar_orden_compra_directa,
         cargar_convenio_transferencia,
         cargar_rpc_emprestito,
+        cargar_pago_emprestito,
+        get_pagos_emprestito_all,
         get_rpc_contratos_emprestito_all,
         get_convenios_transferencia_emprestito_all,
         obtener_datos_secop_completos,
@@ -245,6 +247,12 @@ except ImportError as e:
     
     def cargar_rpc_emprestito(datos_rpc):
         return {"success": False, "error": "Emprestito operations not available"}
+    
+    def cargar_pago_emprestito(datos_pago):
+        return {"success": False, "error": "Emprestito operations not available"}
+    
+    async def get_pagos_emprestito_all():
+        return {"success": False, "error": "Emprestito operations not available", "data": [], "count": 0}
     
     async def get_rpc_contratos_emprestito_all():
         return {"success": False, "error": "Emprestito operations not available", "data": [], "count": 0}

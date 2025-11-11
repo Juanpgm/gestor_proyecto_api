@@ -509,6 +509,8 @@ async def read_root():
             "gestion_emprestito": [
                 "/emprestito/cargar-proceso",
                 "/emprestito/cargar-orden-compra",
+                "/emprestito/cargar-pago (POST - Registrar pago de empréstito con timestamp automático)",
+                "/contratos_pagos_all (GET - Obtener todos los pagos de empréstito)",
                 "/emprestito/obtener-procesos-secop (POST - Procesamiento masivo)",
                 "/emprestito/proceso/{referencia_proceso}",
                 "/emprestito/obtener-contratos-secop",
@@ -3727,6 +3729,8 @@ try:
         cargar_orden_compra_directa,
         cargar_convenio_transferencia,
         cargar_rpc_emprestito,
+        cargar_pago_emprestito,
+        get_pagos_emprestito_all,
         get_rpc_contratos_emprestito_all,
         get_convenios_transferencia_emprestito_all,
         obtener_ordenes_compra_tvec_enriquecidas,
@@ -3738,7 +3742,12 @@ try:
         TVEC_ENRICH_OPERATIONS_AVAILABLE,
         ORDENES_COMPRA_OPERATIONS_AVAILABLE
     )
-    from api.models import EmprestitoRequest, EmprestitoResponse
+    from api.models import (
+        EmprestitoRequest, 
+        EmprestitoResponse,
+        PagoEmprestitoRequest,
+        PagoEmprestitoResponse
+    )
     print(f"✅ Empréstito imports successful - AVAILABLE: {EMPRESTITO_OPERATIONS_AVAILABLE}")
     print(f"✅ TVEC enrich imports successful - AVAILABLE: {TVEC_ENRICH_OPERATIONS_AVAILABLE}")
 except ImportError as e:
@@ -4532,6 +4541,302 @@ async def cargar_rpc_emprestito_endpoint(
         raise
     except Exception as e:
         logger.error(f"Error en endpoint de RPC: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "success": False,
+                "error": "Error interno del servidor",
+                "message": "Por favor, inténtelo de nuevo más tarde",
+                "code": "INTERNAL_SERVER_ERROR"
+            }
+        )
+
+@app.post("/emprestito/cargar-pago", tags=["Gestión de Empréstito"], summary="🟢 Cargar Pago de Empréstito")
+async def cargar_pago_emprestito_endpoint(
+    numero_rpc: str = Form(..., description="Número del RPC (obligatorio)"),
+    valor_pago: float = Form(..., description="Valor del pago (obligatorio, debe ser mayor a 0)"),
+    fecha_transaccion: str = Form(..., description="Fecha de la transacción (obligatorio)"),
+    referencia_contrato: str = Form(..., description="Referencia del contrato (obligatorio)"),
+    nombre_centro_gestor: str = Form(..., description="Centro gestor responsable (obligatorio)")
+):
+    """
+    ## 📝 POST | 📥 Carga de Datos | Cargar Pago de Empréstito
+    
+    Endpoint para registrar un pago de empréstito en la colección `pagos_emprestito`.
+    El campo `fecha_registro` se genera automáticamente con la hora actual del sistema como timestamp.
+    
+    ### ✅ Funcionalidades principales:
+    - **Registro de pagos**: Guarda información de pagos realizados
+    - **Timestamp automático**: `fecha_registro` se genera automáticamente con la hora del sistema
+    - **Validación de campos**: Verifica que todos los campos obligatorios estén presentes
+    - **Validación de valores**: Verifica que el valor del pago sea positivo
+    - **Trazabilidad**: Registra fecha de creación y actualización
+    
+    ### ⚙️ Campos obligatorios:
+    - `numero_rpc`: Número del RPC asociado al pago
+    - `valor_pago`: Valor monetario del pago (debe ser mayor a 0)
+    - `fecha_transaccion`: Fecha en que se realizó la transacción
+    - `referencia_contrato`: Referencia del contrato asociado
+    - `nombre_centro_gestor`: Centro gestor responsable del pago
+    
+    ### 🤖 Campos automáticos:
+    - `fecha_registro`: Timestamp automático del momento de registro (NO se envía por el usuario)
+    - `fecha_creacion`: Timestamp de creación del registro
+    - `fecha_actualizacion`: Timestamp de última actualización
+    - `estado`: "registrado" (valor por defecto)
+    - `tipo`: "pago_manual" (valor por defecto)
+    
+    ### 📊 Estructura de datos guardados:
+    ```json
+    {
+        "numero_rpc": "RPC-2024-001",
+        "valor_pago": 10000000.0,
+        "fecha_transaccion": "2024-11-11",
+        "referencia_contrato": "CONT-SALUD-003-2024",
+        "nombre_centro_gestor": "Secretaría de Salud",
+        "fecha_registro": "2024-11-11T14:30:45.123456",
+        "fecha_creacion": "2024-11-11T14:30:45.123456",
+        "fecha_actualizacion": "2024-11-11T14:30:45.123456",
+        "estado": "registrado",
+        "tipo": "pago_manual"
+    }
+    ```
+    
+    ### 📋 Ejemplo de request:
+    ```json
+    {
+        "numero_rpc": "RPC-SALUD-003-2024",
+        "valor_pago": 10000000.0,
+        "fecha_transaccion": "2024-11-11",
+        "referencia_contrato": "CONT-SALUD-003-2024",
+        "nombre_centro_gestor": "Secretaría de Salud"
+    }
+    ```
+    
+    ### ✅ Respuesta exitosa (201):
+    ```json
+    {
+        "success": true,
+        "message": "Pago registrado exitosamente para RPC RPC-SALUD-003-2024",
+        "data": { ... },
+        "doc_id": "abc123def456",
+        "coleccion": "pagos_emprestito",
+        "timestamp": "2024-11-11T14:30:45.123456"
+    }
+    ```
+    
+    ### ❌ Respuesta de error (400):
+    ```json
+    {
+        "success": false,
+        "error": "El campo 'numero_rpc' es obligatorio",
+        "message": "Error al procesar el pago",
+        "timestamp": "2024-11-11T14:30:45.123456"
+    }
+    ```
+    
+    ### 💡 Notas importantes:
+    - El campo `fecha_registro` NO debe ser enviado por el usuario
+    - Se genera automáticamente con la hora exacta del servidor
+    - El `valor_pago` debe ser un número positivo mayor a 0
+    - Todos los campos de texto se limpian de espacios en blanco
+    """
+    try:
+        check_emprestito_availability()
+        
+        # Preparar datos para procesar
+        datos_pago = {
+            "numero_rpc": numero_rpc,
+            "valor_pago": valor_pago,
+            "fecha_transaccion": fecha_transaccion,
+            "referencia_contrato": referencia_contrato,
+            "nombre_centro_gestor": nombre_centro_gestor
+        }
+        
+        # Procesar pago (función síncrona)
+        resultado = cargar_pago_emprestito(datos_pago)
+        
+        # Manejar respuesta según el resultado
+        if not resultado.get("success"):
+            return JSONResponse(
+                content={
+                    "success": False,
+                    "error": resultado.get("error"),
+                    "message": "Error al procesar el pago",
+                    "timestamp": datetime.now().isoformat()
+                },
+                status_code=400,
+                headers={"Content-Type": "application/json; charset=utf-8"}
+            )
+        
+        # Respuesta exitosa
+        return JSONResponse(
+            content={
+                "success": True,
+                "message": resultado.get("message"),
+                "data": resultado.get("data"),
+                "doc_id": resultado.get("doc_id"),
+                "coleccion": resultado.get("coleccion"),
+                "timestamp": resultado.get("timestamp")
+            },
+            status_code=201,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en endpoint de pago de empréstito: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "success": False,
+                "error": "Error interno del servidor",
+                "message": "Por favor, inténtelo de nuevo más tarde",
+                "code": "INTERNAL_SERVER_ERROR"
+            }
+        )
+
+@app.get("/contratos_pagos_all", tags=["Gestión de Empréstito"], summary="🔵 Obtener Todos los Pagos")
+async def get_all_pagos_emprestito():
+    """
+    ## 🔵 GET | 📋 Consultas | Obtener Todos los Pagos de Empréstito
+    
+    Endpoint para obtener todos los pagos de empréstito registrados en la colección `pagos_emprestito`.
+    
+    ### ✅ Funcionalidades principales:
+    - **Listado completo**: Retorna todos los pagos registrados
+    - **Datos completos**: Incluye todos los campos de cada pago
+    - **Metadatos**: Incluye ID del documento, conteo total y timestamp
+    - **Serialización JSON**: Fechas y objetos datetime convertidos correctamente
+    - **Trazabilidad**: Información completa de cada transacción registrada
+    
+    ### 📊 Información incluida:
+    - Todos los campos del pago
+    - ID del documento para referencia
+    - Conteo total de registros
+    - Timestamp de la consulta
+    - Datos serializados correctamente para JSON
+    
+    ### 🗄️ Campos principales esperados:
+    - **numero_rpc**: Número del RPC asociado al pago
+    - **valor_pago**: Valor monetario del pago realizado
+    - **fecha_transaccion**: Fecha en que se realizó la transacción
+    - **referencia_contrato**: Referencia del contrato asociado
+    - **nombre_centro_gestor**: Centro gestor responsable
+    - **fecha_registro**: Timestamp automático del momento del registro
+    - **fecha_creacion**: Fecha de creación del registro
+    - **fecha_actualizacion**: Última actualización del registro
+    - **estado**: Estado del pago (registrado, procesado, etc.)
+    - **tipo**: Tipo de registro (pago_manual)
+    
+    ### 💡 Casos de uso:
+    - Obtener historial completo de pagos de empréstito
+    - Consulta de pagos para reportes financieros
+    - Análisis de flujo de caja y ejecución presupuestal
+    - Seguimiento de transacciones por RPC
+    - Dashboard de pagos realizados
+    - Exportación de datos para auditorías
+    - Integración con sistemas contables
+    - Reportes de ejecución por centro gestor
+    
+    ### 📈 Análisis posibles:
+    - Total de pagos realizados
+    - Suma de valores pagados
+    - Pagos por centro gestor
+    - Pagos por contrato
+    - Pagos por RPC
+    - Histórico de transacciones
+    
+    ### ✅ Respuesta exitosa (200):
+    ```json
+    {
+        "success": true,
+        "data": [
+            {
+                "id": "xyz789",
+                "numero_rpc": "RPC-2024-001",
+                "valor_pago": 10000000.0,
+                "fecha_transaccion": "2024-11-11",
+                "referencia_contrato": "CONT-SALUD-003-2024",
+                "nombre_centro_gestor": "Secretaría de Salud",
+                "fecha_registro": "2024-11-11T14:30:45.123456",
+                "fecha_creacion": "2024-11-11T14:30:45.123456",
+                "fecha_actualizacion": "2024-11-11T14:30:45.123456",
+                "estado": "registrado",
+                "tipo": "pago_manual"
+            },
+            {
+                "id": "abc456",
+                "numero_rpc": "RPC-2024-002",
+                "valor_pago": 5000000.0,
+                "fecha_transaccion": "2024-11-10",
+                "referencia_contrato": "CONT-INFRA-001-2024",
+                "nombre_centro_gestor": "Secretaría de Infraestructura",
+                "fecha_registro": "2024-11-10T10:15:30.654321",
+                "fecha_creacion": "2024-11-10T10:15:30.654321",
+                "fecha_actualizacion": "2024-11-10T10:15:30.654321",
+                "estado": "registrado",
+                "tipo": "pago_manual"
+            }
+        ],
+        "count": 15,
+        "collection": "pagos_emprestito",
+        "timestamp": "2024-11-11T15:00:00.000000",
+        "message": "Se obtuvieron 15 pagos exitosamente"
+    }
+    ```
+    
+    ### ❌ Respuesta de error (500):
+    ```json
+    {
+        "success": false,
+        "error": "Error obteniendo pagos de empréstito: [detalles del error]",
+        "data": [],
+        "count": 0
+    }
+    ```
+    
+    ### 📝 Notas:
+    - Los campos de tipo datetime se serializan en formato ISO 8601
+    - El campo `id` corresponde al ID del documento en Firestore
+    - Los datos se retornan en el orden en que fueron insertados en Firestore
+    - Para consultas filtradas, considere crear endpoints específicos adicionales
+    """
+    try:
+        check_emprestito_availability()
+        
+        # Obtener todos los pagos
+        resultado = await get_pagos_emprestito_all()
+        
+        if not resultado.get("success"):
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "success": False,
+                    "error": resultado.get("error", "Error desconocido"),
+                    "message": "Error al obtener los pagos de empréstito"
+                }
+            )
+        
+        # Respuesta exitosa
+        return JSONResponse(
+            content={
+                "success": True,
+                "data": resultado.get("data", []),
+                "count": resultado.get("count", 0),
+                "collection": resultado.get("collection", "pagos_emprestito"),
+                "timestamp": resultado.get("timestamp"),
+                "message": f"Se obtuvieron {resultado.get('count', 0)} pagos exitosamente"
+            },
+            status_code=200,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en endpoint de consulta de pagos: {e}")
         raise HTTPException(
             status_code=500,
             detail={

@@ -1577,6 +1577,148 @@ def cargar_rpc_emprestito(datos_rpc: Dict[str, Any]) -> Dict[str, Any]:
             "error": str(e)
         }
 
+def cargar_pago_emprestito(datos_pago: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Cargar pago de empréstito directamente en la colección pagos_emprestito
+    con fecha_registro automática según la hora del sistema
+    """
+    if not FIRESTORE_AVAILABLE:
+        return {
+            "success": False,
+            "error": "Firebase no disponible"
+        }
+
+    try:
+        # Validar campos obligatorios
+        campos_obligatorios = [
+            "numero_rpc",
+            "valor_pago",
+            "fecha_transaccion",
+            "referencia_contrato",
+            "nombre_centro_gestor"
+        ]
+        
+        for campo in campos_obligatorios:
+            if not datos_pago.get(campo):
+                return {
+                    "success": False,
+                    "error": f"El campo '{campo}' es obligatorio"
+                }
+
+        # Validar que valor_pago sea positivo
+        try:
+            valor_pago = float(datos_pago.get("valor_pago", 0))
+            if valor_pago <= 0:
+                return {
+                    "success": False,
+                    "error": "El valor del pago debe ser mayor a 0"
+                }
+        except (ValueError, TypeError):
+            return {
+                "success": False,
+                "error": "El valor del pago debe ser un número válido"
+            }
+
+        db_client = get_firestore_client()
+        if not db_client:
+            return {
+                "success": False,
+                "error": "Error obteniendo cliente Firestore"
+            }
+
+        # Preparar datos para guardar
+        # fecha_registro se genera automáticamente con la hora del sistema
+        datos_completos = {
+            "numero_rpc": datos_pago.get("numero_rpc", "").strip(),
+            "valor_pago": valor_pago,
+            "fecha_transaccion": datos_pago.get("fecha_transaccion", "").strip(),
+            "referencia_contrato": datos_pago.get("referencia_contrato", "").strip(),
+            "nombre_centro_gestor": datos_pago.get("nombre_centro_gestor", "").strip(),
+            "fecha_registro": datetime.now(),  # Timestamp automático del sistema
+            "fecha_creacion": datetime.now(),
+            "fecha_actualizacion": datetime.now(),
+            "estado": "registrado",
+            "tipo": "pago_manual"
+        }
+
+        # Guardar en Firestore
+        doc_ref = db_client.collection('pagos_emprestito').add(datos_completos)
+        doc_id = doc_ref[1].id
+
+        logger.info(f"Pago de empréstito creado exitosamente: {doc_id}")
+
+        return {
+            "success": True,
+            "doc_id": doc_id,
+            "data": serialize_datetime_objects(datos_completos),
+            "message": f"Pago registrado exitosamente para RPC {datos_pago.get('numero_rpc')}",
+            "coleccion": "pagos_emprestito",
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Error cargando pago de empréstito: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+async def get_pagos_emprestito_all() -> Dict[str, Any]:
+    """
+    Obtener todos los pagos de empréstito desde la colección pagos_emprestito
+    """
+    if not FIRESTORE_AVAILABLE:
+        return {
+            "success": False,
+            "error": "Firebase no disponible",
+            "data": [],
+            "count": 0
+        }
+
+    try:
+        db_client = get_firestore_client()
+        if not db_client:
+            return {
+                "success": False,
+                "error": "Error obteniendo cliente Firestore",
+                "data": [],
+                "count": 0
+            }
+
+        # Obtener todos los documentos de la colección
+        pagos_ref = db_client.collection('pagos_emprestito')
+        docs = pagos_ref.stream()
+
+        # Procesar documentos
+        pagos_list = []
+        for doc in docs:
+            pago_data = doc.to_dict()
+            pago_data['id'] = doc.id
+            
+            # Serializar objetos datetime
+            pago_data = serialize_datetime_objects(pago_data)
+            
+            pagos_list.append(pago_data)
+
+        logger.info(f"Se obtuvieron {len(pagos_list)} pagos de empréstito")
+
+        return {
+            "success": True,
+            "data": pagos_list,
+            "count": len(pagos_list),
+            "collection": "pagos_emprestito",
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Error obteniendo pagos de empréstito: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "data": [],
+            "count": 0
+        }
+
 async def get_rpc_contratos_emprestito_all() -> Dict[str, Any]:
     """
     Obtener todos los RPCs (Registros Presupuestales de Compromiso) de empréstito

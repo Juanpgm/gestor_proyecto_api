@@ -23,6 +23,8 @@ try:
         ProyeccionEmprestitoUpdateResponse,
         ProyeccionEmprestitoRegistroRequest,
         ProyeccionEmprestitoRegistroResponse,
+        PagoEmprestitoRequest,
+        PagoEmprestitoResponse,
         # Response models
         UserResponse,
         AuthMethodsResponse,
@@ -100,6 +102,8 @@ __all__ = [
     "ProyeccionEmprestitoUpdateResponse",
     "ProyeccionEmprestitoRegistroRequest",
     "ProyeccionEmprestitoRegistroResponse",
+    "PagoEmprestitoRequest",
+    "PagoEmprestitoResponse",
     # Response models
     "UserResponse",
     "AuthMethodsResponse",

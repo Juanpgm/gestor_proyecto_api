@@ -173,6 +173,38 @@ class ProyeccionEmprestitoRegistroResponse(BaseModel):
     coleccion: Optional[str] = None
     error: Optional[str] = None
 
+class PagoEmprestitoRequest(BaseModel):
+    """Modelo para registro de pago de empréstito"""
+    numero_rpc: str = Field(..., min_length=1, description="Número del RPC (obligatorio)")
+    valor_pago: float = Field(..., gt=0, description="Valor del pago (obligatorio, debe ser mayor a 0)")
+    fecha_transaccion: str = Field(..., min_length=1, description="Fecha de la transacción (obligatorio)")
+    referencia_contrato: str = Field(..., min_length=1, description="Referencia del contrato (obligatorio)")
+    nombre_centro_gestor: str = Field(..., min_length=1, description="Centro gestor responsable (obligatorio)")
+    
+    @validator('numero_rpc', 'referencia_contrato', 'nombre_centro_gestor', 'fecha_transaccion')
+    def validate_required_fields(cls, v):
+        """Validar campos obligatorios"""
+        if not v or not v.strip():
+            raise ValueError('Este campo es obligatorio')
+        return v.strip()
+    
+    @validator('valor_pago')
+    def validate_valor_pago(cls, v):
+        """Validar que el valor del pago sea positivo"""
+        if v <= 0:
+            raise ValueError('El valor del pago debe ser mayor a 0')
+        return v
+
+class PagoEmprestitoResponse(BaseModel):
+    """Respuesta para registro de pago de empréstito"""
+    success: bool
+    message: Optional[str] = None
+    doc_id: Optional[str] = None
+    data: Optional[Dict[str, Any]] = None
+    coleccion: Optional[str] = None
+    timestamp: Optional[str] = None
+    error: Optional[str] = None
+
 class GoogleAuthRequest(BaseModel):
     """Autenticación con Google"""
     email: EmailStr
