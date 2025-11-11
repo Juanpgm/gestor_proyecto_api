@@ -1577,6 +1577,63 @@ def cargar_rpc_emprestito(datos_rpc: Dict[str, Any]) -> Dict[str, Any]:
             "error": str(e)
         }
 
+async def get_rpc_contratos_emprestito_all() -> Dict[str, Any]:
+    """
+    Obtener todos los RPCs (Registros Presupuestales de Compromiso) de empréstito
+    desde la colección rpc_contratos_emprestito
+    """
+    if not FIRESTORE_AVAILABLE:
+        return {
+            "success": False,
+            "error": "Firebase no disponible",
+            "data": [],
+            "count": 0
+        }
+
+    try:
+        db_client = get_firestore_client()
+        if not db_client:
+            return {
+                "success": False,
+                "error": "Error obteniendo cliente Firestore",
+                "data": [],
+                "count": 0
+            }
+
+        # Obtener todos los documentos de la colección
+        rpc_ref = db_client.collection('rpc_contratos_emprestito')
+        docs = rpc_ref.stream()
+
+        # Procesar documentos
+        rpc_list = []
+        for doc in docs:
+            rpc_data = doc.to_dict()
+            rpc_data['id'] = doc.id
+            
+            # Serializar objetos datetime
+            rpc_data = serialize_datetime_objects(rpc_data)
+            
+            rpc_list.append(rpc_data)
+
+        logger.info(f"Se obtuvieron {len(rpc_list)} RPCs de empréstito")
+
+        return {
+            "success": True,
+            "data": rpc_list,
+            "count": len(rpc_list),
+            "collection": "rpc_contratos_emprestito",
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Error obteniendo RPCs de empréstito: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "data": [],
+            "count": 0
+        }
+
 async def obtener_datos_secop_completos(referencia_proceso: str) -> Dict[str, Any]:
     """
     Obtener datos completos de un proceso desde la API del SECOP

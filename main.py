@@ -3727,6 +3727,7 @@ try:
         cargar_orden_compra_directa,
         cargar_convenio_transferencia,
         cargar_rpc_emprestito,
+        get_rpc_contratos_emprestito_all,
         get_convenios_transferencia_emprestito_all,
         obtener_ordenes_compra_tvec_enriquecidas,
         get_tvec_enrich_status,
@@ -4531,6 +4532,143 @@ async def cargar_rpc_emprestito_endpoint(
         raise
     except Exception as e:
         logger.error(f"Error en endpoint de RPC: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "success": False,
+                "error": "Error interno del servidor",
+                "message": "Por favor, inténtelo de nuevo más tarde",
+                "code": "INTERNAL_SERVER_ERROR"
+            }
+        )
+
+@app.get("/rpc_all", tags=["Gestión de Empréstito"], summary="🔵 Obtener Todos los RPCs")
+async def get_all_rpc_contratos_emprestito():
+    """
+    ## 🔵 GET | 📋 Consultas | Obtener Todos los RPCs de Empréstito
+    
+    Endpoint para obtener todos los RPC (Registros Presupuestales de Compromiso) de empréstito 
+    almacenados en la colección `rpc_contratos_emprestito`.
+    
+    ### ✅ Funcionalidades principales:
+    - **Listado completo**: Retorna todos los RPCs registrados
+    - **Datos completos**: Incluye todos los campos de cada RPC
+    - **Metadatos**: Incluye ID del documento, conteo total y timestamp
+    - **Serialización JSON**: Fechas y objetos convertidos correctamente
+    
+    ### 📊 Información incluida:
+    - Todos los campos del RPC
+    - ID del documento para referencia
+    - Conteo total de registros
+    - Timestamp de la consulta
+    - Datos serializados correctamente para JSON
+    
+    ### 🗄️ Campos principales esperados:
+    - **numero_rpc**: Número único del RPC
+    - **beneficiario_id**: Identificación del beneficiario
+    - **beneficiario_nombre**: Nombre del beneficiario
+    - **descripcion_rpc**: Descripción del compromiso
+    - **fecha_contabilizacion**: Fecha de contabilización
+    - **fecha_impresion**: Fecha de impresión del documento
+    - **estado_liberacion**: Estado de liberación del RPC
+    - **bp**: Código BP (Banco de Programas)
+    - **valor_rpc**: Valor monetario del RPC
+    - **cdp_asociados**: Lista de CDPs asociados
+    - **programacion_pac**: Objeto con programación mensual del PAC
+    - **nombre_centro_gestor**: Centro gestor responsable
+    - **referencia_contrato**: Referencia del contrato asociado
+    - **fecha_creacion**: Fecha de creación del registro
+    - **fecha_actualizacion**: Última actualización
+    - **estado**: Estado del registro (activo/inactivo)
+    - **tipo**: Tipo de registro (rpc_manual)
+    
+    ### 💡 Casos de uso:
+    - Obtener listado completo de RPCs de empréstito
+    - Exportación de datos para análisis
+    - Integración con sistemas externos
+    - Reportes y dashboards de seguimiento presupuestal
+    - Monitoreo de compromisos presupuestales
+    - Análisis de ejecución presupuestal por contrato
+    
+    ### ✅ Respuesta exitosa (200):
+    ```json
+    {
+        "success": true,
+        "data": [
+            {
+                "id": "abc123",
+                "numero_rpc": "RPC-2024-001",
+                "beneficiario_id": "890123456",
+                "beneficiario_nombre": "Proveedor XYZ S.A.S.",
+                "descripcion_rpc": "Suministro de equipos médicos",
+                "fecha_contabilizacion": "2024-10-15",
+                "fecha_impresion": "2024-10-16",
+                "estado_liberacion": "Liberado",
+                "bp": "BP-2024-001",
+                "valor_rpc": 50000000.0,
+                "cdp_asociados": ["CDP-2024-100", "CDP-2024-101"],
+                "programacion_pac": {
+                    "enero-2024": "10000000",
+                    "febrero-2024": "20000000"
+                },
+                "nombre_centro_gestor": "Secretaría de Salud",
+                "referencia_contrato": "CONT-SALUD-003-2024",
+                "fecha_creacion": "2024-10-14T10:30:00",
+                "fecha_actualizacion": "2024-10-14T10:30:00",
+                "estado": "activo",
+                "tipo": "rpc_manual"
+            }
+        ],
+        "count": 25,
+        "collection": "rpc_contratos_emprestito",
+        "timestamp": "2024-11-11T...",
+        "message": "Se obtuvieron 25 RPCs exitosamente"
+    }
+    ```
+    
+    ### ❌ Respuesta de error (500):
+    ```json
+    {
+        "success": false,
+        "error": "Error obteniendo RPCs: ...",
+        "data": [],
+        "count": 0
+    }
+    ```
+    
+    ### 🔗 Endpoints relacionados:
+    - `POST /emprestito/cargar-rpc` - Para crear nuevos RPCs
+    - `GET /convenios_transferencias_all` - Para consultar convenios de transferencia
+    """
+    try:
+        check_emprestito_availability()
+        
+        # Obtener todos los RPCs
+        result = await get_rpc_contratos_emprestito_all()
+        
+        if not result["success"]:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error obteniendo RPCs: {result.get('error', 'Error desconocido')}"
+            )
+        
+        return JSONResponse(
+            content={
+                "success": True,
+                "data": result["data"],
+                "count": result["count"],
+                "collection": result["collection"],
+                "timestamp": result["timestamp"],
+                "message": f"Se obtuvieron {result['count']} RPCs exitosamente"
+            },
+            status_code=200,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en endpoint de RPCs: {e}")
         raise HTTPException(
             status_code=500,
             detail={
