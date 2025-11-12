@@ -46,13 +46,34 @@ import json
 import re
 import uuid
 
-# Rate limiting
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
+# Rate limiting (opcional, con fallback)
+try:
+    from slowapi import Limiter, _rate_limit_exceeded_handler
+    from slowapi.util import get_remote_address
+    from slowapi.errors import RateLimitExceeded
+    SLOWAPI_AVAILABLE = True
+    print("✅ SlowAPI loaded successfully")
+except ImportError as e:
+    print(f"⚠️ Warning: SlowAPI not available: {e} - Rate limiting disabled")
+    SLOWAPI_AVAILABLE = False
+    Limiter = None
+    _rate_limit_exceeded_handler = None
+    get_remote_address = None
+    RateLimitExceeded = None
 
-# Monitoring with Prometheus
-from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
+# Monitoring with Prometheus (opcional, con fallback)
+try:
+    from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
+    PROMETHEUS_AVAILABLE = True
+    print("✅ Prometheus client loaded successfully")
+except ImportError as e:
+    print(f"⚠️ Warning: Prometheus client not available: {e} - Metrics disabled")
+    PROMETHEUS_AVAILABLE = False
+    Counter = None
+    Histogram = None
+    Gauge = None
+    generate_latest = None
+    CONTENT_TYPE_LATEST = None
 
 # Importar para manejar tipos de Firebase
 try:
@@ -291,46 +312,62 @@ async def lifespan(app: FastAPI):
 # ============================================
 # 📊 MÉTRICAS DE PROMETHEUS PARA MONITOREO APM
 # ============================================
-REQUEST_COUNT = Counter(
-    'gestor_api_requests_total', 
-    'Total de requests por endpoint',
-    ['method', 'endpoint', 'status']
-)
+if PROMETHEUS_AVAILABLE:
+    REQUEST_COUNT = Counter(
+        'gestor_api_requests_total', 
+        'Total de requests por endpoint',
+        ['method', 'endpoint', 'status']
+    )
 
-REQUEST_LATENCY = Histogram(
-    'gestor_api_request_duration_seconds',
-    'Latencia de requests en segundos',
-    ['method', 'endpoint']
-)
+    REQUEST_LATENCY = Histogram(
+        'gestor_api_request_duration_seconds',
+        'Latencia de requests en segundos',
+        ['method', 'endpoint']
+    )
 
-ACTIVE_REQUESTS = Gauge(
-    'gestor_api_requests_active',
-    'Número de requests activos',
-    ['method', 'endpoint']
-)
+    ACTIVE_REQUESTS = Gauge(
+        'gestor_api_requests_active',
+        'Número de requests activos',
+        ['method', 'endpoint']
+    )
 
-FIREBASE_QUERIES = Counter(
-    'gestor_api_firebase_queries_total',
-    'Total de queries a Firebase/Firestore',
-    ['collection']
-)
+    FIREBASE_QUERIES = Counter(
+        'gestor_api_firebase_queries_total',
+        'Total de queries a Firebase/Firestore',
+        ['collection']
+    )
 
-CACHE_HITS = Counter(
-    'gestor_api_cache_hits_total',
-    'Total de cache hits',
-    ['endpoint']
-)
+    CACHE_HITS = Counter(
+        'gestor_api_cache_hits_total',
+        'Total de cache hits',
+        ['endpoint']
+    )
 
-CACHE_MISSES = Counter(
-    'gestor_api_cache_misses_total',
-    'Total de cache misses',
-    ['endpoint']
-)
+    CACHE_MISSES = Counter(
+        'gestor_api_cache_misses_total',
+        'Total de cache misses',
+        ['endpoint']
+    )
+    print("✅ Prometheus metrics initialized")
+else:
+    # Stubs cuando Prometheus no está disponible
+    REQUEST_COUNT = None
+    REQUEST_LATENCY = None
+    ACTIVE_REQUESTS = None
+    FIREBASE_QUERIES = None
+    CACHE_HITS = None
+    CACHE_MISSES = None
+    print("⚠️ Prometheus metrics disabled")
 
 # ============================================
 # 🚦 RATE LIMITER PARA PREVENIR ABUSO
 # ============================================
-limiter = Limiter(key_func=get_remote_address)
+if SLOWAPI_AVAILABLE:
+    limiter = Limiter(key_func=get_remote_address)
+    print("✅ Rate limiter initialized")
+else:
+    limiter = None
+    print("⚠️ Rate limiting disabled")
 
 # Crear instancia de FastAPI con lifespan y soporte UTF-8
 app = FastAPI(
@@ -350,9 +387,22 @@ app = FastAPI(
     }
 )
 
-# Registrar el rate limiter con FastAPI
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+# Registrar el rate limiter con FastAPI (solo si está disponible)
+if SLOWAPI_AVAILABLE and limiter is not None:
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    print("✅ Rate limiting registered with FastAPI")
+else:
+    print("⚠️ Rate limiting disabled - SlowAPI not available")
+
+# Función decorador opcional para rate limiting
+def optional_rate_limit(limit_string: str):
+    """Decorador que aplica rate limiting solo si SlowAPI está disponible"""
+    def decorator(func):
+        if SLOWAPI_AVAILABLE and limiter is not None:
+            return limiter.limit(limit_string)(func)
+        return func
+    return decorator
 
 # 🚀 CACHE SIMPLE EN MEMORIA PARA OPTIMIZACIÓN
 from functools import lru_cache
@@ -1158,7 +1208,7 @@ async def firebase_status():
         }
 
 @app.get("/firebase/collections", tags=["Firebase"])
-@limiter.limit("30/minute")  # Máximo 30 requests por minuto
+@optional_rate_limit("30/minute")  # Máximo 30 requests por minuto
 async def get_firebase_collections(request: Request):
     """Obtener información completa de todas las colecciones de Firestore"""
     if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
@@ -1197,7 +1247,7 @@ async def get_firebase_collections(request: Request):
         )
 
 @app.get("/firebase/collections/summary", tags=["Firebase"])
-@limiter.limit("30/minute")  # Máximo 30 requests por minuto
+@optional_rate_limit("30/minute")  # Máximo 30 requests por minuto
 async def get_firebase_collections_summary(request: Request):
     """Obtener resumen estadístico de las colecciones"""
     if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
@@ -1236,7 +1286,7 @@ async def get_firebase_collections_summary(request: Request):
 # ============================================================================
 
 @app.get("/proyectos-presupuestales/all", tags=["Proyectos de Inversión"], summary="🔵 Todos los Proyectos Presupuestales")
-@limiter.limit("40/minute")  # Máximo 40 requests por minuto (endpoint costoso)
+@optional_rate_limit("40/minute")  # Máximo 40 requests por minuto (endpoint costoso)
 @async_cache(ttl_seconds=300)  # Cache de 5 minutos para proyectos
 async def get_proyectos_all(request: Request):
     """
@@ -1640,7 +1690,7 @@ async def cargar_proyectos_presupuestales_json(
 # ============================================================================
 
 @app.get("/unidades-proyecto/geometry", tags=["Unidades de Proyecto"], summary="🔵 Geometrías Completas")
-@limiter.limit("60/minute")  # Máximo 60 requests por minuto (endpoint pesado)
+@optional_rate_limit("60/minute")  # Máximo 60 requests por minuto (endpoint pesado)
 async def export_geometry_for_nextjs(
     request: Request,
     # Filtros server-side optimizados
@@ -1771,7 +1821,7 @@ async def export_geometry_for_nextjs(
         )
 
 @app.get("/unidades-proyecto/attributes", tags=["Unidades de Proyecto"], summary="🔵 GET | 📊 Datos Tabulares | Atributos Tabulares")
-@limiter.limit("60/minute")  # Máximo 60 requests por minuto
+@optional_rate_limit("60/minute")  # Máximo 60 requests por minuto
 async def export_attributes_for_nextjs(
     request: Request,
     # Filtros básicos originales
@@ -2068,7 +2118,7 @@ async def get_filters_endpoint(
 # ============================================================================
 
 @app.get("/unidades-proyecto/download-geojson", tags=["Unidades de Proyecto"], summary="🔵 Descarga GeoJSON")
-@limiter.limit("30/minute")  # Rate limiting para descargas pesadas
+@optional_rate_limit("30/minute")  # Rate limiting para descargas pesadas
 async def download_unidades_proyecto_geojson(
     request: Request,
     # Filtros de contenido
@@ -5890,7 +5940,7 @@ async def obtener_contratos_secop_endpoint():
         )
 
 @app.get("/contratos_emprestito_all", tags=["Gestión de Empréstito"], summary="🔵 Todos los Contratos Empréstito")
-@limiter.limit("50/minute")  # Máximo 50 requests por minuto
+@optional_rate_limit("50/minute")  # Máximo 50 requests por minuto
 @async_cache(ttl_seconds=300)  # Cache de 5 minutos
 async def obtener_todos_contratos_emprestito(request: Request):
     """
