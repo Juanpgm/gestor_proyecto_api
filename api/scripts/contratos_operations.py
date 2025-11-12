@@ -187,6 +187,9 @@ async def get_contratos_emprestito_init_data(filters: Optional[Dict[str, Any]] =
         if db is None:
             return {"success": False, "error": "No se pudo conectar a Firestore", "data": [], "count": 0}
         
+        # OPTIMIZACIÓN: Cargar mapa de procesos UNA SOLA VEZ antes del loop
+        proceso_map = await get_all_procesos_emprestito_map(db)
+        
         collection_ref = db.collection('contratos_emprestito')
         query = collection_ref
         
@@ -219,8 +222,8 @@ async def get_contratos_emprestito_init_data(filters: Optional[Dict[str, Any]] =
             # Limpiar y convertir a string
             referencia_proceso_str = str(referencia_proceso).strip() if referencia_proceso else ''
             
-            # Obtener nombre_resumido_proceso desde la colección procesos_emprestito
-            nombre_resumido_proceso = await get_nombre_resumido_proceso_by_referencia(db, referencia_proceso_str)
+            # OPTIMIZACIÓN: Lookup en memoria en lugar de query individual
+            nombre_resumido_proceso = proceso_map.get(referencia_proceso_str, '')
             
             contract_record = extract_contract_fields(doc_data, nombre_resumido_proceso)
             

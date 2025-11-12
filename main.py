@@ -46,6 +46,14 @@ import json
 import re
 import uuid
 
+# Rate limiting
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
+# Monitoring with Prometheus
+from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
+
 # Importar para manejar tipos de Firebase
 try:
     from google.cloud.firestore_v1._helpers import DatetimeWithNanoseconds
@@ -280,6 +288,50 @@ async def lifespan(app: FastAPI):
     # Shutdown
     print("Stopping API...")
 
+# ============================================
+# 📊 MÉTRICAS DE PROMETHEUS PARA MONITOREO APM
+# ============================================
+REQUEST_COUNT = Counter(
+    'gestor_api_requests_total', 
+    'Total de requests por endpoint',
+    ['method', 'endpoint', 'status']
+)
+
+REQUEST_LATENCY = Histogram(
+    'gestor_api_request_duration_seconds',
+    'Latencia de requests en segundos',
+    ['method', 'endpoint']
+)
+
+ACTIVE_REQUESTS = Gauge(
+    'gestor_api_requests_active',
+    'Número de requests activos',
+    ['method', 'endpoint']
+)
+
+FIREBASE_QUERIES = Counter(
+    'gestor_api_firebase_queries_total',
+    'Total de queries a Firebase/Firestore',
+    ['collection']
+)
+
+CACHE_HITS = Counter(
+    'gestor_api_cache_hits_total',
+    'Total de cache hits',
+    ['endpoint']
+)
+
+CACHE_MISSES = Counter(
+    'gestor_api_cache_misses_total',
+    'Total de cache misses',
+    ['endpoint']
+)
+
+# ============================================
+# 🚦 RATE LIMITER PARA PREVENIR ABUSO
+# ============================================
+limiter = Limiter(key_func=get_remote_address)
+
 # Crear instancia de FastAPI con lifespan y soporte UTF-8
 app = FastAPI(
     title="Gestor de Proyectos API",
@@ -297,6 +349,78 @@ app = FastAPI(
         "showCommonExtensions": True
     }
 )
+
+# Registrar el rate limiter con FastAPI
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# 🚀 CACHE SIMPLE EN MEMORIA PARA OPTIMIZACIÓN
+from functools import lru_cache
+from datetime import timedelta
+import hashlib
+
+# Cache simple en memoria (usar Redis en producción)
+_simple_cache = {}
+_cache_timestamps = {}
+
+def get_cache_key(func_name: str, *args, **kwargs) -> str:
+    """Generar clave de caché única"""
+    key_data = f"{func_name}:{str(args)}:{str(sorted(kwargs.items()))}"
+    return hashlib.md5(key_data.encode()).hexdigest()
+
+def get_from_cache(cache_key: str, max_age_seconds: int = 300):
+    """Obtener del caché si existe y es válido"""
+    if cache_key in _simple_cache:
+        cached_time = _cache_timestamps.get(cache_key)
+        if cached_time and (datetime.now() - cached_time).total_seconds() < max_age_seconds:
+            return _simple_cache[cache_key], True
+    return None, False
+
+def set_in_cache(cache_key: str, value):
+    """Guardar en caché"""
+    _simple_cache[cache_key] = value
+    _cache_timestamps[cache_key] = datetime.now()
+
+def async_cache(ttl_seconds: int = 300):
+    """
+    Decorador para cachear funciones async con TTL (Time To Live)
+    Uso: @async_cache(ttl_seconds=600)
+    
+    IMPORTANTE: Cachea el resultado ANTES de cualquier middleware (gzip, etc)
+    """
+    def decorator(func):
+        from functools import wraps
+        import copy
+        
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            # Generar clave de caché única basada en función y argumentos
+            cache_key = get_cache_key(func.__name__, *args, **kwargs)
+            
+            # Intentar obtener del caché
+            cached_value, is_valid = get_from_cache(cache_key, ttl_seconds)
+            if is_valid:
+                logger.info(f"✅ Cache hit for {func.__name__}")
+                # Retornar copia profunda para evitar mutaciones
+                try:
+                    return copy.deepcopy(cached_value)
+                except:
+                    return cached_value
+            
+            # Si no está en caché, ejecutar función
+            logger.info(f"⚠️ Cache miss for {func.__name__} - ejecutando función")
+            result = await func(*args, **kwargs)
+            
+            # Guardar en caché solo si es serializable
+            try:
+                set_in_cache(cache_key, result)
+            except Exception as e:
+                logger.warning(f"No se pudo cachear resultado de {func.__name__}: {e}")
+            
+            return result
+        
+        return wrapper
+    return decorator
 
 # Configurar CORS - Optimizado para Vercel + Railway + Netlify + Live Server
 def get_cors_origins():
@@ -358,6 +482,33 @@ async def utf8_middleware(request: Request, call_next):
     
     return response
 
+# ⚡ MIDDLEWARE DE PERFORMANCE PARA AGREGAR HEADERS Y MEDIR TIEMPOS
+@app.middleware("http")
+async def performance_middleware(request: Request, call_next):
+    """Middleware para mejorar performance y agregar headers útiles"""
+    import time
+    start_time = time.time()
+    
+    response = await call_next(request)
+    
+    # Calcular tiempo de procesamiento
+    process_time = time.time() - start_time
+    
+    # Agregar headers de performance
+    response.headers["X-Process-Time"] = f"{process_time:.3f}"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    
+    # Sugerir cache para endpoints GET de lectura
+    if request.method == "GET" and response.status_code == 200:
+        # Cache público para endpoints de datos que no cambian frecuentemente
+        if any(path in request.url.path for path in [
+            "/centros-gestores/", "/firebase/collections", "/proyectos-presupuestales/",
+            "/unidades-proyecto/filters", "/bancos_emprestito", "/auth/config"
+        ]):
+            response.headers["Cache-Control"] = "public, max-age=300"  # 5 minutos
+    
+    return response
+
 # 🌐 CONFIGURACIÓN DE CORS
 cors_origins = get_cors_origins()
 print(f"🌐 CORS configured for {len(cors_origins)} specific origins")
@@ -385,6 +536,58 @@ app.add_middleware(
     expose_headers=["Content-Type", "Authorization"],
     max_age=600,  # Cache de preflight requests por 10 minutos
 )
+
+# 🗜️ GZIP COMPRESSION HABILITADO (optimiza respuestas grandes)
+from fastapi.middleware.gzip import GZipMiddleware
+app.add_middleware(GZipMiddleware, minimum_size=1000)  # Comprimir respuestas > 1KB
+print("🗜️ GZIP compression enabled for responses > 1KB")
+
+# ⏱️ MIDDLEWARE DE TIMING Y MONITOREO APM
+import time
+
+@app.middleware("http")
+async def monitoring_middleware(request: Request, call_next):
+    """
+    Middleware para monitoreo APM: métricas de latencia, contador de requests, requests activos
+    También agrega X-Response-Time header y loguea endpoints lentos
+    """
+    method = request.method
+    endpoint = request.url.path
+    
+    # Incrementar gauge de requests activos
+    ACTIVE_REQUESTS.labels(method=method, endpoint=endpoint).inc()
+    
+    # Medir tiempo de ejecución
+    start_time = time.time()
+    
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+    except Exception as e:
+        status_code = 500
+        logger.error(f"Error en {endpoint}: {str(e)}")
+        raise
+    finally:
+        # Decrementar gauge de requests activos
+        ACTIVE_REQUESTS.labels(method=method, endpoint=endpoint).dec()
+        
+        # Calcular latencia
+        process_time = time.time() - start_time
+        
+        # Registrar métricas en Prometheus
+        REQUEST_COUNT.labels(method=method, endpoint=endpoint, status=status_code).inc()
+        REQUEST_LATENCY.labels(method=method, endpoint=endpoint).observe(process_time)
+    
+    # Agregar header de tiempo de respuesta
+    response.headers["X-Response-Time"] = f"{process_time:.3f}s"
+    
+    # Log solo endpoints lentos (> 3s)
+    if process_time > 3.0:
+        logger.warning(f"⚠️ Slow endpoint: {endpoint} - {process_time:.3f}s (status: {status_code})")
+    
+    return response
+
+print("⏱️ Monitoring middleware enabled (APM + Timing)")
 
 # � FUNCIONES UTILITARIAS PARA UTF-8
 def create_utf8_response(content: Dict[str, Any], status_code: int = 200) -> JSONResponse:
@@ -557,6 +760,24 @@ async def read_root():
     
     return create_utf8_response(response_data)
 
+@app.get("/metrics", tags=["Monitoring"])
+async def metrics():
+    """
+    📊 Endpoint de Métricas de Prometheus
+    
+    Expone métricas de la aplicación en formato Prometheus para monitoreo APM:
+    - gestor_api_requests_total: Contador de requests por endpoint, método y status
+    - gestor_api_request_duration_seconds: Histograma de latencia de requests
+    - gestor_api_requests_active: Gauge de requests activos
+    - gestor_api_firebase_queries_total: Contador de queries a Firestore
+    - gestor_api_cache_hits_total: Contador de cache hits
+    - gestor_api_cache_misses_total: Contador de cache misses
+    
+    Usar con Grafana + Prometheus para dashboards de monitoreo
+    """
+    from fastapi.responses import Response
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
 @app.get("/ping", tags=["General"], summary="🔵 Ping Simple")
 async def ping():
     """🔵 GET | ❤️ Health Check | Health check super simple para Railway con soporte UTF-8"""
@@ -587,7 +808,7 @@ async def cors_test(request: Request):
         "server_info": {
             "environment": os.getenv("ENVIRONMENT", "development"),
             "port": os.getenv("PORT", "8000"),
-            "cors_origins_count": len(cors_allow_origins)
+            "cors_origins_count": len(cors_origins)
         }
     }
     
@@ -729,6 +950,15 @@ async def railway_debug():
 @app.get("/health", tags=["General"], summary="🔵 Estado de Salud API")
 async def health_check():
     """🔵 GET | ❤️ Health Check | Verificar estado de salud de la API"""
+    
+    # Intentar obtener del cache (TTL 30 segundos para health check)
+    cache_key = get_cache_key("health_check")
+    cached_data, is_valid = get_from_cache(cache_key, max_age_seconds=30)
+    if is_valid:
+        # Actualizar timestamp en cada llamada pero mantener resto del cache
+        cached_data["timestamp"] = datetime.now().isoformat()
+        return cached_data
+    
     try:
         basic_response = {
             "status": "healthy",
@@ -767,6 +997,9 @@ async def health_check():
             }
 
             basic_response["status"] = "degraded"
+        
+        # Guardar en cache
+        set_in_cache(cache_key, basic_response)
         
         return basic_response
         
@@ -830,6 +1063,12 @@ async def get_all_nombres_centros_gestores_unique():
     if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
         raise HTTPException(status_code=503, detail="Firebase or scripts not available")
     
+    # Intentar obtener del cache (TTL 5 minutos)
+    cache_key = get_cache_key("centros_gestores_nombres_unicos")
+    cached_data, is_valid = get_from_cache(cache_key, max_age_seconds=300)
+    if is_valid:
+        return cached_data
+    
     try:
         result = await get_unique_nombres_centros_gestores()
         
@@ -839,7 +1078,7 @@ async def get_all_nombres_centros_gestores_unique():
                 detail=f"Error obteniendo nombres únicos de centros gestores: {result.get('error', 'Error desconocido')}"
             )
         
-        return {
+        response_data = {
             "success": True,
             "data": result["data"],
             "count": result["count"],
@@ -857,6 +1096,11 @@ async def get_all_nombres_centros_gestores_unique():
             }
         }
         
+        # Guardar en cache
+        set_in_cache(cache_key, response_data)
+        
+        return response_data
+        
     except HTTPException:
         raise
     except Exception as e:
@@ -873,6 +1117,13 @@ async def get_all_nombres_centros_gestores_unique():
 async def firebase_status():
     """Verificar estado de la conexión con Firebase"""
     try:
+        # Cache corto para evitar consultas repetidas a Firebase en ráfagas
+        cache_key = get_cache_key("firebase_status")
+        cached = _simple_cache.get(cache_key)
+        if cached:
+            cached_time = _cache_timestamps.get(cache_key)
+            if cached_time and (datetime.now() - cached_time).total_seconds() < 30:
+                return cached
         if not FIREBASE_AVAILABLE:
             return {
                 "connected": False,
@@ -890,9 +1141,11 @@ async def firebase_status():
                 "status": "limited",
                 "last_updated": "2025-10-02T00:00:00Z"
             }
-        
+        # Realizar comprobación activa de Firebase
         connection_result = await test_firebase_connection()
         connection_result["last_updated"] = "2025-10-02T00:00:00Z"
+        # Guardar en cache corto
+        set_in_cache(cache_key, connection_result)
         return connection_result
         
     except Exception as e:
@@ -905,12 +1158,21 @@ async def firebase_status():
         }
 
 @app.get("/firebase/collections", tags=["Firebase"])
-async def get_firebase_collections():
+@limiter.limit("30/minute")  # Máximo 30 requests por minuto
+async def get_firebase_collections(request: Request):
     """Obtener información completa de todas las colecciones de Firestore"""
     if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
         raise HTTPException(status_code=503, detail="Firebase or scripts not available")
+    
+    # Intentar obtener del cache (TTL 5 minutos)
+    cache_key = get_cache_key("firebase_collections")
+    cached_data, is_valid = get_from_cache(cache_key, max_age_seconds=300)
+    if is_valid:
+        return cached_data
+    
     try:
-        collections_data = await get_collections_info()
+        # OPTIMIZACIÓN: Reducir muestreo a 10 documentos por colección para velocidad
+        collections_data = await get_collections_info(limit_docs_per_collection=10)
         
         if not collections_data["success"]:
             raise HTTPException(
@@ -919,7 +1181,11 @@ async def get_firebase_collections():
             )
         
         # Add timestamp for endpoint tracking
-        collections_data["last_updated"] = "2025-10-02T00:00:00Z"  # Endpoint creation/update date  
+        collections_data["last_updated"] = "2025-10-02T00:00:00Z"  # Endpoint creation/update date
+        
+        # Guardar en cache
+        set_in_cache(cache_key, collections_data)
+        
         return collections_data
         
     except HTTPException:
@@ -931,10 +1197,18 @@ async def get_firebase_collections():
         )
 
 @app.get("/firebase/collections/summary", tags=["Firebase"])
-async def get_firebase_collections_summary():
+@limiter.limit("30/minute")  # Máximo 30 requests por minuto
+async def get_firebase_collections_summary(request: Request):
     """Obtener resumen estadístico de las colecciones"""
     if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
         raise HTTPException(status_code=503, detail="Firebase or scripts not available")
+    
+    # Intentar obtener del cache (TTL 5 minutos)
+    cache_key = get_cache_key("firebase_collections_summary")
+    cached_data, is_valid = get_from_cache(cache_key, max_age_seconds=300)
+    if is_valid:
+        return cached_data
+    
     try:
         summary_data = await get_collections_summary()
         
@@ -946,6 +1220,10 @@ async def get_firebase_collections_summary():
         
         # Add timestamp for endpoint tracking
         summary_data["last_updated"] = "2025-10-02T00:00:00Z"  # Endpoint creation/update date
+        
+        # Guardar en cache
+        set_in_cache(cache_key, summary_data)
+        
         return summary_data
         
     except HTTPException:
@@ -958,7 +1236,9 @@ async def get_firebase_collections_summary():
 # ============================================================================
 
 @app.get("/proyectos-presupuestales/all", tags=["Proyectos de Inversión"], summary="🔵 Todos los Proyectos Presupuestales")
-async def get_proyectos_all():
+@limiter.limit("40/minute")  # Máximo 40 requests por minuto (endpoint costoso)
+@async_cache(ttl_seconds=300)  # Cache de 5 minutos para proyectos
+async def get_proyectos_all(request: Request):
     """
     ## 🔵 GET | 📋 Listados | Obtener Todos los Proyectos Presupuestales
     
@@ -1360,7 +1640,9 @@ async def cargar_proyectos_presupuestales_json(
 # ============================================================================
 
 @app.get("/unidades-proyecto/geometry", tags=["Unidades de Proyecto"], summary="🔵 Geometrías Completas")
+@limiter.limit("60/minute")  # Máximo 60 requests por minuto (endpoint pesado)
 async def export_geometry_for_nextjs(
+    request: Request,
     # Filtros server-side optimizados
     nombre_centro_gestor: Optional[str] = Query(None, description="Centro gestor responsable"),
     tipo_intervencion: Optional[str] = Query(None, description="Tipo de intervención"),
@@ -1489,7 +1771,9 @@ async def export_geometry_for_nextjs(
         )
 
 @app.get("/unidades-proyecto/attributes", tags=["Unidades de Proyecto"], summary="🔵 GET | 📊 Datos Tabulares | Atributos Tabulares")
+@limiter.limit("60/minute")  # Máximo 60 requests por minuto
 async def export_attributes_for_nextjs(
+    request: Request,
     # Filtros básicos originales
     nombre_centro_gestor: Optional[str] = Query(None, description="Centro gestor responsable"),
     tipo_intervencion: Optional[str] = Query(None, description="Tipo de intervención"),
@@ -1731,6 +2015,12 @@ async def get_filters_endpoint(
                 "help": "Check Railway environment variables or use Service Account fallback"
             }
     
+    # Intentar obtener del cache (TTL 5 minutos)
+    cache_key = get_cache_key(f"unidades_filters_{field}_{limit}")
+    cached_data, is_valid = get_from_cache(cache_key, max_age_seconds=300)
+    if is_valid:
+        return cached_data
+    
     try:
         result = await get_filter_options(field=field, limit=limit)
         
@@ -1759,6 +2049,9 @@ async def get_filters_endpoint(
             "message": f"Filtros obtenidos exitosamente"
         }
         
+        # Guardar en cache
+        set_in_cache(cache_key, response_data)
+        
         return create_utf8_response(response_data)
         
     except HTTPException:
@@ -1775,7 +2068,9 @@ async def get_filters_endpoint(
 # ============================================================================
 
 @app.get("/unidades-proyecto/download-geojson", tags=["Unidades de Proyecto"], summary="🔵 Descarga GeoJSON")
+@limiter.limit("30/minute")  # Rate limiting para descargas pesadas
 async def download_unidades_proyecto_geojson(
+    request: Request,
     # Filtros de contenido
     nombre_centro_gestor: Optional[str] = Query(None, description="Centro gestor responsable"),
     tipo_intervencion: Optional[str] = Query(None, description="Tipo de intervención"),
@@ -1789,7 +2084,7 @@ async def download_unidades_proyecto_geojson(
     # Configuración de descarga
     include_all_records: Optional[bool] = Query(True, description="Incluir todos los registros (con y sin geometría)"),
     only_with_geometry: Optional[bool] = Query(False, description="Solo registros con geometría válida"),
-    limit: Optional[int] = Query(None, ge=1, le=10000, description="Límite de registros"),
+    limit: Optional[int] = Query(1000, ge=1, le=10000, description="Límite de registros (default: 1000 para performance)"),
     
     # Parámetros de formato
     include_metadata: Optional[bool] = Query(True, description="Incluir metadata en el GeoJSON")
@@ -2453,6 +2748,7 @@ async def delete_unidades_by_tipo_equipamiento(
 # ============================================================================
 
 @app.get("/contratos/init_contratos_seguimiento", tags=["Interoperabilidad con Artefacto de Seguimiento"])
+@async_cache(ttl_seconds=300)  # Cache de 5 minutos para contratos
 async def init_contratos_seguimiento(
     referencia_contrato: Optional[str] = Query(None, description="Referencia del contrato (búsqueda parcial)"),
     nombre_centro_gestor: Optional[str] = Query(None, description="Centro gestor responsable (exacto)")
@@ -2691,7 +2987,7 @@ async def crear_reporte_contrato(
         )
 
 @app.get("/reportes_contratos/", tags=["Interoperabilidad con Artefacto de Seguimiento"])
-async def obtener_reportes_contratos():
+async def obtener_reportes_contratos(request: Request):
     """
     ## 📋 Obtener Todos los Reportes de Contratos
     
@@ -2731,7 +3027,17 @@ async def obtener_reportes_contratos():
                 detail=f"Error obteniendo reportes: {result.get('error', 'Error desconocido')}"
             )
         
-        return create_utf8_response(result)
+        # Forzar respuesta sin compresión para evitar conflictos
+        response = JSONResponse(
+            content=result,
+            status_code=200,
+            headers={
+                "Content-Type": "application/json; charset=utf-8",
+                "Content-Encoding": "identity",  # Sin compresión
+                "Cache-Control": "no-transform"   # Prevenir transformaciones proxy
+            }
+        )
+        return response
         
     except HTTPException:
         raise
@@ -5584,9 +5890,11 @@ async def obtener_contratos_secop_endpoint():
         )
 
 @app.get("/contratos_emprestito_all", tags=["Gestión de Empréstito"], summary="🔵 Todos los Contratos Empréstito")
-async def obtener_todos_contratos_emprestito():
+@limiter.limit("50/minute")  # Máximo 50 requests por minuto
+@async_cache(ttl_seconds=300)  # Cache de 5 minutos
+async def obtener_todos_contratos_emprestito(request: Request):
     """
-    ## � GET | �📋 Listados | Obtener Todos los Contratos de Empréstito
+    ## 🔵 GET | 📋 Listados | Obtener Todos los Contratos de Empréstito
     
     **Propósito**: Retorna todos los registros de las colecciones "contratos_emprestito", "ordenes_compra_emprestito" y "convenios_transferencias_emprestito".
     
@@ -6128,6 +6436,7 @@ async def get_all_bancos_emprestito():
         )
 
 @app.get("/procesos_emprestito_all", tags=["Gestión de Empréstito"])
+@async_cache(ttl_seconds=300)  # Cache de 5 minutos
 async def get_all_procesos_emprestito():
     """
     ## Obtener Todos los Procesos de Empréstito

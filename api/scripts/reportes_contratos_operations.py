@@ -324,9 +324,40 @@ async def get_nombre_centro_gestor_from_emprestito(referencia_contrato: str) -> 
         logger.warning(f"Error obteniendo nombre_centro_gestor para {referencia_contrato}: {e}")
         return None
 
+async def get_all_centros_gestores_map() -> Dict[str, str]:
+    """
+    Obtener un mapa de referencia_contrato -> nombre_centro_gestor
+    de toda la colección contratos_emprestito de una sola vez
+    """
+    try:
+        db = get_firestore_client()
+        if db is None:
+            return {}
+        
+        # Obtener TODOS los contratos de empréstito de una sola vez
+        collection_ref = db.collection('contratos_emprestito')
+        docs = collection_ref.stream()
+        
+        # Crear mapa en memoria
+        centro_gestor_map = {}
+        for doc in docs:
+            doc_data = doc.to_dict()
+            ref_contrato = doc_data.get('referencia_contrato')
+            nombre_cg = doc_data.get('nombre_centro_gestor', '')
+            if ref_contrato and nombre_cg:
+                centro_gestor_map[ref_contrato] = nombre_cg
+        
+        logger.info(f"✅ Mapa de centros gestores creado con {len(centro_gestor_map)} entradas")
+        return centro_gestor_map
+        
+    except Exception as e:
+        logger.warning(f"Error creando mapa de centros gestores: {e}")
+        return {}
+
 async def get_reportes_contratos(filtros: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Obtener lista de reportes de contratos con nombre_centro_gestor desde contratos_emprestito
+    OPTIMIZADO: Carga todos los centros gestores de una sola vez para evitar N+1 queries
     """
     try:
         db = get_firestore_client()
@@ -337,6 +368,9 @@ async def get_reportes_contratos(filtros: Optional[Dict[str, Any]] = None) -> Di
                 "data": [],
                 "count": 0
             }
+        
+        # OPTIMIZACIÓN: Cargar mapa de centros gestores UNA SOLA VEZ
+        centro_gestor_map = await get_all_centros_gestores_map()
         
         collection_ref = db.collection('reportes_contratos')
         
@@ -367,16 +401,16 @@ async def get_reportes_contratos(filtros: Optional[Dict[str, Any]] = None) -> Di
                         **converted_data
                     }
                     
-                    # Obtener nombre_centro_gestor desde contratos_emprestito si no existe o está vacío
+                    # OPTIMIZACIÓN: Lookup en memoria en lugar de query a Firebase
                     referencia_contrato = reporte_data.get('referencia_contrato')
                     nombre_centro_gestor_actual = reporte_data.get('nombre_centro_gestor', '')
                     
                     if referencia_contrato and (not nombre_centro_gestor_actual or nombre_centro_gestor_actual.strip() == ''):
-                        nombre_centro_gestor_emprestito = await get_nombre_centro_gestor_from_emprestito(referencia_contrato)
+                        # Buscar en el mapa en memoria (O(1) lookup vs query a Firebase)
+                        nombre_centro_gestor_emprestito = centro_gestor_map.get(referencia_contrato)
                         if nombre_centro_gestor_emprestito:
                             reporte_data['nombre_centro_gestor'] = nombre_centro_gestor_emprestito
                             reporte_data['nombre_centro_gestor_source'] = 'contratos_emprestito'
-                            logger.info(f"✅ Actualizado nombre_centro_gestor para {referencia_contrato}: {nombre_centro_gestor_emprestito}")
                     
                     reportes.append(reporte_data)
             except Exception as doc_error:
