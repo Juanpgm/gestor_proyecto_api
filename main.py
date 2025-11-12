@@ -388,7 +388,7 @@ app = FastAPI(
 )
 
 # Registrar el rate limiter con FastAPI (solo si está disponible)
-if SLOWAPI_AVAILABLE and limiter is not None:
+if SLOWAPI_AVAILABLE and limiter is not None and RateLimitExceeded is not None and _rate_limit_exceeded_handler is not None:
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
     print("✅ Rate limiting registered with FastAPI")
@@ -604,8 +604,9 @@ async def monitoring_middleware(request: Request, call_next):
     method = request.method
     endpoint = request.url.path
     
-    # Incrementar gauge de requests activos
-    ACTIVE_REQUESTS.labels(method=method, endpoint=endpoint).inc()
+    # Incrementar gauge de requests activos (solo si Prometheus disponible)
+    if PROMETHEUS_AVAILABLE and ACTIVE_REQUESTS is not None:
+        ACTIVE_REQUESTS.labels(method=method, endpoint=endpoint).inc()
     
     # Medir tiempo de ejecución
     start_time = time.time()
@@ -618,15 +619,17 @@ async def monitoring_middleware(request: Request, call_next):
         logger.error(f"Error en {endpoint}: {str(e)}")
         raise
     finally:
-        # Decrementar gauge de requests activos
-        ACTIVE_REQUESTS.labels(method=method, endpoint=endpoint).dec()
+        # Decrementar gauge de requests activos (solo si Prometheus disponible)
+        if PROMETHEUS_AVAILABLE and ACTIVE_REQUESTS is not None:
+            ACTIVE_REQUESTS.labels(method=method, endpoint=endpoint).dec()
         
         # Calcular latencia
         process_time = time.time() - start_time
         
-        # Registrar métricas en Prometheus
-        REQUEST_COUNT.labels(method=method, endpoint=endpoint, status=status_code).inc()
-        REQUEST_LATENCY.labels(method=method, endpoint=endpoint).observe(process_time)
+        # Registrar métricas en Prometheus (solo si disponible)
+        if PROMETHEUS_AVAILABLE and REQUEST_COUNT is not None and REQUEST_LATENCY is not None:
+            REQUEST_COUNT.labels(method=method, endpoint=endpoint, status=status_code).inc()
+            REQUEST_LATENCY.labels(method=method, endpoint=endpoint).observe(process_time)
     
     # Agregar header de tiempo de respuesta
     response.headers["X-Response-Time"] = f"{process_time:.3f}s"
@@ -825,6 +828,9 @@ async def metrics():
     
     Usar con Grafana + Prometheus para dashboards de monitoreo
     """
+    if not PROMETHEUS_AVAILABLE or generate_latest is None or CONTENT_TYPE_LATEST is None:
+        raise HTTPException(status_code=503, detail="Prometheus metrics not available")
+    
     from fastapi.responses import Response
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
