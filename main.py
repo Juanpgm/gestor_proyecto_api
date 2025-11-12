@@ -61,19 +61,15 @@ except ImportError as e:
     get_remote_address = None
     RateLimitExceeded = None
 
-# Monitoring with Prometheus (opcional, con fallback)
-try:
-    from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
-    PROMETHEUS_AVAILABLE = True
-    print("✅ Prometheus client loaded successfully")
-except ImportError as e:
-    print(f"⚠️ Warning: Prometheus client not available: {e} - Metrics disabled")
-    PROMETHEUS_AVAILABLE = False
-    Counter = None
-    Histogram = None
-    Gauge = None
-    generate_latest = None
-    CONTENT_TYPE_LATEST = None
+# Monitoring with Prometheus (DESHABILITADO temporalmente por conflictos en Railway)
+# TODO: Habilitar cuando se configure correctamente prometheus_multiproc_dir
+PROMETHEUS_AVAILABLE = False
+Counter = None
+Histogram = None
+Gauge = None
+generate_latest = None
+CONTENT_TYPE_LATEST = None
+print("⚠️ Prometheus metrics disabled (temporarily disabled for Railway compatibility)")
 
 # Importar para manejar tipos de Firebase
 try:
@@ -312,51 +308,79 @@ async def lifespan(app: FastAPI):
 # ============================================
 # 📊 MÉTRICAS DE PROMETHEUS PARA MONITOREO APM
 # ============================================
-if PROMETHEUS_AVAILABLE:
-    REQUEST_COUNT = Counter(
-        'gestor_api_requests_total', 
-        'Total de requests por endpoint',
-        ['method', 'endpoint', 'status']
-    )
+# Inicializar métricas como None por defecto
+REQUEST_COUNT = None
+REQUEST_LATENCY = None
+ACTIVE_REQUESTS = None
+FIREBASE_QUERIES = None
+CACHE_HITS = None
+CACHE_MISSES = None
 
-    REQUEST_LATENCY = Histogram(
-        'gestor_api_request_duration_seconds',
-        'Latencia de requests en segundos',
-        ['method', 'endpoint']
-    )
+if PROMETHEUS_AVAILABLE and Counter is not None:
+    try:
+        # Configurar Prometheus para modo multi-proceso si está disponible
+        # Esto previene errores cuando Railway usa múltiples workers
+        import os
+        if 'prometheus_multiproc_dir' not in os.environ:
+            # Si no está configurado multi-proceso, usar registro normal
+            pass
+        
+        REQUEST_COUNT = Counter(
+            'gestor_api_requests_total', 
+            'Total de requests por endpoint',
+            ['method', 'endpoint', 'status']
+        )
 
-    ACTIVE_REQUESTS = Gauge(
-        'gestor_api_requests_active',
-        'Número de requests activos',
-        ['method', 'endpoint']
-    )
+        REQUEST_LATENCY = Histogram(
+            'gestor_api_request_duration_seconds',
+            'Latencia de requests en segundos',
+            ['method', 'endpoint']
+        )
 
-    FIREBASE_QUERIES = Counter(
-        'gestor_api_firebase_queries_total',
-        'Total de queries a Firebase/Firestore',
-        ['collection']
-    )
+        ACTIVE_REQUESTS = Gauge(
+            'gestor_api_requests_active',
+            'Número de requests activos',
+            ['method', 'endpoint']
+        )
 
-    CACHE_HITS = Counter(
-        'gestor_api_cache_hits_total',
-        'Total de cache hits',
-        ['endpoint']
-    )
+        FIREBASE_QUERIES = Counter(
+            'gestor_api_firebase_queries_total',
+            'Total de queries a Firebase/Firestore',
+            ['collection']
+        )
 
-    CACHE_MISSES = Counter(
-        'gestor_api_cache_misses_total',
-        'Total de cache misses',
-        ['endpoint']
-    )
-    print("✅ Prometheus metrics initialized")
+        CACHE_HITS = Counter(
+            'gestor_api_cache_hits_total',
+            'Total de cache hits',
+            ['endpoint']
+        )
+
+        CACHE_MISSES = Counter(
+            'gestor_api_cache_misses_total',
+            'Total de cache misses',
+            ['endpoint']
+        )
+        print("✅ Prometheus metrics initialized")
+    except ValueError as e:
+        # ValueError típicamente ocurre cuando la métrica ya está registrada (múltiples workers)
+        print(f"⚠️ Warning: Prometheus metrics already registered (multi-worker): {e}")
+        print("   Metrics will be disabled for this worker to prevent conflicts")
+        REQUEST_COUNT = None
+        REQUEST_LATENCY = None
+        ACTIVE_REQUESTS = None
+        FIREBASE_QUERIES = None
+        CACHE_HITS = None
+        CACHE_MISSES = None
+    except Exception as e:
+        print(f"⚠️ Warning: Failed to initialize Prometheus metrics: {e}")
+        print("   Continuing without metrics...")
+        REQUEST_COUNT = None
+        REQUEST_LATENCY = None
+        ACTIVE_REQUESTS = None
+        FIREBASE_QUERIES = None
+        CACHE_HITS = None
+        CACHE_MISSES = None
 else:
-    # Stubs cuando Prometheus no está disponible
-    REQUEST_COUNT = None
-    REQUEST_LATENCY = None
-    ACTIVE_REQUESTS = None
-    FIREBASE_QUERIES = None
-    CACHE_HITS = None
-    CACHE_MISSES = None
     print("⚠️ Prometheus metrics disabled")
 
 # ============================================

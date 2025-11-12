@@ -49,11 +49,11 @@ google-auth-oauthlib==1.2.0
 
 # Google Drive API para manejo de archivos de evidencia (integrado con versiones existentes)
 
-# Rate limiting
-slowapi==0.1.9
+# Rate limiting (OPCIONAL - deshabilitado temporalmente para Railway)
+# slowapi==0.1.9
 
-# APM and monitoring
-prometheus-client==0.21.0
+# APM and monitoring (OPCIONAL - deshabilitado temporalmente para Railway)
+# prometheus-client==0.21.0
 
 # Nota: Las siguientes dependencias son parte de la librería estándar de Python
 # y no necesitan ser instaladas: asyncio, dataclasses, functools, itertools,
