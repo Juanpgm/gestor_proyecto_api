@@ -1465,6 +1465,75 @@ async def cargar_convenio_transferencia(datos_convenio: Dict[str, Any]) -> Dict[
             "error": str(e)
         }
 
+async def modificar_convenio_transferencia(doc_id: str, campos_actualizar: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Modificar un convenio de transferencia existente en la colección convenios_transferencias_emprestito
+    """
+    if not FIRESTORE_AVAILABLE:
+        return {
+            "success": False,
+            "error": "Firebase no disponible"
+        }
+
+    try:
+        db_client = get_firestore_client()
+        if not db_client:
+            return {
+                "success": False,
+                "error": "Error obteniendo cliente Firestore"
+            }
+
+        # Verificar que el documento existe
+        doc_ref = db_client.collection('convenios_transferencias_emprestito').document(doc_id)
+        doc = doc_ref.get()
+
+        if not doc.exists:
+            return {
+                "success": False,
+                "error": f"No se encontró el convenio de transferencia con ID: {doc_id}"
+            }
+
+        # Preparar datos para actualizar
+        datos_actualizacion = {}
+        campos_actualizados = []
+        
+        for campo, valor in campos_actualizar.items():
+            if valor is not None:
+                # Limpiar strings si es necesario
+                if isinstance(valor, str):
+                    datos_actualizacion[campo] = valor.strip()
+                else:
+                    datos_actualizacion[campo] = valor
+                campos_actualizados.append(campo)
+
+        # Agregar timestamp de actualización
+        datos_actualizacion["fecha_actualizacion"] = datetime.now()
+
+        # Actualizar documento
+        doc_ref.update(datos_actualizacion)
+
+        # Obtener documento actualizado
+        doc_actualizado = doc_ref.get()
+        datos_completos = doc_actualizado.to_dict()
+
+        logger.info(f"Convenio de transferencia actualizado exitosamente: {doc_id}, campos: {campos_actualizados}")
+
+        return {
+            "success": True,
+            "doc_id": doc_id,
+            "campos_actualizados": campos_actualizados,
+            "data": serialize_datetime_objects(datos_completos),
+            "message": f"Convenio de transferencia actualizado exitosamente",
+            "coleccion": "convenios_transferencias_emprestito"
+        }
+
+    except Exception as e:
+        logger.error(f"Error modificando convenio de transferencia: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
 def cargar_rpc_emprestito(datos_rpc: Dict[str, Any]) -> Dict[str, Any]:
     """
     Cargar RPC (Registro Presupuestal de Compromiso) directamente en la colección rpc_contratos_emprestito

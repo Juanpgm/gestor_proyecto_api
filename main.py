@@ -4114,6 +4114,7 @@ try:
         get_emprestito_operations_status,
         cargar_orden_compra_directa,
         cargar_convenio_transferencia,
+        modificar_convenio_transferencia,
         cargar_rpc_emprestito,
         cargar_pago_emprestito,
         get_pagos_emprestito_all,
@@ -4674,6 +4675,198 @@ async def cargar_convenio_transferencia_emprestito(
         raise
     except Exception as e:
         logger.error(f"Error en endpoint de convenio de transferencia: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "success": False,
+                "error": "Error interno del servidor",
+                "message": "Por favor, inténtelo de nuevo más tarde",
+                "code": "INTERNAL_SERVER_ERROR"
+            }
+        )
+
+@app.put("/emprestito/modificar-convenio-transferencia", tags=["Gestión de Empréstito"], summary="🟠 Modificar Convenio de Transferencia")
+async def modificar_convenio_transferencia_emprestito(
+    doc_id: str = Form(..., description="ID del documento a modificar (obligatorio)"),
+    referencia_contrato: Optional[str] = Form(None, description="Referencia del contrato/convenio (opcional)"),
+    nombre_centro_gestor: Optional[str] = Form(None, description="Centro gestor responsable (opcional)"),
+    banco: Optional[str] = Form(None, description="Nombre del banco (opcional)"),
+    objeto_contrato: Optional[str] = Form(None, description="Objeto del contrato (opcional)"),
+    valor_contrato: Optional[float] = Form(None, description="Valor del contrato (opcional)"),
+    bp: Optional[str] = Form(None, description="Código BP (opcional)"),
+    bpin: Optional[str] = Form(None, description="Código BPIN (opcional)"),
+    valor_convenio: Optional[float] = Form(None, description="Valor del convenio (opcional)"),
+    urlproceso: Optional[str] = Form(None, description="URL del proceso (opcional)"),
+    fecha_inicio_contrato: Optional[str] = Form(None, description="Fecha de inicio del contrato (opcional)"),
+    fecha_fin_contrato: Optional[str] = Form(None, description="Fecha de fin del contrato (opcional)"),
+    modalidad_contrato: Optional[str] = Form(None, description="Modalidad del contrato (opcional)"),
+    ordenador_gastor: Optional[str] = Form(None, description="Ordenador del gasto (opcional)"),
+    tipo_contrato: Optional[str] = Form(None, description="Tipo de contrato (opcional)"),
+    estado_contrato: Optional[str] = Form(None, description="Estado del contrato (opcional)"),
+    sector: Optional[str] = Form(None, description="Sector (opcional)"),
+    nombre_resumido_proceso: Optional[str] = Form(None, description="Nombre resumido del proceso (opcional)")
+):
+    """
+    ## 🟠 PUT | ✏️ Actualización | Modificar Convenio de Transferencia de Empréstito
+    
+    Endpoint para modificar cualquier campo de un convenio de transferencia existente 
+    en la colección `convenios_transferencias_emprestito`.
+    
+    ### ✅ Funcionalidades principales:
+    - **Actualización flexible**: Permite modificar cualquier campo del convenio
+    - **Actualización parcial**: Solo se actualizan los campos proporcionados
+    - **Validación de existencia**: Verifica que el documento exista antes de actualizar
+    - **Timestamp automático**: Actualiza automáticamente `fecha_actualizacion`
+    - **Preservación de datos**: Los campos no proporcionados mantienen sus valores originales
+    
+    ### ⚙️ Campo obligatorio:
+    - `doc_id`: ID del documento de Firestore que se desea modificar
+    
+    ### 📝 Campos opcionales (todos):
+    Cualquiera de estos campos puede ser actualizado:
+    - `referencia_contrato`: Referencia del contrato/convenio
+    - `nombre_centro_gestor`: Centro gestor responsable
+    - `banco`: Nombre del banco
+    - `objeto_contrato`: Objeto del contrato
+    - `valor_contrato`: Valor del contrato
+    - `bp`: Código BP
+    - `bpin`: Código BPIN
+    - `valor_convenio`: Valor del convenio
+    - `urlproceso`: URL del proceso
+    - `fecha_inicio_contrato`: Fecha de inicio
+    - `fecha_fin_contrato`: Fecha de finalización
+    - `modalidad_contrato`: Modalidad de contratación
+    - `ordenador_gastor`: Ordenador del gasto
+    - `tipo_contrato`: Tipo de contrato
+    - `estado_contrato`: Estado actual
+    - `sector`: Sector al que pertenece
+    - `nombre_resumido_proceso`: Nombre resumido del proceso
+    
+    ### 📋 Ejemplo de request (actualización parcial):
+    ```json
+    {
+        "doc_id": "abc123def456",
+        "estado_contrato": "Finalizado",
+        "fecha_fin_contrato": "2024-12-31"
+    }
+    ```
+    
+    ### ✅ Respuesta exitosa (200):
+    ```json
+    {
+        "success": true,
+        "message": "Convenio de transferencia actualizado exitosamente",
+        "doc_id": "abc123def456",
+        "campos_actualizados": ["estado_contrato", "fecha_fin_contrato"],
+        "data": { ... },
+        "timestamp": "2024-11-17T10:30:00"
+    }
+    ```
+    
+    ### ❌ Respuesta de error (404):
+    ```json
+    {
+        "success": false,
+        "error": "No se encontró el convenio de transferencia con ID: abc123",
+        "doc_id": "abc123"
+    }
+    ```
+    
+    ### 🔗 Endpoints relacionados:
+    - `POST /emprestito/cargar-convenio-transferencia` - Para crear nuevos convenios
+    - `GET /convenios_transferencias_all` - Para consultar convenios existentes
+    """
+    try:
+        check_emprestito_availability()
+        
+        # Crear diccionario con los campos a actualizar
+        campos_actualizar = {}
+        
+        if referencia_contrato is not None:
+            campos_actualizar["referencia_contrato"] = referencia_contrato
+        if nombre_centro_gestor is not None:
+            campos_actualizar["nombre_centro_gestor"] = nombre_centro_gestor
+        if banco is not None:
+            campos_actualizar["banco"] = banco
+        if objeto_contrato is not None:
+            campos_actualizar["objeto_contrato"] = objeto_contrato
+        if valor_contrato is not None:
+            campos_actualizar["valor_contrato"] = valor_contrato
+        if bp is not None:
+            campos_actualizar["bp"] = bp
+        if bpin is not None:
+            campos_actualizar["bpin"] = bpin
+        if valor_convenio is not None:
+            campos_actualizar["valor_convenio"] = valor_convenio
+        if urlproceso is not None:
+            campos_actualizar["urlproceso"] = urlproceso
+        if fecha_inicio_contrato is not None:
+            campos_actualizar["fecha_inicio_contrato"] = fecha_inicio_contrato
+        if fecha_fin_contrato is not None:
+            campos_actualizar["fecha_fin_contrato"] = fecha_fin_contrato
+        if modalidad_contrato is not None:
+            campos_actualizar["modalidad_contrato"] = modalidad_contrato
+        if ordenador_gastor is not None:
+            campos_actualizar["ordenador_gastor"] = ordenador_gastor
+        if tipo_contrato is not None:
+            campos_actualizar["tipo_contrato"] = tipo_contrato
+        if estado_contrato is not None:
+            campos_actualizar["estado_contrato"] = estado_contrato
+        if sector is not None:
+            campos_actualizar["sector"] = sector
+        if nombre_resumido_proceso is not None:
+            campos_actualizar["nombre_resumido_proceso"] = nombre_resumido_proceso
+        
+        # Validar que se proporcionó al menos un campo para actualizar
+        if not campos_actualizar:
+            return JSONResponse(
+                content={
+                    "success": False,
+                    "error": "Debe proporcionar al menos un campo para actualizar",
+                    "message": "No se proporcionaron campos para modificar",
+                    "timestamp": datetime.now().isoformat()
+                },
+                status_code=400,
+                headers={"Content-Type": "application/json; charset=utf-8"}
+            )
+        
+        # Modificar convenio de transferencia
+        resultado = await modificar_convenio_transferencia(doc_id, campos_actualizar)
+        
+        # Manejar respuesta según el resultado
+        if not resultado.get("success"):
+            status_code = 404 if "No se encontró" in resultado.get("error", "") else 400
+            return JSONResponse(
+                content={
+                    "success": False,
+                    "error": resultado.get("error"),
+                    "doc_id": doc_id,
+                    "message": "Error al modificar el convenio de transferencia",
+                    "timestamp": datetime.now().isoformat()
+                },
+                status_code=status_code,
+                headers={"Content-Type": "application/json; charset=utf-8"}
+            )
+        
+        # Respuesta exitosa
+        return JSONResponse(
+            content={
+                "success": True,
+                "message": resultado.get("message"),
+                "doc_id": resultado.get("doc_id"),
+                "campos_actualizados": resultado.get("campos_actualizados"),
+                "data": resultado.get("data"),
+                "coleccion": resultado.get("coleccion"),
+                "timestamp": datetime.now().isoformat()
+            },
+            status_code=200,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en endpoint de modificación de convenio de transferencia: {e}")
         raise HTTPException(
             status_code=500,
             detail={
