@@ -1385,7 +1385,8 @@ async def cargar_convenio_transferencia(datos_convenio: Dict[str, Any]) -> Dict[
             "nombre_centro_gestor",
             "banco",
             "objeto_contrato",
-            "valor_contrato"
+            "valor_contrato",
+            "nombre_resumido_proceso"
         ]
         
         for campo in campos_obligatorios:
@@ -1438,6 +1439,7 @@ async def cargar_convenio_transferencia(datos_convenio: Dict[str, Any]) -> Dict[
             "tipo_contrato": datos_convenio.get("tipo_contrato", "").strip() if datos_convenio.get("tipo_contrato") else None,
             "estado_contrato": datos_convenio.get("estado_contrato", "").strip() if datos_convenio.get("estado_contrato") else None,
             "sector": datos_convenio.get("sector", "").strip() if datos_convenio.get("sector") else None,
+            "nombre_resumido_proceso": datos_convenio.get("nombre_resumido_proceso", "").strip() if datos_convenio.get("nombre_resumido_proceso") else None,
             "fecha_creacion": datetime.now(),
             "fecha_actualizacion": datetime.now(),
             "estado": "activo",

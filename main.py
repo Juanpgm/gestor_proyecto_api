@@ -5698,6 +5698,156 @@ async def get_all_convenios_transferencia_emprestito():
             }
         )
 
+@app.get("/pagos_emprestito_all", tags=["Gestión de Empréstito"], summary="🔵 Obtener Todos los Pagos de Empréstito")
+async def get_all_pagos_emprestito():
+    """
+    ## 🔵 GET | 📋 Consultas | Obtener Todos los Pagos de Empréstito
+    
+    Endpoint para obtener todos los pagos de empréstito almacenados en la colección `pagos_emprestito`.
+    
+    ### ✅ Funcionalidades principales:
+    - **Listado completo**: Retorna todos los pagos registrados
+    - **Datos completos**: Incluye todos los campos de cada pago
+    - **Metadatos**: Incluye ID del documento, conteo total y timestamp
+    
+    ### 📊 Información incluida:
+    - Todos los campos del pago
+    - ID del documento para referencia
+    - Conteo total de registros
+    - Timestamp de la consulta
+    
+    ### ✅ Respuesta exitosa (200):
+    ```json
+    {
+        "success": true,
+        "data": [...],
+        "count": 10,
+        "collection": "pagos_emprestito",
+        "timestamp": "2024-11-17T..."
+    }
+    ```
+    """
+    try:
+        check_emprestito_availability()
+        
+        result = await get_pagos_emprestito_all()
+        
+        if not result["success"]:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error obteniendo pagos de empréstito: {result.get('error', 'Error desconocido')}"
+            )
+        
+        return JSONResponse(
+            content={
+                "success": True,
+                "data": result["data"],
+                "count": result["count"],
+                "collection": result["collection"],
+                "timestamp": result["timestamp"],
+                "message": f"Se obtuvieron {result['count']} pagos de empréstito exitosamente"
+            },
+            status_code=200,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en endpoint de pagos de empréstito: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "success": False,
+                "error": "Error interno del servidor",
+                "message": "Error al obtener pagos de empréstito",
+                "code": "INTERNAL_SERVER_ERROR"
+            }
+        )
+
+@app.get("/rpc_contratos_emprestito_all", tags=["Gestión de Empréstito"], summary="🔵 Obtener Todos los RPCs de Empréstito")
+async def get_all_rpc_contratos_emprestito():
+    """
+    ## 🔵 GET | 📋 Consultas | Obtener Todos los RPCs de Empréstito
+    
+    Endpoint para obtener todos los Registros Presupuestales de Compromiso (RPC) 
+    de empréstito almacenados en la colección `rpc_contratos_emprestito`.
+    
+    ### ✅ Funcionalidades principales:
+    - **Listado completo**: Retorna todos los RPCs registrados
+    - **Datos completos**: Incluye todos los campos de cada RPC
+    - **Metadatos**: Incluye ID del documento, conteo total y timestamp
+    
+    ### 📊 Información incluida:
+    - Todos los campos del RPC
+    - ID del documento para referencia
+    - Conteo total de registros
+    - Timestamp de la consulta
+    
+    ### 🗄️ Campos principales esperados:
+    - **numero_rpc**: Número único del RPC
+    - **beneficiario_id**: Identificación del beneficiario
+    - **beneficiario_nombre**: Nombre del beneficiario
+    - **descripcion_rpc**: Descripción del compromiso
+    - **fecha_contabilizacion**: Fecha de contabilización
+    - **fecha_impresion**: Fecha de impresión
+    - **estado_liberacion**: Estado de liberación
+    - **bp**: Código BP
+    - **valor_rpc**: Valor monetario del RPC
+    - **nombre_centro_gestor**: Centro gestor responsable
+    - **referencia_contrato**: Referencia del contrato asociado
+    - **cdp_asociados**: CDPs asociados
+    - **programacion_pac**: Programación PAC
+    
+    ### ✅ Respuesta exitosa (200):
+    ```json
+    {
+        "success": true,
+        "data": [...],
+        "count": 15,
+        "collection": "rpc_contratos_emprestito",
+        "timestamp": "2024-11-17T..."
+    }
+    ```
+    """
+    try:
+        check_emprestito_availability()
+        
+        result = await get_rpc_contratos_emprestito_all()
+        
+        if not result["success"]:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error obteniendo RPCs de empréstito: {result.get('error', 'Error desconocido')}"
+            )
+        
+        return JSONResponse(
+            content={
+                "success": True,
+                "data": result["data"],
+                "count": result["count"],
+                "collection": result["collection"],
+                "timestamp": result["timestamp"],
+                "message": f"Se obtuvieron {result['count']} RPCs de empréstito exitosamente"
+            },
+            status_code=200,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en endpoint de RPCs de empréstito: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "success": False,
+                "error": "Error interno del servidor",
+                "message": "Error al obtener RPCs de empréstito",
+                "code": "INTERNAL_SERVER_ERROR"
+            }
+        )
+
 @app.get("/emprestito/proceso/{referencia_proceso}", tags=["Gestión de Empréstito"], summary="🔵 Verificar Proceso Existente")
 async def verificar_proceso_existente_endpoint(referencia_proceso: str):
     """
