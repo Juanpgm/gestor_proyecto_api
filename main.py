@@ -4500,7 +4500,8 @@ async def cargar_convenio_transferencia_emprestito(
     ordenador_gastor: Optional[str] = Form(None, description="Ordenador del gasto (opcional)"),
     tipo_contrato: Optional[str] = Form(None, description="Tipo de contrato (opcional)"),
     estado_contrato: Optional[str] = Form(None, description="Estado del contrato (opcional)"),
-    sector: Optional[str] = Form(None, description="Sector (opcional)")
+    sector: Optional[str] = Form(None, description="Sector (opcional)"),
+    nombre_resumido_proceso: str = Form(..., description="Nombre resumido del proceso (obligatorio)")
 ):
     """
     ## 📝 POST | 📥 Carga de Datos | Cargar Convenio de Transferencia de Empréstito
@@ -4619,7 +4620,8 @@ async def cargar_convenio_transferencia_emprestito(
             "ordenador_gastor": ordenador_gastor,
             "tipo_contrato": tipo_contrato,
             "estado_contrato": estado_contrato,
-            "sector": sector
+            "sector": sector,
+            "nombre_resumido_proceso": nombre_resumido_proceso
         }
         
         # Procesar convenio de transferencia
@@ -5407,6 +5409,7 @@ async def get_all_convenios_transferencia_emprestito():
     - **tipo_contrato**: Tipo de contrato
     - **estado_contrato**: Estado actual
     - **sector**: Sector al que pertenece
+    - **nombre_resumido_proceso**: Nombre resumido del proceso
     - **fecha_creacion**: Fecha de creación del registro
     - **fecha_actualizacion**: Última actualización
     - **estado**: Estado del registro (activo/inactivo)
