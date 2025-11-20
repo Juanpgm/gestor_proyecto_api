@@ -2448,7 +2448,7 @@ async def procesar_datos_proyecciones(df: pd.DataFrame) -> Dict[str, Any]:
         logger.info("🔄 Procesando datos de proyecciones...")
         
         # Mapeo de columnas original -> campo destino
-        # IMPORTANTE: Soporta tanto "VALOR \n TOTAL" (legacy) como "valor_proyectado" (nuevo)
+        # IMPORTANTE: Orden de prioridad para valor_proyectado
         mapeo_campos = {
             "Item": "item",
             "Nro de Proceso": "referencia_proceso",
@@ -2459,11 +2459,20 @@ async def procesar_datos_proyecciones(df: pd.DataFrame) -> Dict[str, Any]:
             "Proyecto": "nombre_generico_proyecto",
             "Proyecto con su respectivo contrato": "nombre_resumido_proceso",
             "ID PAA": "id_paa",
-            "LINK DEL PROCESO": "urlProceso",
-            "valor_proyectado": "valor_proyectado",  # Nuevo nombre (preferido)
-            "VALOR\n TOTAL": "valor_proyectado",    # Legacy con salto de línea
-            "VALOR TOTAL": "valor_proyectado"        # Legacy sin salto de línea
+            "LINK DEL PROCESO": "urlProceso"
         }
+        
+        # Variantes de columnas para valor_proyectado (orden de prioridad)
+        # NOTA: En Google Sheets el campo se llama "VALOR TOTAL"
+        columnas_valor_proyectado = [
+            "VALOR TOTAL",           # Nombre real en Google Sheets (PRIORIDAD 1)
+            "valor_proyectado",      # Nombre ideal
+            "VALOR \n TOTAL",        # Con espacios y salto de línea
+            "VALOR\n TOTAL",         # Legacy con salto de línea sin espacio inicial
+            "VALOR \nTOTAL",         # Variante sin espacio después del salto
+            "VALOR\nTOTAL",          # Sin espacios
+            "VALOR  TOTAL",          # Con doble espacio
+        ]
         
         # Verificar qué columnas están disponibles
         columnas_disponibles = list(df.columns)
@@ -2481,11 +2490,7 @@ async def procesar_datos_proyecciones(df: pd.DataFrame) -> Dict[str, Any]:
                 # Mapear cada campo según la especificación
                 for col_original, campo_destino in mapeo_campos.items():
                     # Si el campo destino ya fue asignado con un valor válido, no sobrescribir
-                    if campo_destino in registro and campo_destino == "valor_proyectado":
-                        # Para valor_proyectado, solo sobrescribir si el valor actual es 0
-                        if registro[campo_destino] != 0:
-                            continue
-                    elif campo_destino in registro and registro[campo_destino] != "":
+                    if campo_destino in registro and registro[campo_destino] != "":
                         # Para otros campos, no sobrescribir si ya tiene valor
                         continue
                     
@@ -2513,7 +2518,7 @@ async def procesar_datos_proyecciones(df: pd.DataFrame) -> Dict[str, Any]:
                     
                     # Procesar el valor
                     if pd.isna(valor) or valor is None:
-                        registro[campo_destino] = "" if campo_destino not in ["valor_proyectado"] else 0
+                        registro[campo_destino] = ""
                     else:
                         valor_str = str(valor).strip()
                         
@@ -2523,8 +2528,47 @@ async def procesar_datos_proyecciones(df: pd.DataFrame) -> Dict[str, Any]:
                                 registro[campo_destino] = f"BP{valor_str}"
                             else:
                                 registro[campo_destino] = valor_str
-                        # Procesamiento especial para valor_proyectado (valores numéricos)
-                        elif campo_destino == "valor_proyectado":
+                        else:
+                            registro[campo_destino] = valor_str
+                
+                # Procesar valor_proyectado por separado (con orden de prioridad)
+                valor_proyectado_encontrado = False
+                columna_usada = None
+                
+                for col_valor in columnas_valor_proyectado:
+                    if valor_proyectado_encontrado:
+                        break
+                    
+                    # Búsqueda exacta primero
+                    valor = None
+                    if col_valor in columnas_disponibles:
+                        valor = fila[col_valor]
+                        columna_usada = col_valor
+                    else:
+                        # Búsqueda flexible con normalización agresiva
+                        # Normalizar: quitar \n, \r, \t, espacios múltiples, y convertir a minúsculas
+                        col_valor_clean = re.sub(r'\s+', ' ', col_valor.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')).lower().strip()
+                        
+                        for col_df in columnas_disponibles:
+                            col_df_clean = re.sub(r'\s+', ' ', col_df.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')).lower().strip()
+                            
+                            # Busqueda exacta de versión normalizada
+                            if col_valor_clean == col_df_clean:
+                                valor = fila[col_df]
+                                columna_usada = col_df
+                                logger.debug(f"🔍 Fila {index + 1}: Encontrada columna normalizada '{col_df}' (buscando '{col_valor}')")
+                                break
+                            # Búsqueda parcial si contiene "valor" y "total"
+                            elif 'valor' in col_df_clean and 'total' in col_df_clean:
+                                valor = fila[col_df]
+                                columna_usada = col_df
+                                logger.debug(f"🔍 Fila {index + 1}: Encontrada columna por palabras clave '{col_df}' (buscando '{col_valor}')")
+                                break
+                    
+                    # Si encontramos un valor válido, procesarlo
+                    if valor is not None and not pd.isna(valor):
+                        valor_str = str(valor).strip()
+                        if valor_str and valor_str != '':
                             try:
                                 # Limpiar formato de número (quitar $, espacios, comas, puntos como separadores de miles)
                                 valor_limpio = valor_str.replace('$', '').replace(',', '').replace(' ', '').strip()
@@ -2538,14 +2582,17 @@ async def procesar_datos_proyecciones(df: pd.DataFrame) -> Dict[str, Any]:
                                         valor_limpio = valor_limpio.replace('.', '')
                                 
                                 if valor_limpio and valor_limpio != '':
-                                    registro[campo_destino] = float(valor_limpio)
-                                else:
-                                    registro[campo_destino] = 0
-                            except (ValueError, TypeError):
-                                logger.warning(f"⚠️ No se pudo convertir valor '{valor_str}' a número en fila {index + 1}")
-                                registro[campo_destino] = 0
-                        else:
-                            registro[campo_destino] = valor_str
+                                    registro["valor_proyectado"] = float(valor_limpio)
+                                    valor_proyectado_encontrado = True
+                                    col_display = columna_usada.replace('\n', '\\n').replace('\r', '\\r') if columna_usada else col_valor
+                                    logger.info(f"✅ Fila {index + 1}: valor_proyectado = {registro['valor_proyectado']:,.0f} desde columna '{col_display}'")
+                            except (ValueError, TypeError) as e:
+                                logger.warning(f"⚠️ No se pudo convertir valor '{valor_str}' a número en fila {index + 1}: {str(e)}")
+                
+                # Si no se encontró valor_proyectado, asignar 0
+                if "valor_proyectado" not in registro:
+                    registro["valor_proyectado"] = 0
+                    logger.warning(f"⚠️ Fila {index + 1}: valor_proyectado no encontrado en ninguna variante de columna, asignado 0")
                 
                 # Agregar metadatos
                 registro["fecha_carga"] = datetime.now().isoformat()
@@ -2582,6 +2629,12 @@ async def procesar_datos_proyecciones(df: pd.DataFrame) -> Dict[str, Any]:
         
         logger.info(f"✅ Procesamiento completado: {len(registros_procesados)} registros válidos, {len(filas_con_errores)} con errores")
         
+        # Mapeo completo para documentación
+        mapeo_completo = mapeo_campos.copy()
+        mapeo_completo["valor_proyectado (prioridad 1)"] = "valor_proyectado"
+        mapeo_completo["VALOR\\n TOTAL (prioridad 2)"] = "valor_proyectado"
+        mapeo_completo["VALOR TOTAL (prioridad 3)"] = "valor_proyectado"
+        
         return {
             "success": True,
             "data": registros_procesados,
@@ -2589,7 +2642,7 @@ async def procesar_datos_proyecciones(df: pd.DataFrame) -> Dict[str, Any]:
             "registros_validos": len(registros_procesados),
             "filas_con_errores": len(filas_con_errores),
             "errores_detalle": filas_con_errores,
-            "mapeo_aplicado": mapeo_campos
+            "mapeo_aplicado": mapeo_completo
         }
         
     except Exception as e:
