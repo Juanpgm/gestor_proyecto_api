@@ -116,6 +116,7 @@ try:
         get_unidades_proyecto_attributes,
         get_filter_options,
         validate_unidades_proyecto_collection,
+        get_quality_control_summary,
         # Contratos operations
         get_contratos_init_data,
         get_contratos_emprestito_all,
@@ -3317,6 +3318,105 @@ async def delete_unidades_by_tipo_equipamiento(
         raise HTTPException(
             status_code=500,
             detail=f"Error eliminando documentos: {str(e)}"
+        )
+
+
+@app.get("/unidades-proyecto/quality-control-summary", tags=["Unidades de Proyecto"], summary="🔵 Resumen Control de Calidad")
+@optional_rate_limit("60/minute")  # Máximo 60 requests por minuto
+async def get_quality_control_summary_endpoint(
+    request: Request,
+    nombre_centro_gestor: Optional[str] = Query(None, description="Filtrar por centro gestor"),
+    estado: Optional[str] = Query(None, description="Filtrar por estado"),
+    limit: Optional[int] = Query(None, ge=1, le=1000, description="Límite de registros")
+):
+    """
+    ## 🔵 GET | 📊 Control de Calidad | Resumen de Control de Calidad de Unidades de Proyecto
+    
+    **Propósito**: Retorna datos de control de calidad de las unidades de proyecto desde la 
+    colección "unidades_proyecto_quality_control_summary".
+    
+    ### ✅ Casos de uso:
+    - Monitoreo de calidad de datos de proyectos
+    - Dashboard de control de calidad
+    - Reportes de validación de información
+    - Análisis de completitud de datos por centro gestor
+    
+    ### 🔍 Filtros disponibles:
+    - **nombre_centro_gestor**: Filtrar por centro gestor responsable
+    - **estado**: Filtrar por estado del control de calidad
+    - **limit**: Limitar número de resultados retornados
+    
+    ### 📊 Información incluida:
+    - Todos los campos de control de calidad disponibles en la colección
+    - ID del documento para referencia
+    - Conteo total de registros
+    - Filtros aplicados
+    - Timestamp de la consulta
+    
+    ### 📝 Ejemplo de uso:
+    ```javascript
+    // Obtener todos los registros de control de calidad
+    const response = await fetch('/unidades-proyecto/quality-control-summary');
+    const data = await response.json();
+    
+    // Filtrar por centro gestor
+    const responseFiltrado = await fetch(
+        '/unidades-proyecto/quality-control-summary?nombre_centro_gestor=Secretaría de Infraestructura'
+    );
+    
+    if (data.success) {
+        console.log('Registros encontrados:', data.count);
+        console.log('Datos:', data.data);
+    }
+    ```
+    
+    ### 💡 Notas:
+    - Cache recomendado en el cliente (datos de control de calidad no cambian frecuentemente)
+    - Los filtros se aplican en el servidor para mejor performance
+    - Soporte completo para caracteres UTF-8 en español
+    """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
+    
+    try:
+        # Construir filtros
+        filters = {}
+        
+        if nombre_centro_gestor:
+            filters["nombre_centro_gestor"] = nombre_centro_gestor
+        if estado:
+            filters["estado"] = estado
+        if limit:
+            filters["limit"] = limit
+        
+        # Obtener datos de control de calidad
+        result = await get_quality_control_summary(filters)
+        
+        if not result["success"]:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error obteniendo resumen de control de calidad: {result.get('error', 'Error desconocido')}"
+            )
+        
+        response_data = {
+            "success": True,
+            "data": result["data"],
+            "count": result["count"],
+            "collection": result["collection"],
+            "filters_applied": result.get("filters_applied", {}),
+            "timestamp": result["timestamp"],
+            "last_updated": "2024-11-20T00:00:00Z",  # Endpoint creation date
+            "message": f"Se obtuvieron {result['count']} registros de control de calidad exitosamente"
+        }
+        
+        return create_utf8_response(response_data)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error procesando resumen de control de calidad: {str(e)}"
         )
 
 

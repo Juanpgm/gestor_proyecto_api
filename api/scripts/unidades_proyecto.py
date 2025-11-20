@@ -1536,3 +1536,119 @@ async def get_filter_options(field: Optional[str] = None, limit: Optional[int] =
             "error": f"Error obteniendo opciones de filtros: {str(e)}",
             "filters": {}
         }
+
+
+async def get_quality_control_summary(filters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """
+    Obtener datos de control de calidad de unidades de proyecto
+    
+    Esta función retorna todos los documentos de la colección 
+    "unidades_proyecto_quality_control_summary" que contiene información
+    sobre el control de calidad de las unidades de proyecto.
+    
+    Args:
+        filters: Filtros opcionales para aplicar a la consulta (ej: nombre_centro_gestor)
+    
+    Returns:
+        Dict con success, data, count y timestamp
+    """
+    try:
+        print("📊 Obteniendo resumen de control de calidad...")
+        
+        # Obtener cliente de Firestore
+        db = get_firestore_client()
+        if db is None:
+            raise Exception("No se pudo conectar a Firestore")
+        
+        # Nombre de la colección
+        collection_name = "unidades_proyecto_quality_control_summary"
+        
+        # Construir query base
+        collection_ref = db.collection(collection_name)
+        query = collection_ref
+        
+        # Aplicar filtros si se proporcionan
+        if filters:
+            # Filtro por nombre_centro_gestor
+            if filters.get("nombre_centro_gestor"):
+                query = query.where("nombre_centro_gestor", "==", filters["nombre_centro_gestor"])
+            
+            # Filtro por estado
+            if filters.get("estado"):
+                query = query.where("estado", "==", filters["estado"])
+            
+            # Añadir límite si se especifica
+            if filters.get("limit"):
+                query = query.limit(filters["limit"])
+        
+        # Ejecutar query
+        print(f"🔍 Consultando colección: {collection_name}")
+        docs = query.stream()
+        
+        # Procesar documentos
+        data = []
+        for doc in docs:
+            doc_dict = doc.to_dict()
+            doc_dict["id"] = doc.id
+            
+            # Limpiar datos de Firebase (convertir timestamps, etc.)
+            doc_dict = clean_firebase_document(doc_dict)
+            data.append(doc_dict)
+        
+        print(f"✅ Se obtuvieron {len(data)} documentos de control de calidad")
+        
+        return {
+            "success": True,
+            "data": data,
+            "count": len(data),
+            "collection": collection_name,
+            "filters_applied": filters or {},
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        print(f"❌ ERROR: Error obteniendo control de calidad: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "success": False,
+            "error": str(e),
+            "data": [],
+            "count": 0,
+            "collection": "unidades_proyecto_quality_control_summary",
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+def clean_firebase_document(doc: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Limpia un documento de Firebase convirtiendo tipos especiales a JSON-serializables
+    
+    Args:
+        doc: Documento de Firebase
+    
+    Returns:
+        Documento limpio con tipos serializables
+    """
+    try:
+        from google.cloud.firestore_v1._helpers import DatetimeWithNanoseconds
+    except ImportError:
+        DatetimeWithNanoseconds = None
+    
+    cleaned = {}
+    for key, value in doc.items():
+        if DatetimeWithNanoseconds and isinstance(value, DatetimeWithNanoseconds):
+            cleaned[key] = value.isoformat()
+        elif isinstance(value, datetime):
+            cleaned[key] = value.isoformat()
+        elif isinstance(value, dict):
+            cleaned[key] = clean_firebase_document(value)
+        elif isinstance(value, list):
+            cleaned[key] = [
+                clean_firebase_document(item) if isinstance(item, dict) else item
+                for item in value
+            ]
+        else:
+            cleaned[key] = value
+    
+    return cleaned

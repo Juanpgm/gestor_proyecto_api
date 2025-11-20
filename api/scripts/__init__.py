@@ -52,6 +52,7 @@ try:
         get_filter_options,
         get_unidades_proyecto_summary,
         validate_unidades_proyecto_collection,
+        get_quality_control_summary,
     )
     UNIDADES_PROYECTO_AVAILABLE = True
 except ImportError as e:

@@ -19,15 +19,18 @@ El endpoint no estaba capturando correctamente el campo `valor_proyectado` porqu
 ## ✅ Solución Implementada
 
 ### Archivo modificado:
+
 - `api/scripts/emprestito_operations.py` - Función `procesar_datos_proyecciones`
 
 ### Cambios principales:
 
 #### 1. **Separación del procesamiento de `valor_proyectado`**
-   - Ahora se procesa de forma independiente del resto de campos
-   - Evita conflictos de sobrescritura de valores
+
+- Ahora se procesa de forma independiente del resto de campos
+- Evita conflictos de sobrescritura de valores
 
 #### 2. **Variantes de columna ampliadas** (en orden de prioridad):
+
 ```python
 columnas_valor_proyectado = [
     "VALOR TOTAL",           # Nombre real en Google Sheets ✅ PRIORIDAD 1
@@ -41,24 +44,28 @@ columnas_valor_proyectado = [
 ```
 
 #### 3. **Normalización mejorada con regex**:
+
 ```python
 # Normaliza espacios múltiples, saltos de línea, retornos de carro y tabuladores
 col_clean = re.sub(r'\s+', ' ', col.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')).lower().strip()
 ```
 
 #### 4. **Triple nivel de búsqueda**:
-   1. **Búsqueda exacta:** Compara el nombre exacto de la columna
-   2. **Búsqueda normalizada:** Compara versiones normalizadas (sin espacios extra ni saltos)
-   3. **Búsqueda por palabras clave:** Si contiene "valor" Y "total" → MATCH
+
+1.  **Búsqueda exacta:** Compara el nombre exacto de la columna
+2.  **Búsqueda normalizada:** Compara versiones normalizadas (sin espacios extra ni saltos)
+3.  **Búsqueda por palabras clave:** Si contiene "valor" Y "total" → MATCH
 
 #### 5. **Logs mejorados**:
-   - Muestra la columna exacta encontrada en el DataFrame
-   - Formato del valor original y procesado
-   - Warnings claros cuando no se encuentra el campo
+
+- Muestra la columna exacta encontrada en el DataFrame
+- Formato del valor original y procesado
+- Warnings claros cuando no se encuentra el campo
 
 #### 6. **Garantía de inicialización**:
-   - Si no se encuentra ninguna variante, asigna `0` como valor por defecto
-   - Registra warning en los logs para detectar problemas
+
+- Si no se encuentra ninguna variante, asigna `0` como valor por defecto
+- Registra warning en los logs para detectar problemas
 
 ---
 
@@ -67,12 +74,14 @@ col_clean = re.sub(r'\s+', ' ', col.replace('\n', ' ').replace('\r', ' ').replac
 ### Script de prueba: `test_valor_sheets_real.py`
 
 Resultados confirmados:
+
 - ✅ Detecta correctamente `"VALOR \n TOTAL"` con espacios
 - ✅ Procesa todas las variantes de formato (con/sin espacios, saltos de línea, etc.)
 - ✅ Limpia correctamente formatos numéricos ($, puntos, comas)
 - ✅ Convierte valores correctamente a float
 
 ### Ejemplo de procesamiento:
+
 ```
 Columna original en Sheets: "VALOR TOTAL"
 Valor en celda: "$1.500.000.000"
@@ -83,20 +92,21 @@ Resultado procesado: 1500000000.0 ✅
 
 ## 📊 Casos de prueba exitosos
 
-| Formato en Sheets | Detectado | Procesado | Prioridad |
-|-------------------|-----------|-----------|-----------|
-| `VALOR TOTAL` | ✅ | ✅ | **1** 🎯 |
-| `valor_proyectado` | ✅ | ✅ | 2 |
-| `VALOR \n TOTAL` | ✅ | ✅ | 3 |
-| `VALOR\n TOTAL` | ✅ | ✅ | 4 |
-| `VALOR  TOTAL` | ✅ | ✅ | 5 |
-| `VALOR   TOTAL` | ✅ | ✅ | 5 |
+| Formato en Sheets  | Detectado | Procesado | Prioridad |
+| ------------------ | --------- | --------- | --------- |
+| `VALOR TOTAL`      | ✅        | ✅        | **1** 🎯  |
+| `valor_proyectado` | ✅        | ✅        | 2         |
+| `VALOR \n TOTAL`   | ✅        | ✅        | 3         |
+| `VALOR\n TOTAL`    | ✅        | ✅        | 4         |
+| `VALOR  TOTAL`     | ✅        | ✅        | 5         |
+| `VALOR   TOTAL`    | ✅        | ✅        | 5         |
 
 ---
 
 ## 🚀 Próximos pasos
 
 1. **Reiniciar servidor API** (si está corriendo):
+
    ```bash
    # Detener el servidor actual
    # Iniciar nuevamente
@@ -104,11 +114,13 @@ Resultado procesado: 1500000000.0 ✅
    ```
 
 2. **Probar el endpoint**:
+
    ```bash
    POST /emprestito/crear-tabla-proyecciones
    ```
 
 3. **Verificar en logs**:
+
    - Buscar mensajes como: `✅ Fila X: valor_proyectado = 1,500,000,000 desde columna 'VALOR TOTAL'`
    - Verificar que no aparezcan warnings de `valor_proyectado no encontrado`
 
