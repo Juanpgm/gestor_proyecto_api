@@ -37,7 +37,7 @@ if hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8')
 from fastapi import FastAPI, HTTPException, Query, Request, status, Form, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from typing import Dict, Any, Optional, Union, List
 import uvicorn
 import asyncio
@@ -781,7 +781,9 @@ async def read_root():
                 "/unidades-proyecto/attributes",
                 "/unidades-proyecto/dashboard",
                 "/unidades-proyecto/filters",
-                "/unidades-proyecto/download-geojson"
+                "/unidades-proyecto/download-geojson",
+                "/unidades-proyecto/download-table",
+                "/unidades-proyecto/download-table_by_centro_gestor"
             ],
             "gestion_contractual": [
                 "/contratos/init_contratos_seguimiento"
@@ -2324,6 +2326,501 @@ async def download_unidades_proyecto_geojson(
 # ============================================================================
 # ENDPOINT PARA CARGAR GEOJSON A FIRESTORE
 # ============================================================================
+
+@app.get("/unidades-proyecto/download-table", tags=["Unidades de Proyecto"], summary="🔵 Descarga Tabla Excel")
+@optional_rate_limit("20/minute")  # Rate limiting para descargas pesadas
+async def download_unidades_proyecto_table(
+    request: Request,
+    # Filtros de contenido
+    nombre_centro_gestor: Optional[str] = Query(None, description="Centro gestor responsable"),
+    tipo_intervencion: Optional[str] = Query(None, description="Tipo de intervención"),
+    estado: Optional[str] = Query(None, description="Estado del proyecto"),
+    upid: Optional[str] = Query(None, description="ID específico de unidad"),
+    clase_obra: Optional[str] = Query(None, description="Clase de obra"),
+    tipo_equipamiento: Optional[str] = Query(None, description="Tipo de equipamiento"),
+    
+    # Filtros geográficos
+    comuna_corregimiento: Optional[str] = Query(None, description="Comuna o corregimiento"),
+    barrio_vereda: Optional[str] = Query(None, description="Barrio o vereda"),
+    
+    # Configuración de descarga
+    limit: Optional[int] = Query(None, ge=1, le=10000, description="Límite de registros (None = todos)")
+):
+    """
+    ## 🔵 GET | 📁 Descarga | Tabla Excel de Unidades de Proyecto
+    
+    **Propósito**: Descarga todos los datos de la colección "unidades_proyecto" en formato Excel (.xlsx)
+    con todos los campos tabulares para análisis, reportes y gestión de proyectos.
+    
+    ### ✅ Características:
+    - **Formato Excel**: Compatible con Microsoft Excel, Google Sheets, LibreOffice
+    - **Todos los campos**: Incluye toda la información tabular de proyectos
+    - **Filtros disponibles**: Por centro gestor, estado, ubicación, etc.
+    - **Encoding UTF-8**: Soporte completo para caracteres especiales
+    - **Headers descriptivos**: Nombres de columnas legibles
+    
+    ### 📊 Campos incluidos:
+    - **UPID**: Identificador único
+    - **Nombre UP**: Nombre del proyecto
+    - **Estado**: Estado actual
+    - **Tipo Intervención**: Categoría de intervención
+    - **Clase Obra**: Clasificación de obra
+    - **Tipo Equipamiento**: Tipo de equipamiento
+    - **Centro Gestor**: Entidad responsable
+    - **Comuna/Corregimiento**: Ubicación administrativa
+    - **Barrio/Vereda**: Ubicación específica
+    - **Dirección**: Dirección del proyecto
+    - **Presupuesto Base**: Valor inicial del proyecto
+    - **Presupuesto Total UP**: Presupuesto total
+    - **Avance Obra**: Porcentaje de avance
+    - **BPIN**: Código BPIN
+    - **Año**: Año del proyecto
+    - **Fuente Financiación**: Origen de recursos
+    - **Referencia Contrato**: Referencias de contratos
+    - **Plataforma**: Plataforma de contratación
+    - **Fechas**: Fecha inicio y fin
+    
+    ### 🎯 Casos de uso:
+    - **Reportes**: Crear informes gerenciales y ejecutivos
+    - **Análisis**: Análisis de datos en Excel/Power BI
+    - **Seguimiento**: Control y seguimiento de proyectos
+    - **Auditoría**: Revisión y verificación de información
+    - **Integración**: Importar a otros sistemas de gestión
+    
+    ### 📝 Ejemplos:
+    ```bash
+    # Descargar todos los proyectos
+    GET /unidades-proyecto/download-table
+    
+    # Proyectos de una secretaría
+    GET /unidades-proyecto/download-table?nombre_centro_gestor=Secretaría de Infraestructura
+    
+    # Proyectos activos de una comuna
+    GET /unidades-proyecto/download-table?estado=Activo&comuna_corregimiento=COMUNA 01
+    
+    # Primeros 500 registros
+    GET /unidades-proyecto/download-table?limit=500
+    ```
+    """
+    
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
+    
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment
+        from openpyxl.utils import get_column_letter
+        from io import BytesIO
+        
+        # Construir filtros
+        filters = {}
+        
+        if nombre_centro_gestor:
+            filters["nombre_centro_gestor"] = nombre_centro_gestor
+        if tipo_intervencion:
+            filters["tipo_intervencion"] = tipo_intervencion
+        if estado:
+            filters["estado"] = estado
+        if upid:
+            filters["upid"] = upid
+        if clase_obra:
+            filters["clase_obra"] = clase_obra
+        if tipo_equipamiento:
+            filters["tipo_equipamiento"] = tipo_equipamiento
+        if comuna_corregimiento:
+            filters["comuna_corregimiento"] = comuna_corregimiento
+        if barrio_vereda:
+            filters["barrio_vereda"] = barrio_vereda
+        if limit:
+            filters["limit"] = limit
+        
+        # Obtener datos de atributos (sin geometría para mejor performance)
+        result = await get_unidades_proyecto_attributes(filters=filters, limit=limit)
+        
+        # Verificar si el resultado es exitoso
+        if not result.get("success"):
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error obteniendo datos: {result.get('error', 'Error desconocido')}"
+            )
+        
+        # Extraer datos
+        data = result.get("data", [])
+        
+        if not data:
+            raise HTTPException(
+                status_code=404,
+                detail="No se encontraron registros con los filtros especificados"
+            )
+        
+        # Crear libro de Excel
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Unidades Proyecto"
+        
+        # Definir columnas (en orden lógico)
+        columns = [
+            ("upid", "UPID"),
+            ("nombre_up", "Nombre UP"),
+            ("nombre_up_detalle", "Nombre UP Detalle"),
+            ("estado", "Estado"),
+            ("tipo_intervencion", "Tipo Intervención"),
+            ("clase_obra", "Clase Obra"),
+            ("tipo_equipamiento", "Tipo Equipamiento"),
+            ("nombre_centro_gestor", "Centro Gestor"),
+            ("centro_gestor", "Centro Gestor (Código)"),
+            ("comuna_corregimiento", "Comuna/Corregimiento"),
+            ("barrio_vereda", "Barrio/Vereda"),
+            ("direccion", "Dirección"),
+            ("presupuesto_base", "Presupuesto Base"),
+            ("presupuesto_total_up", "Presupuesto Total UP"),
+            ("avance_obra", "Avance Obra (%)"),
+            ("bpin", "BPIN"),
+            ("ano", "Año"),
+            ("fuente_financiacion", "Fuente Financiación"),
+            ("referencia_contrato", "Referencia Contrato"),
+            ("referencia_proceso", "Referencia Proceso"),
+            ("plataforma", "Plataforma"),
+            ("url_proceso", "URL Proceso"),
+            ("fecha_inicio", "Fecha Inicio"),
+            ("fecha_inicio_std", "Fecha Inicio Estandarizada"),
+            ("fecha_fin", "Fecha Fin"),
+            ("identificador", "Identificador"),
+            ("cantidad", "Cantidad"),
+            ("unidad_medida", "Unidad Medida"),
+            ("fuera_rango", "Fuera Rango"),
+            ("has_geometry", "Tiene Geometría"),
+            ("created_at", "Fecha Creación"),
+            ("updated_at", "Fecha Actualización"),
+            ("processed_timestamp", "Timestamp Procesamiento")
+        ]
+        
+        # Estilo del encabezado
+        header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF", size=11)
+        header_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        
+        # Escribir encabezados
+        for col_idx, (field_key, field_name) in enumerate(columns, start=1):
+            cell = ws.cell(row=1, column=col_idx)
+            cell.value = field_name
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = header_alignment
+        
+        # Escribir datos
+        for row_idx, record in enumerate(data, start=2):
+            for col_idx, (field_key, _) in enumerate(columns, start=1):
+                value = record.get(field_key)
+                
+                # Formatear valores especiales
+                if value is not None:
+                    # Convertir listas a string separado por comas
+                    if isinstance(value, list):
+                        value = ", ".join(str(v) for v in value if v)
+                    # Convertir booleanos a texto
+                    elif isinstance(value, bool):
+                        value = "Sí" if value else "No"
+                    # Formatear fechas
+                    elif field_key in ["created_at", "updated_at", "processed_timestamp", "fecha_inicio_std"]:
+                        value = str(value) if value else ""
+                
+                ws.cell(row=row_idx, column=col_idx, value=value)
+        
+        # Ajustar ancho de columnas
+        for col_idx in range(1, len(columns) + 1):
+            column_letter = get_column_letter(col_idx)
+            # Ancho basado en el contenido (máximo 50)
+            max_length = 15  # Ancho mínimo
+            for row in ws.iter_rows(min_col=col_idx, max_col=col_idx):
+                for cell in row:
+                    if cell.value:
+                        max_length = max(max_length, len(str(cell.value)))
+            ws.column_dimensions[column_letter].width = min(max_length + 2, 50)
+        
+        # Congelar primera fila (encabezados)
+        ws.freeze_panes = "A2"
+        
+        # Guardar en memoria
+        excel_file = BytesIO()
+        wb.save(excel_file)
+        excel_file.seek(0)
+        
+        # Generar nombre de archivo con timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"unidades_proyecto_{timestamp}.xlsx"
+        
+        # Retornar archivo Excel
+        return StreamingResponse(
+            excel_file,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={
+                "Content-Disposition": f"attachment; filename={filename}",
+                "Access-Control-Expose-Headers": "Content-Disposition"
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        print(f"❌ ERROR en download_table: {str(e)}")
+        print(f"❌ TRACEBACK: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error procesando descarga de tabla: {str(e)}"
+        )
+
+
+@app.get("/unidades-proyecto/download-table_by_centro_gestor", tags=["Unidades de Proyecto"], summary="🔵 Descarga Tabla Excel por Centro Gestor")
+@optional_rate_limit("20/minute")  # Rate limiting para descargas pesadas
+async def download_unidades_proyecto_table_by_centro_gestor(
+    request: Request,
+    nombre_centro_gestor: str = Query(..., description="Centro gestor responsable (requerido)"),
+    
+    # Filtros adicionales opcionales
+    tipo_intervencion: Optional[str] = Query(None, description="Tipo de intervención"),
+    estado: Optional[str] = Query(None, description="Estado del proyecto"),
+    upid: Optional[str] = Query(None, description="ID específico de unidad"),
+    clase_obra: Optional[str] = Query(None, description="Clase de obra"),
+    tipo_equipamiento: Optional[str] = Query(None, description="Tipo de equipamiento"),
+    
+    # Filtros geográficos
+    comuna_corregimiento: Optional[str] = Query(None, description="Comuna o corregimiento"),
+    barrio_vereda: Optional[str] = Query(None, description="Barrio o vereda"),
+    
+    # Configuración de descarga
+    limit: Optional[int] = Query(None, ge=1, le=10000, description="Límite de registros (None = todos)")
+):
+    """
+    ## 🔵 GET | 📁 Descarga | Tabla Excel de Unidades de Proyecto por Centro Gestor
+    
+    **Propósito**: Descarga datos de la colección "unidades_proyecto" filtrados por "nombre_centro_gestor"
+    en formato Excel (.xlsx) con todos los campos tabulares para análisis y reportes específicos por entidad.
+    
+    ### ✅ Características:
+    - **Filtro obligatorio**: Requiere especificar el centro gestor
+    - **Formato Excel**: Compatible con Microsoft Excel, Google Sheets, LibreOffice
+    - **Todos los campos**: Incluye toda la información tabular de proyectos
+    - **Filtros adicionales**: Combinar con otros filtros (estado, ubicación, etc.)
+    - **Encoding UTF-8**: Soporte completo para caracteres especiales
+    - **Headers descriptivos**: Nombres de columnas legibles
+    
+    ### 📊 Campos incluidos:
+    - **UPID**: Identificador único
+    - **Nombre UP**: Nombre del proyecto
+    - **Estado**: Estado actual
+    - **Tipo Intervención**: Categoría de intervención
+    - **Clase Obra**: Clasificación de obra
+    - **Tipo Equipamiento**: Tipo de equipamiento
+    - **Centro Gestor**: Entidad responsable
+    - **Comuna/Corregimiento**: Ubicación administrativa
+    - **Barrio/Vereda**: Ubicación específica
+    - **Dirección**: Dirección del proyecto
+    - **Presupuesto Base**: Valor inicial del proyecto
+    - **Presupuesto Total UP**: Presupuesto total
+    - **Avance Obra**: Porcentaje de avance
+    - **BPIN**: Código BPIN
+    - **Año**: Año del proyecto
+    - **Fuente Financiación**: Origen de recursos
+    - **Referencia Contrato**: Referencias de contratos
+    - **Plataforma**: Plataforma de contratación
+    - **Fechas**: Fecha inicio y fin
+    
+    ### 🎯 Casos de uso:
+    - **Reportes por entidad**: Informes específicos por secretaría o entidad
+    - **Seguimiento sectorial**: Control de proyectos por sector
+    - **Análisis comparativo**: Comparar gestión entre diferentes centros gestores
+    - **Auditoría específica**: Revisión de proyectos de una entidad particular
+    - **Informes gerenciales**: Reportes ejecutivos por dependencia
+    
+    ### 📝 Ejemplos:
+    ```bash
+    # Descargar todos los proyectos de una secretaría
+    GET /unidades-proyecto/download-table_by_centro_gestor?nombre_centro_gestor=Secretaría de Infraestructura
+    
+    # Proyectos activos de una secretaría
+    GET /unidades-proyecto/download-table_by_centro_gestor?nombre_centro_gestor=Secretaría de Educación&estado=Activo
+    
+    # Proyectos de una secretaría en una comuna específica
+    GET /unidades-proyecto/download-table_by_centro_gestor?nombre_centro_gestor=Secretaría de Salud&comuna_corregimiento=COMUNA 01
+    
+    # Primeros 100 registros de una secretaría
+    GET /unidades-proyecto/download-table_by_centro_gestor?nombre_centro_gestor=Secretaría de Hacienda&limit=100
+    ```
+    """
+    
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
+    
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment
+        from openpyxl.utils import get_column_letter
+        from io import BytesIO
+        
+        # Construir filtros (nombre_centro_gestor es obligatorio)
+        filters = {
+            "nombre_centro_gestor": nombre_centro_gestor
+        }
+        
+        # Agregar filtros opcionales
+        if tipo_intervencion:
+            filters["tipo_intervencion"] = tipo_intervencion
+        if estado:
+            filters["estado"] = estado
+        if upid:
+            filters["upid"] = upid
+        if clase_obra:
+            filters["clase_obra"] = clase_obra
+        if tipo_equipamiento:
+            filters["tipo_equipamiento"] = tipo_equipamiento
+        if comuna_corregimiento:
+            filters["comuna_corregimiento"] = comuna_corregimiento
+        if barrio_vereda:
+            filters["barrio_vereda"] = barrio_vereda
+        if limit:
+            filters["limit"] = limit
+        
+        # Obtener datos de atributos (sin geometría para mejor performance)
+        result = await get_unidades_proyecto_attributes(filters=filters, limit=limit)
+        
+        # Verificar si el resultado es exitoso
+        if not result.get("success"):
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error obteniendo datos: {result.get('error', 'Error desconocido')}"
+            )
+        
+        # Extraer datos
+        data = result.get("data", [])
+        
+        if not data:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No se encontraron registros para el centro gestor '{nombre_centro_gestor}' con los filtros especificados"
+            )
+        
+        # Crear libro de Excel
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Unidades Proyecto"
+        
+        # Definir columnas (en orden lógico)
+        columns = [
+            ("upid", "UPID"),
+            ("nombre_up", "Nombre UP"),
+            ("nombre_up_detalle", "Nombre UP Detalle"),
+            ("estado", "Estado"),
+            ("tipo_intervencion", "Tipo Intervención"),
+            ("clase_obra", "Clase Obra"),
+            ("tipo_equipamiento", "Tipo Equipamiento"),
+            ("nombre_centro_gestor", "Centro Gestor"),
+            ("centro_gestor", "Centro Gestor (Código)"),
+            ("comuna_corregimiento", "Comuna/Corregimiento"),
+            ("barrio_vereda", "Barrio/Vereda"),
+            ("direccion", "Dirección"),
+            ("presupuesto_base", "Presupuesto Base"),
+            ("presupuesto_total_up", "Presupuesto Total UP"),
+            ("avance_obra", "Avance Obra (%)"),
+            ("bpin", "BPIN"),
+            ("ano", "Año"),
+            ("fuente_financiacion", "Fuente Financiación"),
+            ("referencia_contrato", "Referencia Contrato"),
+            ("referencia_proceso", "Referencia Proceso"),
+            ("plataforma", "Plataforma"),
+            ("url_proceso", "URL Proceso"),
+            ("fecha_inicio", "Fecha Inicio"),
+            ("fecha_inicio_std", "Fecha Inicio Estandarizada"),
+            ("fecha_fin", "Fecha Fin"),
+            ("identificador", "Identificador"),
+            ("cantidad", "Cantidad"),
+            ("unidad_medida", "Unidad Medida"),
+            ("fuera_rango", "Fuera Rango"),
+            ("has_geometry", "Tiene Geometría"),
+            ("created_at", "Fecha Creación"),
+            ("updated_at", "Fecha Actualización"),
+            ("processed_timestamp", "Timestamp Procesamiento")
+        ]
+        
+        # Estilo del encabezado
+        header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF", size=11)
+        header_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        
+        # Escribir encabezados
+        for col_idx, (field_key, field_name) in enumerate(columns, start=1):
+            cell = ws.cell(row=1, column=col_idx)
+            cell.value = field_name
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = header_alignment
+        
+        # Escribir datos
+        for row_idx, record in enumerate(data, start=2):
+            for col_idx, (field_key, _) in enumerate(columns, start=1):
+                value = record.get(field_key)
+                
+                # Formatear valores especiales
+                if value is not None:
+                    # Convertir listas a string separado por comas
+                    if isinstance(value, list):
+                        value = ", ".join(str(v) for v in value if v)
+                    # Convertir booleanos a texto
+                    elif isinstance(value, bool):
+                        value = "Sí" if value else "No"
+                    # Formatear fechas
+                    elif field_key in ["created_at", "updated_at", "processed_timestamp", "fecha_inicio_std"]:
+                        value = str(value) if value else ""
+                
+                ws.cell(row=row_idx, column=col_idx, value=value)
+        
+        # Ajustar ancho de columnas
+        for col_idx in range(1, len(columns) + 1):
+            column_letter = get_column_letter(col_idx)
+            # Ancho basado en el contenido (máximo 50)
+            max_length = 15  # Ancho mínimo
+            for row in ws.iter_rows(min_col=col_idx, max_col=col_idx):
+                for cell in row:
+                    if cell.value:
+                        max_length = max(max_length, len(str(cell.value)))
+            ws.column_dimensions[column_letter].width = min(max_length + 2, 50)
+        
+        # Congelar primera fila (encabezados)
+        ws.freeze_panes = "A2"
+        
+        # Guardar en memoria
+        excel_file = BytesIO()
+        wb.save(excel_file)
+        excel_file.seek(0)
+        
+        # Generar nombre de archivo con timestamp y nombre del centro gestor
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Limpiar nombre del centro gestor para usarlo en el nombre del archivo
+        centro_gestor_safe = nombre_centro_gestor.replace(" ", "_").replace("/", "-")
+        filename = f"unidades_proyecto_{centro_gestor_safe}_{timestamp}.xlsx"
+        
+        # Retornar archivo Excel
+        return StreamingResponse(
+            excel_file,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={
+                "Content-Disposition": f"attachment; filename={filename}",
+                "Access-Control-Expose-Headers": "Content-Disposition"
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        print(f"❌ ERROR en download_table_by_centro_gestor: {str(e)}")
+        print(f"❌ TRACEBACK: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error procesando descarga de tabla por centro gestor: {str(e)}"
+        )
+
 
 @app.post("/unidades-proyecto/cargar-geojson", tags=["Unidades de Proyecto"], summary="🟢 Cargar GeoJSON a Firestore (UPSERT)")
 async def cargar_geojson_a_firestore(
