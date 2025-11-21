@@ -1731,7 +1731,7 @@ async def export_geometry_for_nextjs(
     tipo_intervencion: Optional[str] = Query(None, description="Tipo de intervención"),
     estado: Optional[str] = Query(None, description="Estado del proyecto"),
     upid: Optional[str] = Query(None, description="ID específico de unidad"),
-    clase_obra: Optional[str] = Query(None, description="Clase de obra del proyecto"),
+    clase_up: Optional[str] = Query(None, description="Clase de la unidad de proyecto"),
     tipo_equipamiento: Optional[str] = Query(None, description="Tipo de equipamiento del proyecto"),
     
     # Filtros geográficos adicionales
@@ -1799,8 +1799,8 @@ async def export_geometry_for_nextjs(
             filters["estado"] = estado
         if upid:
             filters["upid"] = upid
-        if clase_obra:
-            filters["clase_obra"] = clase_obra
+        if clase_up:
+            filters["clase_up"] = clase_up
         if tipo_equipamiento:
             filters["tipo_equipamiento"] = tipo_equipamiento
         if comuna_corregimiento:
@@ -1902,7 +1902,7 @@ async def export_attributes_for_nextjs(
     | tipo_intervencion | Tipo de intervención |
     | estado | Estado del proyecto |
     | upid | ID específico de unidad |
-    | clase_obra | Clase de obra del proyecto |
+    | clase_up | Clase de la unidad de proyecto |
     | tipo_equipamiento | Tipo de equipamiento del proyecto |
     | nombre_up | Búsqueda parcial en nombre |
     | comuna_corregimiento | Comuna o corregimiento |
@@ -2026,7 +2026,7 @@ async def get_filters_endpoint(
         enum=[
             "estado", "tipo_intervencion", "nombre_centro_gestor", 
             "comuna_corregimiento", "barrio_vereda", "fuente_financiacion", 
-            "ano", "clase_obra"
+            "ano", "clase_up"
         ]
     ),
     limit: Optional[int] = Query(
@@ -2424,8 +2424,8 @@ async def download_unidades_proyecto_table(
             filters["estado"] = estado
         if upid:
             filters["upid"] = upid
-        if clase_obra:
-            filters["clase_obra"] = clase_obra
+        if clase_up:
+            filters["clase_up"] = clase_up
         if tipo_equipamiento:
             filters["tipo_equipamiento"] = tipo_equipamiento
         if comuna_corregimiento:
@@ -2466,7 +2466,7 @@ async def download_unidades_proyecto_table(
             ("nombre_up_detalle", "Nombre UP Detalle"),
             ("estado", "Estado"),
             ("tipo_intervencion", "Tipo Intervención"),
-            ("clase_obra", "Clase Obra"),
+            ("clase_up", "Clase UP"),
             ("tipo_equipamiento", "Tipo Equipamiento"),
             ("nombre_centro_gestor", "Centro Gestor"),
             ("centro_gestor", "Centro Gestor (Código)"),
@@ -2672,8 +2672,8 @@ async def download_unidades_proyecto_table_by_centro_gestor(
             filters["estado"] = estado
         if upid:
             filters["upid"] = upid
-        if clase_obra:
-            filters["clase_obra"] = clase_obra
+        if clase_up:
+            filters["clase_up"] = clase_up
         if tipo_equipamiento:
             filters["tipo_equipamiento"] = tipo_equipamiento
         if comuna_corregimiento:
@@ -2714,7 +2714,7 @@ async def download_unidades_proyecto_table_by_centro_gestor(
             ("nombre_up_detalle", "Nombre UP Detalle"),
             ("estado", "Estado"),
             ("tipo_intervencion", "Tipo Intervención"),
-            ("clase_obra", "Clase Obra"),
+            ("clase_up", "Clase UP"),
             ("tipo_equipamiento", "Tipo Equipamiento"),
             ("nombre_centro_gestor", "Centro Gestor"),
             ("centro_gestor", "Centro Gestor (Código)"),
@@ -2869,7 +2869,7 @@ async def cargar_geojson_a_firestore(
           "properties": {
             "nombre_up": "Nombre del proyecto",
             "estado": "Finalizado|En Ejecución|etc.",
-            "clase_obra": "Obra Vial|etc.",
+            "clase_up": "Obra Vial|etc.",
             "comuna_corregimiento": "COMUNA XX",
             "barrio_vereda": "Nombre del barrio",
             "presupuesto_base": "123456.78",

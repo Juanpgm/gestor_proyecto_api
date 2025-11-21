@@ -95,7 +95,7 @@ class UnidadProyectoProperties(BaseModel):
     # Clasificación
     estado: Optional[str] = Field(None, description="Estado del proyecto: Finalizado, En Ejecución, etc.")
     tipo_intervencion: Optional[str] = Field(None, description="Tipo de intervención del proyecto")
-    clase_obra: Optional[str] = Field(None, description="Clasificación de la obra: Obra Vial, etc.")
+    clase_up: Optional[str] = Field(None, description="Clasificación de la unidad de proyecto: Obra Vial, etc.")
     tipo_equipamiento: Optional[str] = Field(None, description="Tipo de equipamiento del proyecto")
     identificador: Optional[str] = Field(None, description="Identificador del tipo: Grupo Operativo, etc.")
     
@@ -233,7 +233,7 @@ class UnidadProyectoGeoJSON(BaseModel):
                     "bpin": "2023760010180",
                     "nombre_up": "Calle 16 Entre Carrera 46A Y Carrera 39",
                     "estado": "Finalizado",
-                    "clase_obra": "Obra Vial",
+                    "clase_up": "Obra Vial",
                     "comuna_corregimiento": "COMUNA 10",
                     "barrio_vereda": "El Guabal",
                     "presupuesto_base": 63564349.18,
@@ -269,7 +269,7 @@ class UnidadProyectoFirestore(BaseModel):
     descripcion_intervencion: Optional[str] = None
     estado: Optional[str] = None
     tipo_intervencion: Optional[str] = None
-    clase_obra: Optional[str] = None
+    clase_up: Optional[str] = None
     tipo_equipamiento: Optional[str] = None
     identificador: Optional[str] = None
     direccion: Optional[str] = None

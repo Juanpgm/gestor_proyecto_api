@@ -16,11 +16,11 @@ Se ha creado exitosamente un nuevo endpoint GET en la API para obtener datos de 
 
 ### Parámetros de Query (Opcionales)
 
-| Parámetro | Tipo | Descripción |
-|-----------|------|-------------|
-| `nombre_centro_gestor` | string | Filtrar por centro gestor responsable |
-| `estado` | string | Filtrar por estado del control de calidad |
-| `limit` | integer | Limitar número de resultados (1-1000) |
+| Parámetro              | Tipo    | Descripción                               |
+| ---------------------- | ------- | ----------------------------------------- |
+| `nombre_centro_gestor` | string  | Filtrar por centro gestor responsable     |
+| `estado`               | string  | Filtrar por estado del control de calidad |
+| `limit`                | integer | Limitar número de resultados (1-1000)     |
 
 ### Respuesta Exitosa (200)
 
@@ -29,7 +29,7 @@ Se ha creado exitosamente un nuevo endpoint GET en la API para obtener datos de 
   "success": true,
   "data": [
     {
-      "id": "doc_id",
+      "id": "doc_id"
       // ... campos del documento de control de calidad
     }
   ],
@@ -58,6 +58,7 @@ async def get_quality_control_summary(filters: Optional[Dict[str, Any]] = None) 
 ```
 
 **Funcionalidades**:
+
 - Consulta la colección `unidades_proyecto_quality_control_summary`
 - Aplica filtros opcionales (nombre_centro_gestor, estado, limit)
 - Limpia datos de Firebase (convierte timestamps a ISO format)
@@ -79,6 +80,7 @@ from .unidades_proyecto import (
 ### 3. `main.py`
 
 **Se importó la función**:
+
 ```python
 from api.scripts import (
     # ...
@@ -87,9 +89,10 @@ from api.scripts import (
 ```
 
 **Se creó el endpoint**:
+
 ```python
-@app.get("/unidades-proyecto/quality-control-summary", 
-         tags=["Unidades de Proyecto"], 
+@app.get("/unidades-proyecto/quality-control-summary",
+         tags=["Unidades de Proyecto"],
          summary="🔵 Resumen Control de Calidad")
 @optional_rate_limit("60/minute")
 async def get_quality_control_summary_endpoint(...)
@@ -119,21 +122,23 @@ python test_quality_control_endpoint.py
 ### Ejemplo 1: Obtener todos los registros
 
 ```javascript
-const response = await fetch('http://localhost:8000/unidades-proyecto/quality-control-summary');
+const response = await fetch(
+  "http://localhost:8000/unidades-proyecto/quality-control-summary"
+);
 const data = await response.json();
 
 if (data.success) {
-    console.log('Registros:', data.count);
-    console.log('Datos:', data.data);
+  console.log("Registros:", data.count);
+  console.log("Datos:", data.data);
 }
 ```
 
 ### Ejemplo 2: Filtrar por centro gestor
 
 ```javascript
-const centroGestor = encodeURIComponent('Secretaría de Infraestructura');
+const centroGestor = encodeURIComponent("Secretaría de Infraestructura");
 const response = await fetch(
-    `http://localhost:8000/unidades-proyecto/quality-control-summary?nombre_centro_gestor=${centroGestor}`
+  `http://localhost:8000/unidades-proyecto/quality-control-summary?nombre_centro_gestor=${centroGestor}`
 );
 const data = await response.json();
 ```
@@ -142,7 +147,7 @@ const data = await response.json();
 
 ```javascript
 const response = await fetch(
-    'http://localhost:8000/unidades-proyecto/quality-control-summary?limit=10'
+  "http://localhost:8000/unidades-proyecto/quality-control-summary?limit=10"
 );
 const data = await response.json();
 ```
@@ -151,13 +156,13 @@ const data = await response.json();
 
 ```javascript
 const params = new URLSearchParams({
-    nombre_centro_gestor: 'Secretaría de Infraestructura',
-    estado: 'activo',
-    limit: 20
+  nombre_centro_gestor: "Secretaría de Infraestructura",
+  estado: "activo",
+  limit: 20,
 });
 
 const response = await fetch(
-    `http://localhost:8000/unidades-proyecto/quality-control-summary?${params}`
+  `http://localhost:8000/unidades-proyecto/quality-control-summary?${params}`
 );
 const data = await response.json();
 ```
@@ -165,11 +170,13 @@ const data = await response.json();
 ## 🚀 Cómo Probar
 
 1. **Iniciar el servidor**:
+
    ```bash
    python main.py
    ```
 
 2. **Acceder a la documentación interactiva**:
+
    - Abrir navegador en: `http://localhost:8000/docs`
    - Buscar el tag "Unidades de Proyecto"
    - Encontrar el endpoint "GET /unidades-proyecto/quality-control-summary"
@@ -177,6 +184,7 @@ const data = await response.json();
    - Ejecutar la petición
 
 3. **Prueba con curl**:
+
    ```bash
    curl http://localhost:8000/unidades-proyecto/quality-control-summary
    ```

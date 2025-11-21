@@ -92,7 +92,7 @@ def apply_client_side_filters(data: List[Dict[str, Any]], filters: Optional[Dict
     - upid: filtrar por ID específico o lista de IDs
     - estado: filtrar por estado del proyecto
     - tipo_intervencion: filtrar por tipo de intervención
-    - clase_obra: filtrar por clase de obra
+    - clase_up: filtrar por clase de la unidad de proyecto
     - departamento: filtrar por departamento
     - municipio: filtrar por municipio
     - comuna_corregimiento: filtrar por comuna o corregimiento específico
@@ -134,11 +134,13 @@ def apply_client_side_filters(data: List[Dict[str, Any]], filters: Optional[Dict
                            if item.get('tipo_intervencion') == tipo_value or
                               item.get('properties', {}).get('tipo_intervencion') == tipo_value]
         
-        # Filtro por clase_obra
-        if 'clase_obra' in filters and filters['clase_obra']:
-            clase_value = filters['clase_obra']
+        # Filtro por clase_up (busca tanto clase_up como clase_obra para compatibilidad)
+        if 'clase_up' in filters and filters['clase_up']:
+            clase_value = filters['clase_up']
             filtered_data = [item for item in filtered_data
-                           if item.get('clase_obra') == clase_value or
+                           if item.get('clase_up') == clase_value or
+                              item.get('clase_obra') == clase_value or
+                              item.get('properties', {}).get('clase_up') == clase_value or
                               item.get('properties', {}).get('clase_obra') == clase_value]
         
         # Filtro por tipo_equipamiento
@@ -251,7 +253,7 @@ def apply_client_side_filters(data: List[Dict[str, Any]], filters: Optional[Dict
 def search_in_record(record: Dict[str, Any], search_term: str) -> bool:
     """Buscar término en campos principales del registro"""
     searchable_fields = [
-        'upid', 'nombre', 'descripcion', 'estado', 'tipo_intervencion', 'clase_obra',
+        'upid', 'nombre', 'descripcion', 'estado', 'tipo_intervencion', 'clase_up', 'clase_obra',
         'departamento', 'municipio', 'comuna_corregimiento', 'barrio_vereda', 'nombre_proyecto'
     ]
     
@@ -388,7 +390,7 @@ async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = Non
     - upid: ID específico o lista de IDs
     - estado: estado del proyecto
     - tipo_intervencion: tipo de intervención
-    - clase_obra: clase de obra
+    - clase_up: clase de la unidad de proyecto
     - tipo_equipamiento: tipo de equipamiento del proyecto
     - nombre_centro_gestor: centro gestor específico
     - comuna_corregimiento: comuna o corregimiento específico
@@ -426,7 +428,7 @@ async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = Non
         geo_fields = ['upid', 'coordenadas', 'geometry', 'coordinates', 'lat', 'lng']
         viz_fields = [
             'nombre_up', 'comuna_corregimiento', 'barrio_vereda', 'estado', 
-            'tipo_intervencion', 'clase_obra', 'nombre_centro_gestor', 'centro_gestor',
+            'tipo_intervencion', 'clase_up', 'nombre_centro_gestor', 'centro_gestor',
             'presupuesto_base', 'presupuesto_total_up', 'avance_obra', 'tipo_equipamiento',
             'bpin', 'direccion', 'ano', 'fuente_financiacion'
         ]
@@ -582,7 +584,7 @@ async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = Non
                         "bpin": _convert_bpin_to_positive_int(get_field_value('bpin')),
                         # Campos de clasificación
                         "tipo_intervencion": get_field_value('tipo_intervencion'),
-                        "clase_obra": get_field_value('clase_obra'),
+                        "clase_up": get_field_value('clase_obra'),  # 🔄 Leer clase_obra de Firebase, exponer como clase_up
                         "nombre_centro_gestor": get_field_value('nombre_centro_gestor'),
                         "centro_gestor": get_field_value('centro_gestor'),
                         "tipo_equipamiento": get_field_value('tipo_equipamiento'),
@@ -608,7 +610,7 @@ async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = Non
             
             # Otros filtros de contenido
             content_filters = {k: v for k, v in filters.items() 
-                             if k in ['comuna_corregimiento', 'barrio_vereda', 'estado', 'tipo_intervencion', 'clase_obra', 'nombre_centro_gestor', 'presupuesto_base', 'avance_obra', 'tipo_equipamiento']}
+                             if k in ['comuna_corregimiento', 'barrio_vereda', 'estado', 'tipo_intervencion', 'clase_up', 'nombre_centro_gestor', 'presupuesto_base', 'avance_obra', 'tipo_equipamiento']}
             if content_filters:
                 geometry_data = apply_client_side_filters(geometry_data, content_filters)
                 print(f"🔧 DEBUG: Filtros de contenido aplicados: {len(geometry_data)} registros")
@@ -695,7 +697,7 @@ async def get_unidades_proyecto_attributes(
             key in filters and filters[key] 
             for key in ['upid', 'estado', 'tipo_intervencion', 'nombre_centro_gestor', 
                        'search', 'comuna_corregimiento', 'barrio_vereda', 'nombre_up', 'direccion', 
-                       'clase_obra', 'tipo_equipamiento']
+                       'clase_up', 'tipo_equipamiento']
         )
         
         print(f"📋 DEBUG: get_unidades_proyecto_attributes - Filtros detectados: {has_filters}")
@@ -800,6 +802,12 @@ async def get_unidades_proyecto_attributes(
                         else:
                             attributes_record[field] = value
             
+            # 🔄 TRANSFORMACIÓN: Renombrar clase_obra a clase_up
+            if 'clase_obra' in attributes_record:
+                attributes_record['clase_up'] = attributes_record.pop('clase_obra')
+                if doc_count <= 3:  # Debug: mostrar primeros 3 transformaciones
+                    print(f"🔄 DEBUG: Transformado clase_obra -> clase_up para {attributes_record.get('upid', 'unknown')}")
+            
             attributes_data.append(attributes_record)
             doc_count += 1
             
@@ -828,9 +836,9 @@ async def get_unidades_proyecto_attributes(
                 client_side_filters['tipo_intervencion'] = filters['tipo_intervencion']
                 client_side_filters_applied.append('tipo_intervencion')
                 
-            if 'clase_obra' in filters and filters['clase_obra']:
-                client_side_filters['clase_obra'] = filters['clase_obra']
-                client_side_filters_applied.append('clase_obra')
+            if 'clase_up' in filters and filters['clase_up']:
+                client_side_filters['clase_up'] = filters['clase_up']
+                client_side_filters_applied.append('clase_up')
                 
             if 'tipo_equipamiento' in filters and filters['tipo_equipamiento']:
                 client_side_filters['tipo_equipamiento'] = filters['tipo_equipamiento']
@@ -1473,7 +1481,7 @@ async def get_filter_options(field: Optional[str] = None, limit: Optional[int] =
             'barrios_veredas': 'barrio_vereda',
             'fuentes_financiacion': 'fuente_financiacion',
             'anos': 'ano',
-            'clases_obra': 'clase_obra',
+            'clases_up': 'clase_up',
             'tipos_equipamiento': 'tipo_equipamiento'
         }
         
