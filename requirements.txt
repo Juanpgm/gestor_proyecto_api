@@ -49,6 +49,9 @@ google-auth-oauthlib==1.2.0
 
 # Google Drive API para manejo de archivos de evidencia (integrado con versiones existentes)
 
+# AWS S3 para almacenamiento de documentos
+boto3==1.35.36
+
 # Rate limiting (OPCIONAL - deshabilitado temporalmente para Railway)
 # slowapi==0.1.9
 

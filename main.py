@@ -5488,7 +5488,8 @@ async def cargar_rpc_emprestito_endpoint(
     nombre_centro_gestor: str = Form(..., description="Centro gestor responsable (obligatorio)"),
     referencia_contrato: str = Form(..., description="Referencia del contrato (obligatorio)"),
     cdp_asociados: Optional[str] = Form(None, description="CDPs asociados separados por comas o JSON array (opcional)"),
-    programacion_pac: Optional[str] = Form(None, description="Programación PAC en formato JSON (opcional)")
+    programacion_pac: Optional[str] = Form(None, description="Programación PAC en formato JSON (opcional)"),
+    documentos: Optional[List[UploadFile]] = File(None, description="Documentos del RPC (PDF, DOC, DOCX, XLS, XLSX, JPG, PNG) - Opcional")
 ):
     """
     ## 📝 POST | 📥 Carga de Datos | Cargar RPC (Registro Presupuestal de Compromiso) de Empréstito
@@ -5652,6 +5653,20 @@ async def cargar_rpc_emprestito_endpoint(
                 logger.warning(f"programacion_pac no parece ser JSON, ignorando valor: {programacion_pac[:50]}")
                 programacion_pac_dict = {}
         
+        # Procesar documentos si se proporcionan
+        documentos_procesados = []
+        if documentos:
+            for doc in documentos:
+                # Leer contenido del archivo
+                contenido = await doc.read()
+                documentos_procesados.append({
+                    'content': contenido,
+                    'filename': doc.filename,
+                    'content_type': doc.content_type,
+                    'size': len(contenido)
+                })
+            logger.info(f"📄 Procesando {len(documentos_procesados)} documentos para RPC {numero_rpc}")
+        
         # Crear diccionario con los datos del formulario
         datos_rpc = {
             "numero_rpc": numero_rpc,
@@ -5669,8 +5684,8 @@ async def cargar_rpc_emprestito_endpoint(
             "referencia_contrato": referencia_contrato
         }
         
-        # Procesar RPC (función síncrona)
-        resultado = cargar_rpc_emprestito(datos_rpc)
+        # Procesar RPC (función síncrona) con documentos
+        resultado = cargar_rpc_emprestito(datos_rpc, documentos=documentos_procesados if documentos_procesados else None)
         
         # Manejar respuesta según el resultado
         if not resultado.get("success"):
@@ -5709,6 +5724,7 @@ async def cargar_rpc_emprestito_endpoint(
                 "data": resultado.get("data"),
                 "doc_id": resultado.get("doc_id"),
                 "coleccion": resultado.get("coleccion"),
+                "documentos_count": resultado.get("documentos_count", 0),
                 "timestamp": datetime.now().isoformat()
             },
             status_code=201,
@@ -5735,7 +5751,8 @@ async def cargar_pago_emprestito_endpoint(
     valor_pago: float = Form(..., description="Valor del pago (obligatorio, debe ser mayor a 0)"),
     fecha_transaccion: str = Form(..., description="Fecha de la transacción (obligatorio)"),
     referencia_contrato: str = Form(..., description="Referencia del contrato (obligatorio)"),
-    nombre_centro_gestor: str = Form(..., description="Centro gestor responsable (obligatorio)")
+    nombre_centro_gestor: str = Form(..., description="Centro gestor responsable (obligatorio)"),
+    documentos: Optional[List[UploadFile]] = File(None, description="Documentos del pago (PDF, DOC, DOCX, XLS, XLSX, JPG, PNG) - Opcional")
 ):
     """
     ## 📝 POST | 📥 Carga de Datos | Cargar Pago de Empréstito
@@ -5822,6 +5839,20 @@ async def cargar_pago_emprestito_endpoint(
     try:
         check_emprestito_availability()
         
+        # Procesar documentos si se proporcionan
+        documentos_procesados = []
+        if documentos:
+            for doc in documentos:
+                # Leer contenido del archivo
+                contenido = await doc.read()
+                documentos_procesados.append({
+                    'content': contenido,
+                    'filename': doc.filename,
+                    'content_type': doc.content_type,
+                    'size': len(contenido)
+                })
+            logger.info(f"📄 Procesando {len(documentos_procesados)} documentos para pago de RPC {numero_rpc}")
+        
         # Preparar datos para procesar
         datos_pago = {
             "numero_rpc": numero_rpc,
@@ -5831,8 +5862,8 @@ async def cargar_pago_emprestito_endpoint(
             "nombre_centro_gestor": nombre_centro_gestor
         }
         
-        # Procesar pago (función síncrona)
-        resultado = cargar_pago_emprestito(datos_pago)
+        # Procesar pago (función síncrona) con documentos
+        resultado = cargar_pago_emprestito(datos_pago, documentos=documentos_procesados if documentos_procesados else None)
         
         # Manejar respuesta según el resultado
         if not resultado.get("success"):
@@ -5855,6 +5886,7 @@ async def cargar_pago_emprestito_endpoint(
                 "data": resultado.get("data"),
                 "doc_id": resultado.get("doc_id"),
                 "coleccion": resultado.get("coleccion"),
+                "documentos_count": resultado.get("documentos_count", 0),
                 "timestamp": resultado.get("timestamp")
             },
             status_code=201,

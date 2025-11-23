@@ -11,8 +11,17 @@ import pandas as pd
 import re
 from database.firebase_config import get_firestore_client
 
-# Configurar logging
+# Configurar logging primero
 logger = logging.getLogger(__name__)
+
+# Importar utilidad S3 para documentos
+try:
+    from api.utils.s3_document_manager import S3DocumentManager, validate_document_file
+    S3_AVAILABLE = True
+    logger.info("✅ S3DocumentManager disponible - funcionalidad de carga de documentos habilitada")
+except ImportError as e:
+    S3_AVAILABLE = False
+    logger.warning(f"⚠️ S3DocumentManager no disponible - funcionalidad de carga de documentos deshabilitada: {e}")
 
 # Variables de disponibilidad
 FIRESTORE_AVAILABLE = True
@@ -1536,10 +1545,14 @@ async def modificar_convenio_transferencia(doc_id: str, campos_actualizar: Dict[
             "error": str(e)
         }
 
-def cargar_rpc_emprestito(datos_rpc: Dict[str, Any]) -> Dict[str, Any]:
+def cargar_rpc_emprestito(datos_rpc: Dict[str, Any], documentos: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     """
     Cargar RPC (Registro Presupuestal de Compromiso) directamente en la colección rpc_contratos_emprestito
-    sin procesamiento adicional de APIs externas
+    con soporte para carga de documentos a S3
+    
+    Args:
+        datos_rpc: Diccionario con los datos del RPC
+        documentos: Lista opcional de documentos a subir (cada uno con 'content', 'filename', 'content_type')
     """
     if not FIRESTORE_AVAILABLE:
         return {
@@ -1595,6 +1608,50 @@ def cargar_rpc_emprestito(datos_rpc: Dict[str, Any]) -> Dict[str, Any]:
                 }
             }
 
+        # Procesar documentos si se proporcionan
+        documentos_info = []
+        if documentos and S3_AVAILABLE:
+            try:
+                s3_manager = S3DocumentManager()
+                
+                # Preparar archivos para subida
+                referencia_contrato = datos_rpc.get('referencia_contrato', '').strip()
+                files_to_upload = []
+                for doc in documentos:
+                    # Validar documento
+                    is_valid, error_msg = validate_document_file(doc['filename'], doc['content'])
+                    if not is_valid:
+                        logger.warning(f"Documento inválido: {error_msg}")
+                        continue
+                    
+                    files_to_upload.append({
+                        'content': doc['content'],
+                        'filename': doc['filename'],
+                        'content_type': doc.get('content_type', 'application/pdf'),
+                        'numero_rpc': numero_rpc,
+                        'centro_gestor': datos_rpc.get('nombre_centro_gestor', '')
+                    })
+                
+                # Subir documentos a S3 (usa referencia_contrato como carpeta)
+                if files_to_upload:
+                    successful, failed = s3_manager.upload_multiple_documents(
+                        files=files_to_upload,
+                        referencia_contrato=referencia_contrato,
+                        document_type='rpc',
+                        use_timestamp=False  # Sin timestamp para permitir sobreescritura
+                    )
+                    
+                    documentos_info = successful
+                    
+                    if failed:
+                        logger.warning(f"Algunos documentos fallaron al subir: {len(failed)}")
+                    
+                    logger.info(f"✅ Subidos {len(successful)} documentos para RPC {numero_rpc}")
+                    
+            except Exception as e:
+                logger.error(f"Error subiendo documentos a S3: {e}")
+                # Continuar sin documentos si falla la subida
+
         # Preparar datos para guardar
         # Procesar cdp_asociados: puede venir como lista o string separado por comas
         cdp_asociados_list = []
@@ -1621,6 +1678,7 @@ def cargar_rpc_emprestito(datos_rpc: Dict[str, Any]) -> Dict[str, Any]:
             "programacion_pac": datos_rpc.get("programacion_pac", {}) if isinstance(datos_rpc.get("programacion_pac"), dict) else {},
             "nombre_centro_gestor": datos_rpc.get("nombre_centro_gestor", "").strip(),
             "referencia_contrato": datos_rpc.get("referencia_contrato", "").strip(),
+            "documentos_s3": documentos_info if documentos_info else [],
             "fecha_creacion": datetime.now(),
             "fecha_actualizacion": datetime.now(),
             "estado": "activo",
@@ -1637,8 +1695,9 @@ def cargar_rpc_emprestito(datos_rpc: Dict[str, Any]) -> Dict[str, Any]:
             "success": True,
             "doc_id": doc_id,
             "data": serialize_datetime_objects(datos_completos),
-            "message": f"RPC {numero_rpc} guardado exitosamente",
-            "coleccion": "rpc_contratos_emprestito"
+            "message": f"RPC {numero_rpc} guardado exitosamente" + (f" con {len(documentos_info)} documentos" if documentos_info else ""),
+            "coleccion": "rpc_contratos_emprestito",
+            "documentos_count": len(documentos_info)
         }
 
     except Exception as e:
@@ -1648,10 +1707,14 @@ def cargar_rpc_emprestito(datos_rpc: Dict[str, Any]) -> Dict[str, Any]:
             "error": str(e)
         }
 
-def cargar_pago_emprestito(datos_pago: Dict[str, Any]) -> Dict[str, Any]:
+def cargar_pago_emprestito(datos_pago: Dict[str, Any], documentos: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     """
     Cargar pago de empréstito directamente en la colección pagos_emprestito
-    con fecha_registro automática según la hora del sistema
+    con fecha_registro automática según la hora del sistema y soporte para documentos S3
+    
+    Args:
+        datos_pago: Diccionario con los datos del pago
+        documentos: Lista opcional de documentos a subir (cada uno con 'content', 'filename', 'content_type')
     """
     if not FIRESTORE_AVAILABLE:
         return {
@@ -1697,14 +1760,62 @@ def cargar_pago_emprestito(datos_pago: Dict[str, Any]) -> Dict[str, Any]:
                 "error": "Error obteniendo cliente Firestore"
             }
 
+        # Procesar documentos si se proporcionan
+        documentos_info = []
+        numero_rpc = datos_pago.get("numero_rpc", "").strip()
+        
+        if documentos and S3_AVAILABLE:
+            try:
+                s3_manager = S3DocumentManager()
+                
+                # Preparar archivos para subida
+                referencia_contrato = datos_pago.get('referencia_contrato', '').strip()
+                files_to_upload = []
+                for doc in documentos:
+                    # Validar documento
+                    is_valid, error_msg = validate_document_file(doc['filename'], doc['content'])
+                    if not is_valid:
+                        logger.warning(f"Documento inválido: {error_msg}")
+                        continue
+                    
+                    files_to_upload.append({
+                        'content': doc['content'],
+                        'filename': doc['filename'],
+                        'content_type': doc.get('content_type', 'application/pdf'),
+                        'numero_rpc': numero_rpc,
+                        'centro_gestor': datos_pago.get('nombre_centro_gestor', '')
+                    })
+                
+                # Subir documentos a S3 (usa referencia_contrato/numero_rpc como carpeta)
+                if files_to_upload:
+                    successful, failed = s3_manager.upload_multiple_documents(
+                        files=files_to_upload,
+                        referencia_contrato=referencia_contrato,
+                        document_type='pago',
+                        numero_rpc=numero_rpc,  # Nivel adicional para pagos
+                        use_timestamp=False  # Sin timestamp para permitir sobreescritura
+                    )
+                    
+                    documentos_info = successful
+                    
+                    if failed:
+                        logger.warning(f"Algunos documentos fallaron al subir: {len(failed)}")
+                    
+                    logger.info(f"✅ Subidos {len(successful)} documentos para pago de RPC {numero_rpc}")
+                    
+            except Exception as e:
+                logger.error(f"Error subiendo documentos a S3: {e}")
+                # Continuar sin documentos si falla la subida
+
         # Preparar datos para guardar
         # fecha_registro se genera automáticamente con la hora del sistema
         datos_completos = {
-            "numero_rpc": datos_pago.get("numero_rpc", "").strip(),
+            "numero_rpc": numero_rpc,
             "valor_pago": valor_pago,
             "fecha_transaccion": datos_pago.get("fecha_transaccion", "").strip(),
             "referencia_contrato": datos_pago.get("referencia_contrato", "").strip(),
             "nombre_centro_gestor": datos_pago.get("nombre_centro_gestor", "").strip(),
+            "documentos_s3": documentos_info if documentos_info else [],
             "fecha_registro": datetime.now(),  # Timestamp automático del sistema
             "fecha_creacion": datetime.now(),
             "fecha_actualizacion": datetime.now(),
@@ -1722,9 +1833,10 @@ def cargar_pago_emprestito(datos_pago: Dict[str, Any]) -> Dict[str, Any]:
             "success": True,
             "doc_id": doc_id,
             "data": serialize_datetime_objects(datos_completos),
-            "message": f"Pago registrado exitosamente para RPC {datos_pago.get('numero_rpc')}",
+            "message": f"Pago registrado exitosamente para RPC {numero_rpc}" + (f" con {len(documentos_info)} documentos" if documentos_info else ""),
             "coleccion": "pagos_emprestito",
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
+            "documentos_count": len(documentos_info)
         }
 
     except Exception as e:
