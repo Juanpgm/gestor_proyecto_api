@@ -38,19 +38,20 @@ class S3DocumentManager:
         │   └── {timestamp}_{filename}
     """
     
-    def __init__(self, credentials_path: str = "context/aws_credentials.json"):
+    def __init__(self, credentials_path: str = None):
         """
         Inicializar el gestor de documentos S3
         
         Args:
-            credentials_path: Ruta al archivo de credenciales AWS
+            credentials_path: Ruta al archivo de credenciales AWS (opcional)
+                             Si no se proporciona, busca en múltiples ubicaciones
         """
         if not BOTO3_AVAILABLE:
             raise ImportError("boto3 no está instalado. Instalar con: pip install boto3")
         
         self.credentials = self._load_credentials(credentials_path)
         self.bucket_name = self.credentials.get('bucket_name_emprestito', 'contratos-emprestito')
-        self.region = self.credentials.get('aws_region', 'us-east-1')
+        self.region = self.credentials.get('aws_region', self.credentials.get('region', 'us-east-1'))
         
         # Inicializar cliente S3
         self.s3_client = boto3.client(
@@ -62,23 +63,59 @@ class S3DocumentManager:
         
         logger.info(f"✅ S3DocumentManager inicializado - Bucket: {self.bucket_name}")
     
-    def _load_credentials(self, credentials_path: str) -> Dict[str, str]:
-        """Cargar credenciales desde archivo JSON"""
+    def _load_credentials(self, credentials_path: str = None) -> Dict[str, str]:
+        """
+        Cargar credenciales desde archivo JSON o variables de entorno
+        
+        Busca credenciales en el siguiente orden:
+        1. Archivo especificado en credentials_path
+        2. credentials/aws_credentials.json (ubicación actual)
+        3. context/aws_credentials.json (ubicación legacy)
+        4. Variables de entorno (producción)
+        """
         try:
-            if os.path.exists(credentials_path):
+            # Si se especificó una ruta, intentar cargarla
+            if credentials_path and os.path.exists(credentials_path):
                 with open(credentials_path, 'r') as f:
                     creds = json.load(f)
                     logger.info(f"✅ Credenciales cargadas desde: {credentials_path}")
                     return creds
-            else:
-                # Intentar desde variables de entorno
-                logger.warning(f"Archivo de credenciales no encontrado: {credentials_path}")
-                return {
-                    'aws_access_key_id': os.getenv('AWS_ACCESS_KEY_ID', ''),
-                    'aws_secret_access_key': os.getenv('AWS_SECRET_ACCESS_KEY', ''),
-                    'aws_region': os.getenv('AWS_REGION', 'us-east-1'),
-                    'bucket_name_emprestito': os.getenv('S3_BUCKET_EMPRESTITO', 'contratos-emprestito')
-                }
+            
+            # Buscar en ubicaciones conocidas
+            possible_paths = [
+                "credentials/aws_credentials.json",  # Ubicación actual
+                "context/aws_credentials.json",       # Legacy
+            ]
+            
+            for path in possible_paths:
+                if os.path.exists(path):
+                    with open(path, 'r') as f:
+                        creds = json.load(f)
+                        logger.info(f"✅ Credenciales cargadas desde: {path}")
+                        return creds
+            
+            # Si no se encuentra archivo, usar variables de entorno (producción)
+            logger.warning("Archivo de credenciales no encontrado, usando variables de entorno")
+            env_creds = {
+                'aws_access_key_id': os.getenv('AWS_ACCESS_KEY_ID', ''),
+                'aws_secret_access_key': os.getenv('AWS_SECRET_ACCESS_KEY', ''),
+                'aws_region': os.getenv('AWS_REGION', 'us-east-1'),
+                'region': os.getenv('AWS_REGION', 'us-east-1'),
+                'bucket_name_emprestito': os.getenv('S3_BUCKET_EMPRESTITO', 'contratos-emprestito'),
+                'bucket_name': os.getenv('S3_BUCKET_NAME', 'unidades-proyecto-documents')
+            }
+            
+            # Verificar que las credenciales están presentes
+            if not env_creds['aws_access_key_id'] or not env_creds['aws_secret_access_key']:
+                raise ValueError(
+                    "No se encontraron credenciales AWS. "
+                    "Proporciona un archivo JSON o configura las variables de entorno: "
+                    "AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, S3_BUCKET_EMPRESTITO"
+                )
+            
+            logger.info("✅ Credenciales cargadas desde variables de entorno")
+            return env_creds
+            
         except Exception as e:
             logger.error(f"Error cargando credenciales: {e}")
             raise
