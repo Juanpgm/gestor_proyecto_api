@@ -4,7 +4,7 @@ Modelos específicos para el sistema de reportes de seguimiento de contratos
 Interoperabilidad con Artefacto de Seguimiento
 """
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 
@@ -39,14 +39,16 @@ class ReporteContratoRequest(BaseModel):
     url_carpeta_drive: str = Field(..., description="URL de la carpeta en Google Drive")
     usuario_reporte: str = Field(..., min_length=1, description="Usuario que crea el reporte")
     
-    @validator('fecha_reporte')
+    @field_validator('fecha_reporte')
+    @classmethod
     def validate_fecha_reporte(cls, v):
         """Validar formato de fecha"""
         if not v or not v.strip():
             raise ValueError('Fecha del reporte es requerida')
         return v.strip()
     
-    @validator('referencia_contrato', 'usuario_reporte')
+    @field_validator('referencia_contrato', 'usuario_reporte')
+    @classmethod
     def validate_required_fields(cls, v):
         """Validar campos obligatorios"""
         if not v or not v.strip():

@@ -3,7 +3,7 @@ Pydantic Models for User Management and Authentication
 Modelos de datos para validación de requests y responses
 """
 
-from pydantic import BaseModel, EmailStr, Field, validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, ConfigDict
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 import re
@@ -14,6 +14,8 @@ import re
 
 class UserRegistrationRequest(BaseModel):
     """✅ FUNCIONAL: Registro de usuario simplificado"""
+    model_config = ConfigDict(populate_by_name=True)  # Permite tanto camelCase como snake_case
+    
     email: EmailStr
     password: str
     confirmPassword: str = Field(alias="confirmPassword")  # Soporte explícito para camelCase
@@ -21,16 +23,15 @@ class UserRegistrationRequest(BaseModel):
     cellphone: str
     nombre_centro_gestor: str
     
-    class Config:
-        allow_population_by_field_name = True  # Permite tanto camelCase como snake_case
-    
-    @validator('confirmPassword')
-    def passwords_match(cls, v, values):
-        if 'password' in values and v != values['password']:
+    @field_validator('confirmPassword')
+    @classmethod
+    def passwords_match(cls, v, info):
+        if 'password' in info.data and v != info.data['password']:
             raise ValueError('Las contraseñas no coinciden')
         return v
     
-    @validator('cellphone')
+    @field_validator('cellphone')
+    @classmethod
     def validate_cellphone(cls, v):
         # ✅ FUNCIONAL: Validación simplificada
         if not v or len(str(v).strip()) < 10:
@@ -66,14 +67,16 @@ class EmprestitoRequest(BaseModel):
     id_paa: Optional[str] = Field(None, description="ID PAA (opcional)")
     valor_proyectado: Optional[float] = Field(None, ge=0, description="Valor proyectado (opcional)")
     
-    @validator('plataforma')
+    @field_validator('plataforma')
+    @classmethod
     def validate_plataforma(cls, v):
         """Validar que la plataforma sea válida"""
         if not v or not v.strip():
             raise ValueError('Plataforma es requerida')
         return v.strip()
     
-    @validator('referencia_proceso', 'nombre_centro_gestor', 'nombre_banco', 'bp')
+    @field_validator('referencia_proceso', 'nombre_centro_gestor', 'nombre_banco', 'bp')
+    @classmethod
     def validate_required_fields(cls, v):
         """Validar campos obligatorios"""
         if not v or not v.strip():
@@ -105,14 +108,16 @@ class ProyeccionEmprestitoUpdateRequest(BaseModel):
     urlProceso: Optional[str] = Field(None, description="Enlace al proceso")
     valor_proyectado: Optional[float] = Field(None, ge=0, description="Valor total del proyecto")
     
-    @validator('valor_proyectado')
+    @field_validator('valor_proyectado')
+    @classmethod
     def validate_valor_proyectado(cls, v):
         """Validar que el valor proyectado sea positivo si se proporciona"""
         if v is not None and v < 0:
             raise ValueError('El valor proyectado debe ser mayor o igual a 0')
         return v
     
-    @validator('*', pre=True)
+    @field_validator('*', mode='before')
+    @classmethod
     def strip_strings(cls, v):
         """Limpiar strings de espacios en blanco si se proporcionan"""
         if isinstance(v, str):
@@ -145,17 +150,18 @@ class ProyeccionEmprestitoRegistroRequest(BaseModel):
     valor_proyectado: Optional[float] = Field(None, ge=0, description="Valor proyectado")
     urlProceso: Optional[str] = Field(None, description="URL del proceso")
     
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
     
-    @validator('valor_proyectado')
+    @field_validator('valor_proyectado')
+    @classmethod
     def validate_valor_proyectado(cls, v):
         """Validar que el valor proyectado sea positivo si se proporciona"""
         if v is not None and v < 0:
             raise ValueError('El valor proyectado debe ser mayor o igual a 0')
         return v
     
-    @validator('*', pre=True)
+    @field_validator('*', mode='before')
+    @classmethod
     def strip_strings(cls, v):
         """Limpiar strings de espacios en blanco"""
         if isinstance(v, str):
@@ -181,14 +187,16 @@ class PagoEmprestitoRequest(BaseModel):
     referencia_contrato: str = Field(..., min_length=1, description="Referencia del contrato (obligatorio)")
     nombre_centro_gestor: str = Field(..., min_length=1, description="Centro gestor responsable (obligatorio)")
     
-    @validator('numero_rpc', 'referencia_contrato', 'nombre_centro_gestor', 'fecha_transaccion')
+    @field_validator('numero_rpc', 'referencia_contrato', 'nombre_centro_gestor', 'fecha_transaccion')
+    @classmethod
     def validate_required_fields(cls, v):
         """Validar campos obligatorios"""
         if not v or not v.strip():
             raise ValueError('Este campo es obligatorio')
         return v.strip()
     
-    @validator('valor_pago')
+    @field_validator('valor_pago')
+    @classmethod
     def validate_valor_pago(cls, v):
         """Validar que el valor del pago sea positivo"""
         if v <= 0:
@@ -221,7 +229,8 @@ class PhoneAuthVerifyRequest(BaseModel):
     phone_number: str = Field(..., description="Número de teléfono")
     verification_code: str = Field(..., min_length=6, max_length=6, description="Código de verificación")
     
-    @validator('verification_code')
+    @field_validator('verification_code')
+    @classmethod
     def validate_verification_code(cls, v):
         if not v.isdigit():
             raise ValueError('El código debe contener solo números')

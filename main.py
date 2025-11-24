@@ -79,7 +79,26 @@ except ImportError:
     FIREBASE_TYPES_AVAILABLE = False
     DatetimeWithNanoseconds = None
 
-
+# Importar sistema de autenticación y autorización
+try:
+    from auth_system import (
+        ROLES,
+        DEFAULT_USER_ROLE,
+        ROLE_HIERARCHY,
+        PUBLIC_PATHS as AUTH_PUBLIC_PATHS
+    )
+    from auth_system.middleware import AuthorizationMiddleware, AuditLogMiddleware
+    AUTH_SYSTEM_AVAILABLE = True
+    print("✅ Auth system loaded successfully")
+except ImportError as e:
+    print(f"⚠️ Warning: Auth system not available: {e}")
+    AUTH_SYSTEM_AVAILABLE = False
+    ROLES = {}
+    DEFAULT_USER_ROLE = "visualizador"
+    ROLE_HIERARCHY = {}
+    AUTH_PUBLIC_PATHS = []
+    AuthorizationMiddleware = None
+    AuditLogMiddleware = None
 
 # Importar Firebase con configuración automática
 try:
@@ -616,6 +635,44 @@ app.add_middleware(
 from fastapi.middleware.gzip import GZipMiddleware
 app.add_middleware(GZipMiddleware, minimum_size=1000)  # Comprimir respuestas > 1KB
 print("🗜️ GZIP compression enabled for responses > 1KB")
+
+# 🔐 MIDDLEWARE DE AUTENTICACIÓN Y AUTORIZACIÓN
+if AUTH_SYSTEM_AVAILABLE and AuthorizationMiddleware is not None:
+    # Definir rutas públicas (combinar con las del sistema de auth)
+    public_paths = [
+        "/",
+        "/docs",
+        "/openapi.json",
+        "/redoc",
+        "/ping",
+        "/health",
+        "/cors-test",
+        "/test/utf8",
+        "/debug/railway",
+        "/metrics",
+        "/auth/login",
+        "/auth/register",
+        "/auth/google",
+        "/auth/config",
+        "/auth/validate-session",
+        "/auth/workload-identity/status"
+    ]
+    
+    app.add_middleware(
+        AuthorizationMiddleware,
+        public_paths=public_paths
+    )
+    print("✅ Authorization middleware enabled")
+    
+    # Middleware de auditoría (opcional, configurar según necesidad)
+    if AuditLogMiddleware is not None:
+        app.add_middleware(
+            AuditLogMiddleware,
+            enable_logging=True  # Cambiar a False para deshabilitar logging automático
+        )
+        print("✅ Audit log middleware enabled")
+else:
+    print("⚠️ Authorization middleware disabled - Auth system not available")
 
 # ⏱️ MIDDLEWARE DE TIMING Y MONITOREO APM
 import time
@@ -1741,6 +1798,7 @@ async def export_geometry_for_nextjs(
     # Filtros de visualización y análisis
     presupuesto_base: Optional[float] = Query(None, ge=0, description="Presupuesto mínimo del proyecto"),
     avance_obra: Optional[float] = Query(None, ge=0, le=100, description="Porcentaje mínimo de avance de obra"),
+    frente_activo: Optional[str] = Query(None, description="Frente activo del proyecto"),
     
     # Configuración geográfica
     include_bbox: Optional[bool] = Query(False, description="Calcular y incluir bounding box"),
@@ -1811,6 +1869,8 @@ async def export_geometry_for_nextjs(
             filters["presupuesto_base"] = presupuesto_base
         if avance_obra is not None:
             filters["avance_obra"] = avance_obra
+        if frente_activo:
+            filters["frente_activo"] = frente_activo
         if limit:
             filters["limit"] = limit
         if include_bbox:
@@ -1870,6 +1930,7 @@ async def export_attributes_for_nextjs(
     direccion: Optional[str] = Query(None, description="Búsqueda parcial en dirección (contiene texto)"),
     referencia_contrato: Optional[str] = Query(None, description="Referencia del contrato"),
     referencia_proceso: Optional[str] = Query(None, description="Referencia del proceso"),
+    frente_activo: Optional[str] = Query(None, description="Frente activo del proyecto"),
     
     # Paginación
     limit: Optional[int] = Query(None, ge=1, le=1000, description="Máximo de resultados"),
@@ -1977,6 +2038,8 @@ async def export_attributes_for_nextjs(
             filters["referencia_contrato"] = referencia_contrato
         if referencia_proceso:
             filters["referencia_proceso"] = referencia_proceso
+        if frente_activo:
+            filters["frente_activo"] = frente_activo
         
         result = await get_unidades_proyecto_attributes(
             filters=filters,
@@ -2026,7 +2089,7 @@ async def get_filters_endpoint(
         enum=[
             "estado", "tipo_intervencion", "nombre_centro_gestor", 
             "comuna_corregimiento", "barrio_vereda", "fuente_financiacion", 
-            "ano", "clase_up"
+            "ano", "clase_up", "frente_activo"
         ]
     ),
     limit: Optional[int] = Query(
@@ -8810,6 +8873,23 @@ async def registrar_proyeccion_emprestito_endpoint(
 
 # ============================================================================
 # SERVIDOR
+# ============================================================================
+
+# ============================================================================
+# INCLUIR ROUTERS DE ADMINISTRACIÓN
+# ============================================================================
+
+# Incluir router de administración de usuarios, roles y permisos
+if AUTH_SYSTEM_AVAILABLE:
+    try:
+        from api.routers.auth_admin import router as auth_admin_router
+        app.include_router(auth_admin_router)
+        print("✅ Auth admin router included successfully")
+    except Exception as e:
+        print(f"⚠️ Warning: Could not include auth admin router: {e}")
+else:
+    print("⚠️ Auth admin router not included - Auth system not available")
+
 # ============================================================================
 
 # Ejecutar servidor si se llama directamente

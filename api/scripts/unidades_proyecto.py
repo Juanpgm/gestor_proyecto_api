@@ -185,6 +185,13 @@ def apply_client_side_filters(data: List[Dict[str, Any]], filters: Optional[Dict
                            if item.get('barrio_vereda') == barrio_value or
                               item.get('properties', {}).get('barrio_vereda') == barrio_value]
         
+        # Filtro por frente_activo
+        if 'frente_activo' in filters and filters['frente_activo']:
+            frente_value = filters['frente_activo']
+            filtered_data = [item for item in filtered_data
+                           if item.get('frente_activo') == frente_value or
+                              item.get('properties', {}).get('frente_activo') == frente_value]
+        
         # Filtro por presupuesto_base (rango numérico mínimo)
         if 'presupuesto_base' in filters and filters['presupuesto_base']:
             try:
@@ -430,7 +437,7 @@ async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = Non
             'nombre_up', 'comuna_corregimiento', 'barrio_vereda', 'estado', 
             'tipo_intervencion', 'clase_up', 'nombre_centro_gestor', 'centro_gestor',
             'presupuesto_base', 'presupuesto_total_up', 'avance_obra', 'tipo_equipamiento',
-            'bpin', 'direccion', 'ano', 'fuente_financiacion'
+            'bpin', 'direccion', 'ano', 'fuente_financiacion', 'frente_activo'
         ]
         
         for doc in docs:
@@ -589,6 +596,7 @@ async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = Non
                         "centro_gestor": get_field_value('centro_gestor'),
                         "tipo_equipamiento": get_field_value('tipo_equipamiento'),
                         "fuente_financiacion": get_field_value('fuente_financiacion'),
+                        "frente_activo": get_field_value('frente_activo'),
                     }
                 }
                 geometry_data.append(feature)
@@ -610,7 +618,7 @@ async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = Non
             
             # Otros filtros de contenido
             content_filters = {k: v for k, v in filters.items() 
-                             if k in ['comuna_corregimiento', 'barrio_vereda', 'estado', 'tipo_intervencion', 'clase_up', 'nombre_centro_gestor', 'presupuesto_base', 'avance_obra', 'tipo_equipamiento']}
+                             if k in ['comuna_corregimiento', 'barrio_vereda', 'estado', 'tipo_intervencion', 'clase_up', 'nombre_centro_gestor', 'presupuesto_base', 'avance_obra', 'tipo_equipamiento', 'frente_activo']}
             if content_filters:
                 geometry_data = apply_client_side_filters(geometry_data, content_filters)
                 print(f"🔧 DEBUG: Filtros de contenido aplicados: {len(geometry_data)} registros")
@@ -697,7 +705,7 @@ async def get_unidades_proyecto_attributes(
             key in filters and filters[key] 
             for key in ['upid', 'estado', 'tipo_intervencion', 'nombre_centro_gestor', 
                        'search', 'comuna_corregimiento', 'barrio_vereda', 'nombre_up', 'direccion', 
-                       'clase_up', 'tipo_equipamiento']
+                       'clase_up', 'tipo_equipamiento', 'frente_activo']
         )
         
         print(f"📋 DEBUG: get_unidades_proyecto_attributes - Filtros detectados: {has_filters}")
@@ -860,6 +868,10 @@ async def get_unidades_proyecto_attributes(
             if 'barrio_vereda' in filters and filters['barrio_vereda']:
                 client_side_filters['barrio_vereda'] = filters['barrio_vereda']
                 client_side_filters_applied.append('barrio_vereda')
+            
+            if 'frente_activo' in filters and filters['frente_activo']:
+                client_side_filters['frente_activo'] = filters['frente_activo']
+                client_side_filters_applied.append('frente_activo')
             
             if 'upid' in filters and isinstance(filters['upid'], list):
                 client_side_filters['upid'] = filters['upid']
@@ -1482,7 +1494,8 @@ async def get_filter_options(field: Optional[str] = None, limit: Optional[int] =
             'fuentes_financiacion': 'fuente_financiacion',
             'anos': 'ano',
             'clases_up': 'clase_up',
-            'tipos_equipamiento': 'tipo_equipamiento'
+            'tipos_equipamiento': 'tipo_equipamiento',
+            'frentes_activos': 'frente_activo'
         }
         
         # ✅ FUNCIONAL: Obtener TODOS los datos frescos siempre (sin límite para filtros)

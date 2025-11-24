@@ -3,7 +3,7 @@ Pydantic Models for Flujo de Caja Empréstito
 Modelos de datos para validación de flujos de caja
 """
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 
@@ -36,7 +36,8 @@ class FlujoCajaUploadRequest(BaseModel):
     """Modelo para request de carga de flujo de caja"""
     update_mode: str = Field(default="merge", description="Modo de actualización: merge, replace, append")
     
-    @validator('update_mode')
+    @field_validator('update_mode')
+    @classmethod
     def validate_update_mode(cls, v):
         if v not in ["merge", "replace", "append"]:
             raise ValueError('update_mode debe ser: merge, replace o append')
