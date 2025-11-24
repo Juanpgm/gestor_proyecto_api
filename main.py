@@ -5489,7 +5489,7 @@ async def cargar_rpc_emprestito_endpoint(
     referencia_contrato: str = Form(..., description="Referencia del contrato (obligatorio)"),
     cdp_asociados: Optional[str] = Form(None, description="CDPs asociados separados por comas o JSON array (opcional)"),
     programacion_pac: Optional[str] = Form(None, description="Programación PAC en formato JSON (opcional)"),
-    documentos: Optional[List[UploadFile]] = File(None, description="Documentos del RPC (PDF, DOC, DOCX, XLS, XLSX, JPG, PNG) - Opcional")
+    documentos: List[UploadFile] = File(..., description="Documentos del RPC (PDF, DOC, DOCX, XLS, XLSX, JPG, PNG) - OBLIGATORIO")
 ):
     """
     ## 📝 POST | 📥 Carga de Datos | Cargar RPC (Registro Presupuestal de Compromiso) de Empréstito
@@ -5501,6 +5501,8 @@ async def cargar_rpc_emprestito_endpoint(
     - **Carga directa**: Registra directamente en `rpc_contratos_emprestito`
     - **Validación de duplicados**: Verifica existencia previa usando `numero_rpc`
     - **Validación de campos**: Verifica que todos los campos obligatorios estén presentes
+    - **Carga de documentos a S3**: Los documentos son OBLIGATORIOS y se suben a AWS S3
+    - **Validación de tipos de archivo**: Valida formatos permitidos (PDF, DOC, DOCX, XLS, XLSX, JPG, PNG)
     - **Timestamps automáticos**: Agrega fecha de creación y actualización
     - **Programación PAC**: Soporte para objeto JSON con valores mensuales
     
@@ -5516,6 +5518,7 @@ async def cargar_rpc_emprestito_endpoint(
     - `valor_rpc`: Valor monetario del RPC
     - `nombre_centro_gestor`: Centro gestor responsable
     - `referencia_contrato`: Referencia del contrato asociado
+    - `documentos`: Archivos del RPC (al menos 1 archivo requerido)
     
     ### 📝 Campos opcionales:
     - `cdp_asociados`: Lista de CDPs (Certificados de Disponibilidad Presupuestal) asociados
@@ -5599,6 +5602,40 @@ async def cargar_rpc_emprestito_endpoint(
     """
     try:
         check_emprestito_availability()
+        
+        logger.info(f"📥 Recibiendo RPC: {numero_rpc}")
+        logger.info(f"📎 Documentos recibidos: {len(documentos)}")
+        
+        # Validar que se hayan proporcionado documentos
+        if not documentos or len(documentos) == 0:
+            return JSONResponse(
+                content={
+                    "success": False,
+                    "error": "Se requiere al menos un documento para cargar el RPC",
+                    "message": "Debe proporcionar al menos un archivo PDF, DOC, DOCX, XLS, XLSX, JPG o PNG",
+                    "timestamp": datetime.now().isoformat()
+                },
+                status_code=400,
+                headers={"Content-Type": "application/json; charset=utf-8"}
+            )
+        
+        # Validar tipos de archivo permitidos
+        allowed_extensions = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.jpg', '.jpeg', '.png']
+        for doc in documentos:
+            filename_lower = doc.filename.lower()
+            if not any(filename_lower.endswith(ext) for ext in allowed_extensions):
+                return JSONResponse(
+                    content={
+                        "success": False,
+                        "error": f"Tipo de archivo no permitido: {doc.filename}",
+                        "message": "Solo se permiten archivos PDF, DOC, DOCX, XLS, XLSX, JPG y PNG",
+                        "allowed_types": allowed_extensions,
+                        "timestamp": datetime.now().isoformat()
+                    },
+                    status_code=400,
+                    headers={"Content-Type": "application/json; charset=utf-8"}
+                )
+            logger.info(f"   - {doc.filename} ({doc.content_type})")
         
         # Procesar cdp_asociados: puede venir como string separado por comas o como JSON array
         cdp_asociados_processed = None
@@ -5685,7 +5722,14 @@ async def cargar_rpc_emprestito_endpoint(
         }
         
         # Procesar RPC (función síncrona) con documentos
+        logger.info(f"💾 Procesando RPC {numero_rpc} con {len(documentos_procesados)} documentos")
         resultado = cargar_rpc_emprestito(datos_rpc, documentos=documentos_procesados if documentos_procesados else None)
+        
+        # Log del resultado
+        if resultado.get("success"):
+            logger.info(f"✅ RPC {numero_rpc} procesado exitosamente")
+        else:
+            logger.error(f"❌ Error procesando RPC {numero_rpc}: {resultado.get('error')}")
         
         # Manejar respuesta según el resultado
         if not resultado.get("success"):
@@ -5717,14 +5761,23 @@ async def cargar_rpc_emprestito_endpoint(
                 )
         
         # Respuesta exitosa
+        # Extraer URLs de documentos del resultado
+        documentos_urls = []
+        if resultado.get("data") and resultado.get("data").get("documentos_s3"):
+            documentos_urls = [doc.get("url") for doc in resultado.get("data").get("documentos_s3") if doc.get("url")]
+        
         return JSONResponse(
             content={
                 "success": True,
                 "message": resultado.get("message"),
-                "data": resultado.get("data"),
-                "doc_id": resultado.get("doc_id"),
+                "data": {
+                    "numero_rpc": numero_rpc,
+                    "doc_id": resultado.get("doc_id"),
+                    "documentos_urls": documentos_urls,
+                    "total_documentos": resultado.get("documentos_count", 0),
+                    "detalles_completos": resultado.get("data")
+                },
                 "coleccion": resultado.get("coleccion"),
-                "documentos_count": resultado.get("documentos_count", 0),
                 "timestamp": datetime.now().isoformat()
             },
             status_code=201,
@@ -5752,7 +5805,7 @@ async def cargar_pago_emprestito_endpoint(
     fecha_transaccion: str = Form(..., description="Fecha de la transacción (obligatorio)"),
     referencia_contrato: str = Form(..., description="Referencia del contrato (obligatorio)"),
     nombre_centro_gestor: str = Form(..., description="Centro gestor responsable (obligatorio)"),
-    documentos: Optional[List[UploadFile]] = File(None, description="Documentos del pago (PDF, DOC, DOCX, XLS, XLSX, JPG, PNG) - Opcional")
+    documentos: List[UploadFile] = File(..., description="Documentos del pago (PDF, DOC, DOCX, XLS, XLSX, JPG, PNG) - OBLIGATORIO")
 ):
     """
     ## 📝 POST | 📥 Carga de Datos | Cargar Pago de Empréstito
@@ -5762,6 +5815,8 @@ async def cargar_pago_emprestito_endpoint(
     
     ### ✅ Funcionalidades principales:
     - **Registro de pagos**: Guarda información de pagos realizados
+    - **Carga de documentos a S3**: Los documentos son OBLIGATORIOS y se suben a AWS S3
+    - **Validación de tipos de archivo**: Valida formatos permitidos (PDF, DOC, DOCX, XLS, XLSX, JPG, PNG)
     - **Timestamp automático**: `fecha_registro` se genera automáticamente con la hora del sistema
     - **Validación de campos**: Verifica que todos los campos obligatorios estén presentes
     - **Validación de valores**: Verifica que el valor del pago sea positivo
@@ -5773,6 +5828,7 @@ async def cargar_pago_emprestito_endpoint(
     - `fecha_transaccion`: Fecha en que se realizó la transacción
     - `referencia_contrato`: Referencia del contrato asociado
     - `nombre_centro_gestor`: Centro gestor responsable del pago
+    - `documentos`: Archivos del pago (al menos 1 archivo requerido)
     
     ### 🤖 Campos automáticos:
     - `fecha_registro`: Timestamp automático del momento de registro (NO se envía por el usuario)
@@ -5839,6 +5895,41 @@ async def cargar_pago_emprestito_endpoint(
     try:
         check_emprestito_availability()
         
+        logger.info(f"📥 Recibiendo pago para RPC: {numero_rpc}")
+        logger.info(f"📎 Documentos recibidos: {len(documentos)}")
+        logger.info(f"💰 Valor del pago: {valor_pago}")
+        
+        # Validar que se hayan proporcionado documentos
+        if not documentos or len(documentos) == 0:
+            return JSONResponse(
+                content={
+                    "success": False,
+                    "error": "Se requiere al menos un documento para registrar el pago",
+                    "message": "Debe proporcionar al menos un archivo PDF, DOC, DOCX, XLS, XLSX, JPG o PNG",
+                    "timestamp": datetime.now().isoformat()
+                },
+                status_code=400,
+                headers={"Content-Type": "application/json; charset=utf-8"}
+            )
+        
+        # Validar tipos de archivo permitidos
+        allowed_extensions = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.jpg', '.jpeg', '.png']
+        for doc in documentos:
+            filename_lower = doc.filename.lower()
+            if not any(filename_lower.endswith(ext) for ext in allowed_extensions):
+                return JSONResponse(
+                    content={
+                        "success": False,
+                        "error": f"Tipo de archivo no permitido: {doc.filename}",
+                        "message": "Solo se permiten archivos PDF, DOC, DOCX, XLS, XLSX, JPG y PNG",
+                        "allowed_types": allowed_extensions,
+                        "timestamp": datetime.now().isoformat()
+                    },
+                    status_code=400,
+                    headers={"Content-Type": "application/json; charset=utf-8"}
+                )
+            logger.info(f"   - {doc.filename} ({doc.content_type})")
+        
         # Procesar documentos si se proporcionan
         documentos_procesados = []
         if documentos:
@@ -5863,7 +5954,14 @@ async def cargar_pago_emprestito_endpoint(
         }
         
         # Procesar pago (función síncrona) con documentos
+        logger.info(f"💾 Procesando pago para RPC {numero_rpc} con {len(documentos_procesados)} documentos")
         resultado = cargar_pago_emprestito(datos_pago, documentos=documentos_procesados if documentos_procesados else None)
+        
+        # Log del resultado
+        if resultado.get("success"):
+            logger.info(f"✅ Pago para RPC {numero_rpc} procesado exitosamente")
+        else:
+            logger.error(f"❌ Error procesando pago para RPC {numero_rpc}: {resultado.get('error')}")
         
         # Manejar respuesta según el resultado
         if not resultado.get("success"):
@@ -5879,14 +5977,24 @@ async def cargar_pago_emprestito_endpoint(
             )
         
         # Respuesta exitosa
+        # Extraer URLs de documentos del resultado
+        documentos_urls = []
+        if resultado.get("data") and resultado.get("data").get("documentos_s3"):
+            documentos_urls = [doc.get("url") for doc in resultado.get("data").get("documentos_s3") if doc.get("url")]
+        
         return JSONResponse(
             content={
                 "success": True,
                 "message": resultado.get("message"),
-                "data": resultado.get("data"),
-                "doc_id": resultado.get("doc_id"),
+                "data": {
+                    "numero_rpc": numero_rpc,
+                    "doc_id": resultado.get("doc_id"),
+                    "valor_pago": valor_pago,
+                    "documentos_urls": documentos_urls,
+                    "total_documentos": resultado.get("documentos_count", 0),
+                    "detalles_completos": resultado.get("data")
+                },
                 "coleccion": resultado.get("coleccion"),
-                "documentos_count": resultado.get("documentos_count", 0),
                 "timestamp": resultado.get("timestamp")
             },
             status_code=201,
