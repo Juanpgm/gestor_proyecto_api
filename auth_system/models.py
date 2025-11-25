@@ -76,3 +76,27 @@ class StandardAuthResponse(BaseModel):
     success: bool
     message: Optional[str] = None
     data: Optional[dict] = None
+
+
+class UpdateUserRequest(BaseModel):
+    """Request para actualizar información de un usuario"""
+    full_name: Optional[str] = Field(None, description="Nombre completo del usuario")
+    phone_number: Optional[str] = Field(None, description="Número de teléfono")
+    centro_gestor_assigned: Optional[str] = Field(None, description="Centro gestor asignado")
+    email_verified: Optional[bool] = Field(None, description="Estado de verificación de email")
+    phone_verified: Optional[bool] = Field(None, description="Estado de verificación de teléfono")
+    is_active: Optional[bool] = Field(None, description="Estado activo del usuario")
+    
+    @field_validator('full_name')
+    @classmethod
+    def validate_full_name(cls, v):
+        if v is not None and len(v.strip()) < 3:
+            raise ValueError("El nombre completo debe tener al menos 3 caracteres")
+        return v.strip() if v else v
+    
+    @field_validator('phone_number')
+    @classmethod
+    def validate_phone_number(cls, v):
+        if v is not None and len(v.strip()) < 7:
+            raise ValueError("El número de teléfono debe tener al menos 7 caracteres")
+        return v.strip() if v else v

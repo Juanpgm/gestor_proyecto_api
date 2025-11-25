@@ -13,7 +13,8 @@ from auth_system.models import (
     GrantTemporaryPermissionRequest,
     UserResponse,
     RoleDetails,
-    StandardAuthResponse
+    StandardAuthResponse,
+    UpdateUserRequest
 )
 from auth_system.constants import ROLES, FIREBASE_COLLECTIONS, DEFAULT_USER_ROLE
 from auth_system.utils import validate_role_assignment, sanitize_user_data
@@ -71,6 +72,47 @@ async def list_users(
         raise HTTPException(status_code=500, detail=f"Error obteniendo usuarios: {str(e)}")
 
 
+@router.get("/users/super-admins", response_model=dict)
+async def list_super_admin_users(
+    limit: Optional[int] = Query(100, ge=1, le=500),
+    offset: Optional[int] = Query(0, ge=0)
+):
+    """
+    Listar todos los usuarios con rol super_admin.
+    Endpoint público sin autenticación requerida.
+    """
+    try:
+        db = get_firestore_client()
+        
+        # Filtrar usuarios que tienen el rol super_admin
+        query = db.collection(FIREBASE_COLLECTIONS["users"]).where('roles', 'array_contains', 'super_admin')
+        users_ref = query.stream()
+        
+        all_super_admins = []
+        for user_doc in users_ref:
+            user_data = user_doc.to_dict()
+            user_data['uid'] = user_doc.id
+            
+            # Sanitizar datos sensibles
+            sanitized = sanitize_user_data(user_data)
+            all_super_admins.append(sanitized)
+        
+        # Aplicar paginación manual
+        total_count = len(all_super_admins)
+        paginated_users = all_super_admins[offset:offset + limit]
+        
+        return {
+            "success": True,
+            "data": paginated_users,
+            "count": len(paginated_users),
+            "total": total_count,
+            "limit": limit,
+            "offset": offset
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error obteniendo super admins: {str(e)}")
+
+
 @router.get("/users/{uid}", response_model=dict)
 async def get_user_details(
     uid: str,
@@ -106,6 +148,129 @@ async def get_user_details(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error obteniendo usuario: {str(e)}")
+
+
+@router.put("/users/{uid}", response_model=dict)
+async def update_user_info(
+    uid: str,
+    request: UpdateUserRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Actualizar información de un usuario existente.
+    Permite llenar variables vacías o modificar existentes.
+    Solo accesible por super_admin.
+    
+    Requiere permiso: manage:users
+    
+    Campos actualizables:
+    - full_name: Nombre completo del usuario
+    - phone_number: Número de teléfono
+    - centro_gestor_assigned: Centro gestor asignado
+    - email_verified: Estado de verificación de email
+    - phone_verified: Estado de verificación de teléfono
+    - is_active: Estado activo del usuario
+    """
+    if "manage:users" not in current_user.get('permissions', []):
+        raise HTTPException(status_code=403, detail="Permiso denegado")
+    
+    try:
+        db = get_firestore_client()
+        user_ref = db.collection(FIREBASE_COLLECTIONS["users"]).document(uid)
+        user_doc = user_ref.get()
+        
+        if not user_doc.exists:
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+        
+        # Obtener datos actuales
+        current_data = user_doc.to_dict()
+        
+        # Preparar campos a actualizar (solo los que se enviaron)
+        update_fields = {}
+        changes_log = {}
+        
+        if request.full_name is not None:
+            update_fields['full_name'] = request.full_name
+            changes_log['full_name'] = {
+                'old': current_data.get('full_name'),
+                'new': request.full_name
+            }
+        
+        if request.phone_number is not None:
+            update_fields['phone_number'] = request.phone_number
+            changes_log['phone_number'] = {
+                'old': current_data.get('phone_number'),
+                'new': request.phone_number
+            }
+        
+        if request.centro_gestor_assigned is not None:
+            update_fields['centro_gestor_assigned'] = request.centro_gestor_assigned
+            changes_log['centro_gestor_assigned'] = {
+                'old': current_data.get('centro_gestor_assigned'),
+                'new': request.centro_gestor_assigned
+            }
+        
+        if request.email_verified is not None:
+            update_fields['email_verified'] = request.email_verified
+            changes_log['email_verified'] = {
+                'old': current_data.get('email_verified'),
+                'new': request.email_verified
+            }
+        
+        if request.phone_verified is not None:
+            update_fields['phone_verified'] = request.phone_verified
+            changes_log['phone_verified'] = {
+                'old': current_data.get('phone_verified'),
+                'new': request.phone_verified
+            }
+        
+        if request.is_active is not None:
+            update_fields['is_active'] = request.is_active
+            changes_log['is_active'] = {
+                'old': current_data.get('is_active'),
+                'new': request.is_active
+            }
+        
+        # Verificar que haya campos para actualizar
+        if not update_fields:
+            raise HTTPException(
+                status_code=400, 
+                detail="No se proporcionaron campos para actualizar"
+            )
+        
+        # Agregar metadata de actualización
+        update_fields['updated_at'] = datetime.now(timezone.utc)
+        update_fields['updated_by'] = current_user['uid']
+        
+        # Actualizar en Firestore
+        user_ref.update(update_fields)
+        
+        # Registrar en audit_logs
+        db.collection(FIREBASE_COLLECTIONS["audit_logs"]).add({
+            'timestamp': datetime.now(timezone.utc),
+            'action': 'update_user_info',
+            'user_uid': current_user['uid'],
+            'user_email': current_user.get('email'),
+            'target_user_uid': uid,
+            'target_user_email': current_data.get('email'),
+            'changes': changes_log
+        })
+        
+        # Obtener datos actualizados
+        updated_doc = user_ref.get()
+        updated_data = updated_doc.to_dict()
+        updated_data['uid'] = uid
+        
+        return {
+            "success": True,
+            "message": f"Usuario {uid} actualizado exitosamente",
+            "data": sanitize_user_data(updated_data),
+            "changes": changes_log
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error actualizando usuario: {str(e)}")
 
 
 @router.post("/users/{uid}/roles", response_model=dict)
