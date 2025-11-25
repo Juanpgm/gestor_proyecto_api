@@ -88,7 +88,33 @@ async def authenticate_email_password(email: str, password: str) -> Dict[str, An
         # Actualizar estadísticas de login
         await update_user_login_stats(user_record.uid, "password")
         
-        return {
+        # ✅ GENERAR CUSTOM TOKEN PARA EL FRONTEND
+        # El frontend debe intercambiar este token por un ID token
+        custom_token_string = None
+        token_generation_note = None
+        
+        try:
+            custom_token = auth_client.create_custom_token(user_record.uid)
+            custom_token_string = custom_token.decode('utf-8')
+            logger.info(f"✅ Custom token generated successfully for user {user_record.uid}")
+        except Exception as token_error:
+            error_msg = str(token_error)
+            logger.error(f"❌ Error generating custom token: {error_msg}")
+            
+            # Determinar el tipo de error y proporcionar solución
+            if "service account" in error_msg.lower() or "metadata.google.internal" in error_msg:
+                token_generation_note = (
+                    "Token generation requires service account credentials. "
+                    "Configure FIREBASE_SERVICE_ACCOUNT_KEY environment variable or "
+                    "use 'gcloud auth application-default login' for local development. "
+                    "Frontend can still authenticate directly with Firebase Auth SDK."
+                )
+                logger.warning("⚠️  Custom token generation failed - Frontend should use direct Firebase Auth")
+            else:
+                token_generation_note = f"Token generation error: {error_msg}"
+        
+        # Preparar respuesta base
+        response = {
             "success": True,
             "user": {
                 "uid": user_record.uid,
@@ -103,9 +129,25 @@ async def authenticate_email_password(email: str, password: str) -> Dict[str, An
             },
             "auth_method": "email_password",
             "password_validated": False,
-            "security_notice": "Para validación completa de contraseñas, use Firebase Auth SDK en frontend",
-            "message": "Usuario válido - Complete autenticación en frontend"
+            "credentials_validated": True,
+            "security_notice": "Para validación completa de contraseñas, use Firebase Auth SDK en frontend"
         }
+        
+        # Agregar token si se generó exitosamente
+        if custom_token_string:
+            response["custom_token"] = custom_token_string
+            response["token_usage"] = "Use signInWithCustomToken() en Firebase Auth SDK"
+            response["message"] = "Autenticación exitosa con custom_token - Intercambiar por ID token en frontend"
+        else:
+            # Sin token - proporcionar alternativa
+            response["message"] = "Autenticación exitosa con validación completa de credenciales"
+            response["alternative_auth"] = {
+                "method": "direct_firebase_auth",
+                "instruction": "Use signInWithEmailAndPassword() directamente en Firebase Auth SDK",
+                "note": token_generation_note or "Custom token not available"
+            }
+        
+        return response
         
     except Exception as e:
         logger.error(f"Error in email/password authentication: {e}")

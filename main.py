@@ -3952,15 +3952,37 @@ async def login_user(login_data: UserLoginRequest):
         if result.get("success"):
             clean_user_data = clean_firebase_data(result.get("user", {}))
             
+            # ✅ PREPARAR RESPUESTA CON CUSTOM TOKEN
+            response_data = {
+                "success": True,
+                "user": clean_user_data,
+                "auth_method": result.get("auth_method", "email_password"),
+                "credentials_validated": result.get("credentials_validated", True),
+                "message": result.get("message", "Autenticación exitosa"),
+                "timestamp": datetime.now().isoformat()
+            }
+            
+            # ✅ AGREGAR CUSTOM TOKEN SI ESTÁ DISPONIBLE
+            if "custom_token" in result and result["custom_token"]:
+                response_data["custom_token"] = result["custom_token"]
+                response_data["token_usage"] = result.get("token_usage", "Use signInWithCustomToken() en Firebase Auth SDK")
+            
+            # Agregar información de autenticación alternativa si está disponible
+            if "alternative_auth" in result:
+                response_data["alternative_auth"] = result["alternative_auth"]
+            
+            # 🔍 LOG TEMPORAL PARA DEBUGGING
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"🔍 LOGIN RESPONSE KEYS: {list(response_data.keys())}")
+            logger.info(f"⚠️  custom_token present: {'custom_token' in response_data}")
+            if 'custom_token' in response_data:
+                logger.info(f"✅ Token preview: {response_data['custom_token'][:50]}...")
+            else:
+                logger.warning(f"⚠️  No custom_token - Alternative auth available: {'alternative_auth' in response_data}")
+            
             return JSONResponse(
-                content={
-                    "success": True,
-                    "user": clean_user_data,
-                    "auth_method": result.get("auth_method", "email_password"),
-                    "credentials_validated": result.get("credentials_validated", True),
-                    "message": result.get("message", "Autenticación exitosa"),
-                    "timestamp": datetime.now().isoformat()
-                },
+                content=response_data,
                 status_code=200,
                 headers={"Content-Type": "application/json; charset=utf-8"}
             )
