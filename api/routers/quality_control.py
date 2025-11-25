@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 
 from database.firebase_config import get_firestore_client
 
-router = APIRouter(prefix="/quality-control", tags=["Unidades de Proyecto"])
+router = APIRouter(prefix="/unidades-proyecto/quality-control", tags=["Unidades de Proyecto"])
 
 # Nombres de colecciones
 QC_COLLECTIONS = {
