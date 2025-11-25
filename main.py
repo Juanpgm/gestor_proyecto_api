@@ -8890,6 +8890,14 @@ if AUTH_SYSTEM_AVAILABLE:
 else:
     print("⚠️ Auth admin router not included - Auth system not available")
 
+# Incluir router de control de calidad de unidades de proyecto
+try:
+    from api.routers.quality_control import router as quality_control_router
+    app.include_router(quality_control_router)
+    print("✅ Quality control router included successfully")
+except Exception as e:
+    print(f"⚠️ Warning: Could not include quality control router: {e}")
+
 # ============================================================================
 
 # Ejecutar servidor si se llama directamente
