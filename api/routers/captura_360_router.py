@@ -18,6 +18,7 @@ from api.models.captura_360_models import (
 from api.scripts.captura_360_operations import (
     crear_registro_captura_360,
     obtener_registros_por_upid,
+    obtener_registros_con_filtros,
     subir_fotos_s3,
     mapear_estado_360,
     CAPTURA_360_OPERATIONS_AVAILABLE
@@ -48,7 +49,6 @@ async def captura_estado_360_endpoint(
     
     # Campos del entorno (up_entorno)
     nombre_centro_gestor: str = Form(..., description="Nombre del centro gestor"),
-    invocar_centro_gestor: bool = Form(..., description="¿Invocar al centro gestor?"),
     solicitud_centro_gestor: str = Form(..., description="Solicitud al centro gestor"),
     
     # Estado y flags
@@ -90,7 +90,6 @@ async def captura_estado_360_endpoint(
     - **descripcion_intervencion**: Descripción de la intervención
     - **solicitud_intervencion**: Solicitud de intervención
     - **nombre_centro_gestor**: Centro gestor responsable
-    - **invocar_centro_gestor**: Boolean (True/False)
     - **solicitud_centro_gestor**: Solicitud específica
     - **estado_360**: Estado 360 del proyecto ('Antes', 'Durante' o 'Después')
     - **requiere_alcalde**: Boolean (True/False)
@@ -110,7 +109,6 @@ async def captura_estado_360_endpoint(
     formData.append('descripcion_intervencion', 'Mejoramiento integral');
     formData.append('solicitud_intervencion', 'Solicitud 2024-001');
     formData.append('nombre_centro_gestor', 'Secretaría de Infraestructura');
-    formData.append('invocar_centro_gestor', 'true');
     formData.append('solicitud_centro_gestor', 'Requiere revisión técnica');
     formData.append('estado_360', 'Durante');
     formData.append('requiere_alcalde', 'true');
@@ -176,7 +174,6 @@ async def captura_estado_360_endpoint(
         # Construir objeto up_entorno
         up_entorno = {
             "nombre_centro_gestor": nombre_centro_gestor,
-            "invocar_centro_gestor": invocar_centro_gestor,
             "solicitud_centro_gestor": solicitud_centro_gestor
         }
         
@@ -273,32 +270,48 @@ async def captura_estado_360_endpoint(
 
 
 @router.get(
-    "/captura-estado-360/{upid}",
-    summary="🔵 GET | 📸 Captura 360 | Obtener Registros por UPID"
+    "/captura-estado-360",
+    summary="🔵 GET | 📸 Captura 360 | Obtener Registros con Filtros"
 )
-async def obtener_captura_360_por_upid(upid: str):
+async def obtener_captura_360_con_filtros(
+    upid: Optional[str] = None,
+    nombre_centro_gestor: Optional[str] = None,
+    estado_360: Optional[str] = None,
+    tipo_visita: Optional[str] = None
+):
     """
-    ## 🔵 GET | 📸 Captura 360 | Obtener Registros de un UPID
+    ## 🔵 GET | 📸 Captura 360 | Obtener Registros con Filtros Opcionales
     
-    **Propósito**: Obtener todos los registros de captura 360 para una unidad de proyecto específica.
+    **Propósito**: Obtener registros de captura 360 con filtros opcionales.
+    
+    ### 🔍 Filtros disponibles (todos opcionales):
+    - **upid**: ID único de la unidad de proyecto
+    - **nombre_centro_gestor**: Nombre del centro gestor
+    - **estado_360**: Estado 360 ('Antes', 'Durante', 'Después')
+    - **tipo_visita**: Tipo de visita ('Verificación', 'Comunicaciones')
     
     ### 📊 Información retornada:
-    - Lista de todos los registros asociados al UPID
+    - Lista de registros que cumplan con los filtros aplicados
+    - Si no se aplica ningún filtro, retorna todos los registros
     - Información completa de cada registro (fotos, coordenadas, estados, etc.)
     - Conteo total de registros
     
-    ### 📝 Ejemplo de uso:
+    ### 📝 Ejemplos de uso:
     ```javascript
-    const upid = 'UNP-1234';
-    const response = await fetch(`/unidades-proyecto/captura-estado-360/${upid}`);
-    const data = await response.json();
-    if (data.success) {
-        console.log(`Encontrados ${data.count} registros para ${upid}`);
-        data.data.forEach(registro => {
-            console.log('Estado 360:', registro.estado_360);
-            console.log('Fecha:', registro.fecha_registro);
-        });
-    }
+    // Buscar por UPID
+    const response1 = await fetch('/unidades-proyecto/captura-estado-360?upid=UNP-1234');
+    
+    // Buscar por centro gestor
+    const response2 = await fetch('/unidades-proyecto/captura-estado-360?nombre_centro_gestor=Secretaría de Infraestructura');
+    
+    // Buscar por estado_360
+    const response3 = await fetch('/unidades-proyecto/captura-estado-360?estado_360=Antes');
+    
+    // Combinar filtros
+    const response4 = await fetch('/unidades-proyecto/captura-estado-360?estado_360=Durante&tipo_visita=Verificación');
+    
+    // Obtener todos los registros
+    const response5 = await fetch('/unidades-proyecto/captura-estado-360');
     ```
     """
     if not CAPTURA_360_OPERATIONS_AVAILABLE:
@@ -308,7 +321,18 @@ async def obtener_captura_360_por_upid(upid: str):
         )
     
     try:
-        resultado = await obtener_registros_por_upid(upid)
+        # Construir filtros
+        filtros = {}
+        if upid:
+            filtros["upid"] = upid
+        if nombre_centro_gestor:
+            filtros["nombre_centro_gestor"] = nombre_centro_gestor
+        if estado_360:
+            filtros["estado_360"] = estado_360
+        if tipo_visita:
+            filtros["tipo_visita"] = tipo_visita
+        
+        resultado = await obtener_registros_con_filtros(filtros)
         
         if not resultado["success"]:
             raise HTTPException(
@@ -321,7 +345,7 @@ async def obtener_captura_360_por_upid(upid: str):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Error obteniendo registros por UPID: {e}")
+        logger.error(f"❌ Error obteniendo registros: {e}")
         raise HTTPException(
             status_code=500,
             detail=f"Error obteniendo registros: {str(e)}"

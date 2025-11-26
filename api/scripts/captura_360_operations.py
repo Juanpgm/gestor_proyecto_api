@@ -398,12 +398,12 @@ async def crear_registro_captura_360(
         }
 
 
-async def obtener_registros_por_upid(upid: str) -> Dict[str, Any]:
+async def obtener_registros_con_filtros(filtros: Dict[str, str]) -> Dict[str, Any]:
     """
-    Obtener todos los registros de captura 360 para un UPID específico
+    Obtener registros de captura 360 con filtros opcionales
     
     Args:
-        upid: ID de la unidad de proyecto
+        filtros: Diccionario con filtros opcionales (upid, nombre_centro_gestor, estado_360, tipo_visita)
         
     Returns:
         Diccionario con los registros encontrados
@@ -417,8 +417,24 @@ async def obtener_registros_por_upid(upid: str) -> Dict[str, Any]:
                 "timestamp": datetime.now().isoformat()
             }
         
-        # Consultar registros
-        query = db.collection(COLLECTION_NAME).where("upid", "==", upid)
+        # Iniciar query base
+        query = db.collection(COLLECTION_NAME)
+        
+        # Aplicar filtros si existen
+        if "upid" in filtros:
+            query = query.where("upid", "==", filtros["upid"])
+        
+        if "estado_360" in filtros:
+            query = query.where("estado_360", "==", filtros["estado_360"])
+        
+        if "tipo_visita" in filtros:
+            query = query.where("tipo_visita", "==", filtros["tipo_visita"])
+        
+        # Para nombre_centro_gestor, necesitamos filtrar en up_entorno.nombre_centro_gestor
+        if "nombre_centro_gestor" in filtros:
+            query = query.where("up_entorno.nombre_centro_gestor", "==", filtros["nombre_centro_gestor"])
+        
+        # Ejecutar query
         docs = query.stream()
         
         registros = []
@@ -431,18 +447,32 @@ async def obtener_registros_por_upid(upid: str) -> Dict[str, Any]:
             "success": True,
             "data": registros,
             "count": len(registros),
-            "upid": upid,
+            "filtros_aplicados": filtros,
             "collection": COLLECTION_NAME,
             "timestamp": datetime.now().isoformat()
         }
         
     except Exception as e:
-        logger.error(f"❌ Error obteniendo registros por UPID: {e}")
+        logger.error(f"❌ Error obteniendo registros con filtros: {e}")
         return {
             "success": False,
             "error": str(e),
             "timestamp": datetime.now().isoformat()
         }
+
+
+async def obtener_registros_por_upid(upid: str) -> Dict[str, Any]:
+    """
+    Obtener todos los registros de captura 360 para un UPID específico
+    (Función legacy - usar obtener_registros_con_filtros en su lugar)
+    
+    Args:
+        upid: ID de la unidad de proyecto
+        
+    Returns:
+        Diccionario con los registros encontrados
+    """
+    return await obtener_registros_con_filtros({"upid": upid})
 
 
 # Flag de disponibilidad

@@ -11,7 +11,6 @@ from datetime import datetime
 class UpEntorno(BaseModel):
     """Modelo para información del entorno del proyecto"""
     nombre_centro_gestor: str = Field(..., description="Nombre del centro gestor")
-    invocar_centro_gestor: bool = Field(..., description="Indica si se debe invocar al centro gestor")
     solicitud_centro_gestor: str = Field(..., description="Solicitud específica al centro gestor")
 
 
