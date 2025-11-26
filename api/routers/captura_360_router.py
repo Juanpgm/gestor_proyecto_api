@@ -52,17 +52,18 @@ async def captura_estado_360_endpoint(
     solicitud_centro_gestor: str = Form(..., description="Solicitud al centro gestor"),
     
     # Estado y flags
-    estado: str = Form(..., description="Estado actual del proyecto"),
+    estado_360: str = Form(..., description="Estado 360: 'Antes', 'Durante' o 'Después'"),
     requiere_alcalde: bool = Form(..., description="¿Requiere participación del alcalde?"),
     entrega_publica: bool = Form(..., description="¿Habrá entrega pública?"),
-    observaciones: str = Form(..., description="Observaciones adicionales"),
+    tipo_visita: str = Form(..., description="Tipo de visita: 'Verificación' o 'Comunicaciones'"),
+    observaciones: Optional[str] = Form(None, description="Observaciones adicionales (opcional)"),
     
     # Coordenadas GPS (como string JSON)
     coordinates_type: str = Form(..., description="Tipo de geometría (Point, LineString, Polygon, etc.)"),
     coordinates_data: str = Form(..., description="Coordenadas en formato JSON array"),
     
-    # Archivos de fotos (opcional)
-    photos: Optional[List[UploadFile]] = File(None, description="Fotos a subir (opcional)")
+    # Archivos de fotos (obligatorio)
+    photosUrl: List[UploadFile] = File(..., description="Fotos a subir (obligatorio)")
 ):
     """
     ## 🟢 POST | 📸 Captura 360 | Registrar Estado de Reconocimiento 360
@@ -91,13 +92,14 @@ async def captura_estado_360_endpoint(
     - **nombre_centro_gestor**: Centro gestor responsable
     - **invocar_centro_gestor**: Boolean (True/False)
     - **solicitud_centro_gestor**: Solicitud específica
-    - **estado**: Estado del proyecto (En alistamiento, En ejecución, etc.)
+    - **estado_360**: Estado 360 del proyecto ('Antes', 'Durante' o 'Después')
     - **requiere_alcalde**: Boolean (True/False)
     - **entrega_publica**: Boolean (True/False)
-    - **observaciones**: Observaciones adicionales
+    - **tipo_visita**: Tipo de visita ('Verificación' o 'Comunicaciones')
+    - **observaciones**: Observaciones adicionales (opcional)
     - **coordinates_type**: Tipo de geometría (Point, LineString, etc.)
     - **coordinates_data**: JSON array con coordenadas
-    - **photos**: Archivos de fotos (opcional)
+    - **photosUrl**: Archivos de fotos (obligatorio)
     
     ### 📝 Ejemplo de uso con JavaScript/fetch:
     ```javascript
@@ -110,16 +112,17 @@ async def captura_estado_360_endpoint(
     formData.append('nombre_centro_gestor', 'Secretaría de Infraestructura');
     formData.append('invocar_centro_gestor', 'true');
     formData.append('solicitud_centro_gestor', 'Requiere revisión técnica');
-    formData.append('estado', 'En ejecución');
+    formData.append('estado_360', 'Durante');
     formData.append('requiere_alcalde', 'true');
     formData.append('entrega_publica', 'true');
+    formData.append('tipo_visita', 'Verificación');
     formData.append('observaciones', 'Proyecto prioritario');
     formData.append('coordinates_type', 'Point');
     formData.append('coordinates_data', '[-76.5225, 3.4516]');
     
     // Agregar fotos
     for (const file of photoFiles) {
-        formData.append('photos', file);
+        formData.append('photosUrl', file);
     }
     
     const response = await fetch('/unidades-proyecto/captura-estado-360', {
@@ -152,23 +155,23 @@ async def captura_estado_360_endpoint(
         )
     
     try:
-        # Validar estado
-        estados_validos = [
-            "En alistamiento",
-            "En ejecución",
-            "Suspendido",
-            "Terminado",
-            "Inaugurado"
-        ]
+        # Validar estado_360
+        estados_360_validos = ["Antes", "Durante", "Después"]
         
-        if estado not in estados_validos:
+        if estado_360 not in estados_360_validos:
             raise HTTPException(
                 status_code=400,
-                detail=f"Estado inválido. Debe ser uno de: {', '.join(estados_validos)}"
+                detail=f"estado_360 inválido. Debe ser uno de: {', '.join(estados_360_validos)}"
             )
         
-        # Calcular estado_360
-        estado_360 = mapear_estado_360(estado)
+        # Validar tipo_visita
+        tipos_visita_validos = ["Verificación", "Comunicaciones"]
+        
+        if tipo_visita not in tipos_visita_validos:
+            raise HTTPException(
+                status_code=400,
+                detail=f"tipo_visita inválido. Debe ser uno de: {', '.join(tipos_visita_validos)}"
+            )
         
         # Construir objeto up_entorno
         up_entorno = {
@@ -192,16 +195,17 @@ async def captura_estado_360_endpoint(
             "coordinates": coordinates_array
         }
         
-        # Procesar fotos si se enviaron
+        # Procesar fotos (obligatorias)
         photos_uploaded = []
         photos_failed = []
         
-        if photos and len(photos) > 0:
-            logger.info(f"📸 Procesando {len(photos)} fotos para UPID {upid}")
+        logger.info(f"📸 Procesando {len(photosUrl)} fotos para UPID {upid}")
+        
+        if len(photosUrl) > 0:
             
             # Preparar archivos para subir
             files_content = []
-            for photo in photos:
+            for photo in photosUrl:
                 content = await photo.read()
                 files_content.append({
                     'content': content,
@@ -221,7 +225,7 @@ async def captura_estado_360_endpoint(
             
             logger.info(f"✅ Fotos subidas: {len(photos_uploaded)}, Fallidas: {len(photos_failed)}")
         
-        # Crear registro en Firestore
+        # Crear/actualizar registro en Firestore (UPSERT)
         resultado = await crear_registro_captura_360(
             upid=upid,
             nombre_up=nombre_up,
@@ -229,9 +233,10 @@ async def captura_estado_360_endpoint(
             descripcion_intervencion=descripcion_intervencion,
             solicitud_intervencion=solicitud_intervencion,
             up_entorno=up_entorno,
-            estado=estado,
+            estado_360=estado_360,
             requiere_alcalde=requiere_alcalde,
             entrega_publica=entrega_publica,
+            tipo_visita=tipo_visita,
             observaciones=observaciones,
             coordinates_gps=coordinates_gps,
             photos_info=photos_uploaded if photos_uploaded else None

@@ -220,15 +220,16 @@ async def crear_registro_captura_360(
     descripcion_intervencion: str,
     solicitud_intervencion: str,
     up_entorno: Dict[str, Any],
-    estado: str,
+    estado_360: str,
     requiere_alcalde: bool,
     entrega_publica: bool,
-    observaciones: str,
+    tipo_visita: str,
+    observaciones: Optional[str],
     coordinates_gps: Dict[str, Any],
     photos_info: Optional[List[Dict]] = None
 ) -> Dict[str, Any]:
     """
-    Crear registro de captura estado 360 en Firestore
+    Crear o actualizar registro de captura estado 360 en Firestore (UPSERT)
     
     Args:
         upid: ID de la unidad de proyecto
@@ -237,10 +238,11 @@ async def crear_registro_captura_360(
         descripcion_intervencion: Descripción de la intervención
         solicitud_intervencion: Solicitud de intervención
         up_entorno: Información del entorno (dict con nombre_centro_gestor, invocar_centro_gestor, solicitud_centro_gestor)
-        estado: Estado del proyecto (para calcular estado_360)
+        estado_360: Estado 360 del proyecto ('Antes', 'Durante', 'Después')
         requiere_alcalde: Boolean indicando si requiere alcalde
         entrega_publica: Boolean indicando si hay entrega pública
-        observaciones: Observaciones adicionales
+        tipo_visita: Tipo de visita ('Verificación' o 'Comunicaciones')
+        observaciones: Observaciones adicionales (opcional)
         coordinates_gps: Coordenadas GPS (formato GeoJSON)
         photos_info: Información de fotos subidas (opcional)
         
@@ -256,9 +258,6 @@ async def crear_registro_captura_360(
                 "error": "No se pudo conectar a Firestore",
                 "timestamp": datetime.now().isoformat()
             }
-        
-        # Calcular estado_360
-        estado_360 = mapear_estado_360(estado)
         
         # Generar timestamp
         fecha_registro = datetime.now().isoformat()
@@ -298,8 +297,12 @@ async def crear_registro_captura_360(
             "coordinates": json.dumps(coordinates_gps.get("coordinates")) if coordinates_gps else "[]"
         }
         
-        # Preparar documento
-        documento = {
+        # UPSERT: Buscar documento existente por upid y estado_360
+        query = db.collection(COLLECTION_NAME).where("upid", "==", upid).where("estado_360", "==", estado_360).limit(1)
+        existing_docs = list(query.stream())
+        
+        # Preparar documento con nuevos valores
+        documento_actualizado = {
             "upid": upid,
             "nombre_up": nombre_up,
             "nombre_up_detalle": nombre_up_detalle,
@@ -310,18 +313,50 @@ async def crear_registro_captura_360(
             "fecha_registro": fecha_registro,
             "requiere_alcalde": requiere_alcalde,
             "entrega_publica": entrega_publica,
-            "observaciones": observaciones,
-            "coordinates_gps": coordinates_gps_firestore,  # Guardar como objeto con coordinates stringificadas
-            "photosUrl": photos_url,
-            "created_at": firestore.SERVER_TIMESTAMP,
+            "tipo_visita": tipo_visita,
+            "coordinates_gps": coordinates_gps_firestore,
             "updated_at": firestore.SERVER_TIMESTAMP
         }
         
-        # Guardar en Firestore
-        doc_ref = db.collection(COLLECTION_NAME).document()
-        doc_ref.set(documento)
+        # Agregar observaciones solo si se proporciona
+        if observaciones is not None:
+            documento_actualizado["observaciones"] = observaciones
         
-        logger.info(f"✅ Registro creado en {COLLECTION_NAME}: {doc_ref.id}")
+        # Agregar photosUrl
+        documento_actualizado["photosUrl"] = photos_url
+        
+        if existing_docs:
+            # Actualizar documento existente
+            doc_ref = existing_docs[0].reference
+            existing_data = existing_docs[0].to_dict()
+            
+            # Merge de photosUrl: mantener URLs existentes y agregar nuevas
+            if photos_info and len(photos_info) > 0:
+                existing_photos_url = existing_data.get("photosUrl", {})
+                
+                # Para cada estado, combinar URLs existentes con nuevas
+                for key in ["photosBeforeUrl", "photoWhileUrl", "photosAfterUrl"]:
+                    existing_urls = existing_photos_url.get(key, [])
+                    new_urls = photos_url.get(key, [])
+                    
+                    # Si hay URLs nuevas como lista, combinarlas
+                    if isinstance(new_urls, list) and isinstance(existing_urls, list):
+                        documento_actualizado["photosUrl"][key] = existing_urls + new_urls
+                    elif isinstance(new_urls, list):
+                        documento_actualizado["photosUrl"][key] = new_urls
+                    elif isinstance(existing_urls, list):
+                        documento_actualizado["photosUrl"][key] = existing_urls
+            
+            doc_ref.update(documento_actualizado)
+            logger.info(f"✅ Registro actualizado en {COLLECTION_NAME}: {doc_ref.id}")
+            accion = "actualizado"
+        else:
+            # Crear nuevo documento
+            documento_actualizado["created_at"] = firestore.SERVER_TIMESTAMP
+            doc_ref = db.collection(COLLECTION_NAME).document()
+            doc_ref.set(documento_actualizado)
+            logger.info(f"✅ Registro creado en {COLLECTION_NAME}: {doc_ref.id}")
+            accion = "creado"
         
         # Crear copia del documento sin los timestamps de Firestore para retornar
         documento_respuesta = {
@@ -335,19 +370,23 @@ async def crear_registro_captura_360(
             "fecha_registro": fecha_registro,
             "requiere_alcalde": requiere_alcalde,
             "entrega_publica": entrega_publica,
-            "observaciones": observaciones,
+            "tipo_visita": tipo_visita,
             "coordinates_gps": coordinates_gps_firestore,
-            "photosUrl": photos_url
+            "photosUrl": documento_actualizado["photosUrl"]
         }
+        
+        if observaciones is not None:
+            documento_respuesta["observaciones"] = observaciones
         
         return {
             "success": True,
-            "message": f"Registro de captura 360 creado exitosamente para UPID {upid}",
+            "message": f"Registro de captura 360 {accion} exitosamente para UPID {upid}",
             "data": documento_respuesta,
             "document_id": doc_ref.id,
             "estado_360": estado_360,
             "collection": COLLECTION_NAME,
-            "timestamp": fecha_registro
+            "timestamp": fecha_registro,
+            "action": accion
         }
         
     except Exception as e:

@@ -36,25 +36,28 @@ class CapturaEstado360Request(BaseModel):
     descripcion_intervencion: str = Field(..., description="Descripción de la intervención")
     solicitud_intervencion: str = Field(..., description="Solicitud de la intervención")
     up_entorno: UpEntorno = Field(..., description="Información del entorno del proyecto")
-    estado: str = Field(..., description="Estado actual del proyecto (usado para calcular estado_360)")
+    estado_360: str = Field(..., description="Estado 360 del proyecto ('Antes', 'Durante', 'Después')")
     requiere_alcalde: bool = Field(..., description="Indica si requiere participación del alcalde")
     entrega_publica: bool = Field(..., description="Indica si habrá entrega pública")
-    observaciones: str = Field(..., description="Observaciones adicionales")
+    tipo_visita: str = Field(..., description="Tipo de visita ('Verificación' o 'Comunicaciones')")
+    observaciones: Optional[str] = Field(None, description="Observaciones adicionales (opcional)")
     coordinates_gps: CoordinatesGPS = Field(..., description="Coordenadas GPS del proyecto")
-    photos: Optional[List[str]] = Field(None, description="Lista de nombres de archivos de fotos a subir")
+    photosUrl: List[str] = Field(..., description="Lista de nombres de archivos de fotos a subir (obligatorio)")
     
-    @validator('estado')
-    def validate_estado(cls, v):
-        """Validar que el estado sea uno de los valores permitidos"""
-        estados_validos = [
-            "En alistamiento", 
-            "En ejecución", 
-            "Suspendido", 
-            "Terminado", 
-            "Inaugurado"
-        ]
+    @validator('estado_360')
+    def validate_estado_360(cls, v):
+        """Validar que el estado_360 sea uno de los valores permitidos"""
+        estados_validos = ["Antes", "Durante", "Después"]
         if v not in estados_validos:
-            raise ValueError(f"Estado debe ser uno de: {', '.join(estados_validos)}")
+            raise ValueError(f"estado_360 debe ser uno de: {', '.join(estados_validos)}")
+        return v
+    
+    @validator('tipo_visita')
+    def validate_tipo_visita(cls, v):
+        """Validar que el tipo_visita sea uno de los valores permitidos"""
+        tipos_validos = ["Verificación", "Comunicaciones"]
+        if v not in tipos_validos:
+            raise ValueError(f"tipo_visita debe ser uno de: {', '.join(tipos_validos)}")
         return v
 
 
