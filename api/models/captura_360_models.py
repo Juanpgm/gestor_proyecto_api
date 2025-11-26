@@ -8,6 +8,12 @@ from typing import Optional, Dict, List
 from datetime import datetime
 
 
+class RegistradoPor(BaseModel):
+    """Modelo para información de quién registra"""
+    username: str = Field(..., description="Nombre de usuario (displayName)")
+    email: str = Field(..., description="Correo electrónico del usuario")
+
+
 class UpEntorno(BaseModel):
     """Modelo para información del entorno del proyecto"""
     nombre_centro_gestor: str = Field(..., description="Nombre del centro gestor")
@@ -41,6 +47,7 @@ class CapturaEstado360Request(BaseModel):
     tipo_visita: str = Field(..., description="Tipo de visita ('Verificación' o 'Comunicaciones')")
     observaciones: Optional[str] = Field(None, description="Observaciones adicionales (opcional)")
     coordinates_gps: CoordinatesGPS = Field(..., description="Coordenadas GPS del proyecto")
+    registrado_por: RegistradoPor = Field(..., description="Información de quién registra (username y email)")
     photosUrl: List[str] = Field(..., description="Lista de nombres de archivos de fotos a subir (obligatorio)")
     
     @validator('estado_360')

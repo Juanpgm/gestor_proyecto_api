@@ -58,6 +58,10 @@ async def captura_estado_360_endpoint(
     tipo_visita: str = Form(..., description="Tipo de visita: 'Verificación' o 'Comunicaciones'"),
     observaciones: Optional[str] = Form(None, description="Observaciones adicionales (opcional)"),
     
+    # Registrado por (como string JSON)
+    registrado_por_username: str = Form(..., description="Nombre de usuario que registra (displayName)"),
+    registrado_por_email: str = Form(..., description="Email del usuario que registra"),
+    
     # Coordenadas GPS (como string JSON)
     coordinates_type: str = Form(..., description="Tipo de geometría (Point, LineString, Polygon, etc.)"),
     coordinates_data: str = Form(..., description="Coordenadas en formato JSON array"),
@@ -96,6 +100,8 @@ async def captura_estado_360_endpoint(
     - **entrega_publica**: Boolean (True/False)
     - **tipo_visita**: Tipo de visita ('Verificación' o 'Comunicaciones')
     - **observaciones**: Observaciones adicionales (opcional)
+    - **registrado_por_username**: Nombre de usuario que registra (displayName)
+    - **registrado_por_email**: Email del usuario que registra
     - **coordinates_type**: Tipo de geometría (Point, LineString, etc.)
     - **coordinates_data**: JSON array con coordenadas
     - **photosUrl**: Archivos de fotos (obligatorio)
@@ -115,6 +121,8 @@ async def captura_estado_360_endpoint(
     formData.append('entrega_publica', 'true');
     formData.append('tipo_visita', 'Verificación');
     formData.append('observaciones', 'Proyecto prioritario');
+    formData.append('registrado_por_username', 'Juan Pérez');
+    formData.append('registrado_por_email', 'juan.perez@example.com');
     formData.append('coordinates_type', 'Point');
     formData.append('coordinates_data', '[-76.5225, 3.4516]');
     
@@ -177,6 +185,12 @@ async def captura_estado_360_endpoint(
             "solicitud_centro_gestor": solicitud_centro_gestor
         }
         
+        # Construir objeto registrado_por
+        registrado_por = {
+            "username": registrado_por_username,
+            "email": registrado_por_email
+        }
+        
         # Parsear coordenadas
         import json
         try:
@@ -235,6 +249,7 @@ async def captura_estado_360_endpoint(
             entrega_publica=entrega_publica,
             tipo_visita=tipo_visita,
             observaciones=observaciones,
+            registrado_por=registrado_por,
             coordinates_gps=coordinates_gps,
             photos_info=photos_uploaded if photos_uploaded else None
         )

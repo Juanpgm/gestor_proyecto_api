@@ -225,6 +225,7 @@ async def crear_registro_captura_360(
     entrega_publica: bool,
     tipo_visita: str,
     observaciones: Optional[str],
+    registrado_por: Dict[str, str],
     coordinates_gps: Dict[str, Any],
     photos_info: Optional[List[Dict]] = None
 ) -> Dict[str, Any]:
@@ -243,6 +244,7 @@ async def crear_registro_captura_360(
         entrega_publica: Boolean indicando si hay entrega pública
         tipo_visita: Tipo de visita ('Verificación' o 'Comunicaciones')
         observaciones: Observaciones adicionales (opcional)
+        registrado_por: Información de quién registra (dict con username y email)
         coordinates_gps: Coordenadas GPS (formato GeoJSON)
         photos_info: Información de fotos subidas (opcional)
         
@@ -314,6 +316,7 @@ async def crear_registro_captura_360(
             "requiere_alcalde": requiere_alcalde,
             "entrega_publica": entrega_publica,
             "tipo_visita": tipo_visita,
+            "registrado_por": registrado_por,
             "coordinates_gps": coordinates_gps_firestore,
             "updated_at": firestore.SERVER_TIMESTAMP
         }
@@ -371,6 +374,7 @@ async def crear_registro_captura_360(
             "requiere_alcalde": requiere_alcalde,
             "entrega_publica": entrega_publica,
             "tipo_visita": tipo_visita,
+            "registrado_por": registrado_por,
             "coordinates_gps": coordinates_gps_firestore,
             "photosUrl": documento_actualizado["photosUrl"]
         }
