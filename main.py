@@ -107,7 +107,8 @@ try:
         FIREBASE_AVAILABLE, 
         ensure_firebase_configured, 
         configure_firebase,
-        validate_firebase_connection
+        validate_firebase_connection,
+        get_firestore_client
     )
     print(f"✅ Firebase auto-config loaded successfully - FIREBASE_AVAILABLE: {FIREBASE_AVAILABLE}")
 except Exception as e:
@@ -117,6 +118,7 @@ except Exception as e:
     configure_firebase = lambda: (False, {"error": "Not available"})
     ensure_firebase_configured = lambda: False
     validate_firebase_connection = lambda: {"connected": False, "error": "Not available"}
+    get_firestore_client = lambda: None
 
 # Importar scripts de forma segura
 try:
@@ -2074,6 +2076,172 @@ async def export_attributes_for_nextjs(
         raise HTTPException(
             status_code=500,
             detail=f"Error procesando atributos: {str(e)}"
+        )
+
+# ============================================================================
+# ENDPOINT PARA ARTEFACTO DE CAPTURA #360
+# ============================================================================
+
+@app.get("/unidades-proyecto/init-360", tags=["Artefacto de Captura #360"], summary="🔵 GET | 📋 Listados | Datos Iniciales para Captura #360")
+@optional_rate_limit("60/minute")
+async def get_unidades_proyecto_init_360(request: Request):
+    """
+    ## 🔵 GET | 📋 Listados | Obtener Datos Iniciales para Artefacto de Captura #360
+    
+    **Propósito**: Retorna registros de la colección "unidades_proyecto" filtrados según 
+    criterios específicos para el artefacto de captura #360.
+    
+    ### ✅ Campos retornados:
+    - upid
+    - nombre_up
+    - nombre_up_detalle
+    - tipo_equipamiento
+    - tipo_intervencion
+    - estado
+    - avance_obra
+    - presupuesto_base
+    - geometry (datos geoespaciales del registro)
+    
+    ### 🚫 Exclusiones aplicadas:
+    
+    **Por clase_up**:
+    - "Interventoría"
+    - "Estudios y diseños"
+    - "Subsidios"
+    
+    **Por tipo_equipamiento**:
+    - "Fuentes y monumentos"
+    - "Parques y zonas verdes"
+    - "Vivienda mejoramiento"
+    - "Vivienda nueva"
+    - "Adquisición predios"
+    
+    **Por tipo_intervencion**:
+    - "Estudios y diseños"
+    - "Transferencia directa"
+    
+    ### 📊 Información incluida en la respuesta:
+    - Lista de registros que cumplen los criterios
+    - Conteo total de registros retornados
+    - Timestamp de la consulta
+    - Criterios de exclusión aplicados
+    
+    ### 📝 Ejemplo de uso:
+    ```javascript
+    const response = await fetch('/unidades-proyecto/init-360');
+    const data = await response.json();
+    if (data.success) {
+        console.log('Registros encontrados:', data.count);
+        console.log('Datos:', data.data);
+    }
+    ```
+    """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
+    
+    try:
+        # Conectar a Firestore
+        db = get_firestore_client()
+        if db is None:
+            raise HTTPException(
+                status_code=503,
+                detail="No se pudo conectar a Firestore"
+            )
+        
+        # Definir criterios de exclusión
+        exclusion_clase_up = ["Interventoría", "Estudios y diseños", "Subsidios"]
+        exclusion_tipo_equipamiento = [
+            "Fuentes y monumentos",
+            "Parques y zonas verdes",
+            "Vivienda mejoramiento",
+            "Vivienda nueva",
+            "Adquisición predios"
+        ]
+        exclusion_tipo_intervencion = ["Estudios y diseños", "Transferencia directa"]
+        
+        # Campos a retornar
+        campos_requeridos = [
+            'upid',
+            'nombre_up',
+            'nombre_up_detalle',
+            'tipo_equipamiento',
+            'tipo_intervencion',
+            'estado',
+            'avance_obra',
+            'presupuesto_base',
+            'geometry'
+        ]
+        
+        # Consultar colección
+        query = db.collection('unidades_proyecto')
+        docs = query.stream()
+        
+        # Procesar documentos
+        registros_filtrados = []
+        
+        for doc in docs:
+            doc_data = doc.to_dict()
+            
+            # Extraer campos, buscando en el nivel raíz y en properties
+            def get_field_value(field_name):
+                """Obtener valor del campo desde el documento o properties"""
+                if field_name in doc_data:
+                    return doc_data[field_name]
+                elif 'properties' in doc_data and field_name in doc_data['properties']:
+                    return doc_data['properties'][field_name]
+                return None
+            
+            # Obtener valores para filtrado
+            clase_up = get_field_value('clase_up')
+            tipo_equipamiento = get_field_value('tipo_equipamiento')
+            tipo_intervencion = get_field_value('tipo_intervencion')
+            
+            # Aplicar filtros de exclusión
+            # Excluir si clase_up está en la lista de exclusión
+            if clase_up and clase_up in exclusion_clase_up:
+                continue
+            
+            # Excluir si tipo_equipamiento está en la lista de exclusión
+            if tipo_equipamiento and tipo_equipamiento in exclusion_tipo_equipamiento:
+                continue
+            
+            # Excluir si tipo_intervencion está en la lista de exclusión
+            if tipo_intervencion and tipo_intervencion in exclusion_tipo_intervencion:
+                continue
+            
+            # Si pasa todos los filtros, extraer campos requeridos
+            registro = {}
+            for campo in campos_requeridos:
+                valor = get_field_value(campo)
+                registro[campo] = valor
+            
+            registros_filtrados.append(registro)
+        
+        # Preparar respuesta
+        response_data = {
+            "success": True,
+            "data": registros_filtrados,
+            "count": len(registros_filtrados),
+            "collection": "unidades_proyecto",
+            "timestamp": datetime.now().isoformat(),
+            "last_updated": "2025-11-26T00:00:00Z",
+            "message": f"Se obtuvieron {len(registros_filtrados)} registros que cumplen los criterios del artefacto #360",
+            "filters_applied": {
+                "excluded_clase_up": exclusion_clase_up,
+                "excluded_tipo_equipamiento": exclusion_tipo_equipamiento,
+                "excluded_tipo_intervencion": exclusion_tipo_intervencion
+            },
+            "fields_returned": campos_requeridos
+        }
+        
+        return create_utf8_response(response_data)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error procesando consulta init-360: {str(e)}"
         )
 
 # ============================================================================
@@ -8819,6 +8987,14 @@ try:
     print("✅ Quality control router included successfully")
 except Exception as e:
     print(f"⚠️ Warning: Could not include quality control router: {e}")
+
+# Incluir router de Artefacto de Captura #360
+try:
+    from api.routers.captura_360_router import router as captura_360_router
+    app.include_router(captura_360_router)
+    print("✅ Captura 360 router included successfully")
+except Exception as e:
+    print(f"⚠️ Warning: Could not include captura 360 router: {e}")
 
 # ============================================================================
 

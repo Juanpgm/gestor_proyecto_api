@@ -453,6 +453,41 @@ except ImportError as e:
     async def get_flujo_caja_from_firebase(filters=None):
         return {"success": False, "error": "Flujo caja operations not available", "data": [], "count": 0}
 
+# Importar operaciones de captura 360
+try:
+    from .captura_360_operations import (
+        crear_registro_captura_360,
+        obtener_registros_por_upid,
+        subir_fotos_s3,
+        mapear_estado_360,
+        generar_estructura_carpetas_s3,
+        obtener_ruta_por_estado,
+        CAPTURA_360_OPERATIONS_AVAILABLE
+    )
+    print(f"✅ Captura 360 operations imported successfully - AVAILABLE: {CAPTURA_360_OPERATIONS_AVAILABLE}")
+except ImportError as e:
+    print(f"Warning: Captura 360 operations not available: {e}")
+    CAPTURA_360_OPERATIONS_AVAILABLE = False
+    
+    # Crear funciones dummy
+    async def crear_registro_captura_360(*args, **kwargs):
+        return {"success": False, "error": "Captura 360 operations not available"}
+    
+    async def obtener_registros_por_upid(upid: str):
+        return {"success": False, "error": "Captura 360 operations not available"}
+    
+    async def subir_fotos_s3(*args, **kwargs):
+        return [], [{"error": "Captura 360 operations not available"}]
+    
+    def mapear_estado_360(estado: str):
+        return "Antes"
+    
+    def generar_estructura_carpetas_s3(*args, **kwargs):
+        return {}
+    
+    def obtener_ruta_por_estado(paths, estado_360):
+        return ""
+
 __all__ = [
     # Firebase operations
     "get_collections_info",
@@ -572,6 +607,14 @@ __all__ = [
     "save_flujo_caja_to_firebase",
     "get_flujo_caja_from_firebase",
     
+    # Captura 360 operations
+    "crear_registro_captura_360",
+    "obtener_registros_por_upid",
+    "subir_fotos_s3",
+    "mapear_estado_360",
+    "generar_estructura_carpetas_s3",
+    "obtener_ruta_por_estado",
+    
     # Availability flags
     "FIREBASE_OPERATIONS_AVAILABLE",
     "UNIDADES_PROYECTO_AVAILABLE",
@@ -586,4 +629,5 @@ __all__ = [
     "TVEC_ENRICH_OPERATIONS_AVAILABLE",
     "ORDENES_COMPRA_OPERATIONS_AVAILABLE",
     "FLUJO_CAJA_OPERATIONS_AVAILABLE",
+    "CAPTURA_360_OPERATIONS_AVAILABLE",
 ]

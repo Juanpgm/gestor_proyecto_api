@@ -83,6 +83,23 @@ except ImportError as e:
     print(f"Warning: Flujo caja models not available: {e}")
     FLUJO_CAJA_MODELS_AVAILABLE = False
 
+try:
+    from .captura_360_models import (
+        # Captura 360 models
+        CapturaEstado360Request,
+        CapturaEstado360Response,
+        UpEntorno,
+        CoordinatesGPS,
+        PhotosUrl,
+        CAPTURA_360_MODELS_AVAILABLE,
+        COLLECTION_NAME as CAPTURA_360_COLLECTION_NAME,
+        ESTADO_360_MAPPING,
+    )
+    CAPTURA_360_MODELS_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Captura 360 models not available: {e}")
+    CAPTURA_360_MODELS_AVAILABLE = False
+
 __all__ = [
     # Request models
     "UserRegistrationRequest",
@@ -128,6 +145,14 @@ __all__ = [
     "ArchivoEvidencia",
     "ReporteContratoRequest",
     "ReporteContratoResponse",
+    # Captura 360 models
+    "CapturaEstado360Request",
+    "CapturaEstado360Response",
+    "UpEntorno",
+    "CoordinatesGPS",
+    "PhotosUrl",
+    "CAPTURA_360_COLLECTION_NAME",
+    "ESTADO_360_MAPPING",
     # Proyectos presupuestales constants
     "DEFAULT_COLLECTION_NAME",
     # Availability flags
@@ -135,4 +160,5 @@ __all__ = [
     "REPORTE_MODELS_AVAILABLE",
     "PROYECTOS_PRESUPUESTALES_MODELS_AVAILABLE",
     "FLUJO_CAJA_MODELS_AVAILABLE",
+    "CAPTURA_360_MODELS_AVAILABLE",
 ]
