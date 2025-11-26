@@ -526,10 +526,12 @@ def get_cors_origins():
     local_origins = [
         "http://localhost:3000",
         "http://localhost:3001", 
+        "http://localhost:5173",  # Vite dev server default port
         "http://localhost:5500",  # Live Server default port
         "http://localhost:8080",  # Webpack dev server
         "http://127.0.0.1:3000",
         "http://127.0.0.1:3001",
+        "http://127.0.0.1:5173",  # Vite dev server con 127.0.0.1
         "http://127.0.0.1:5500",  # Live Server con 127.0.0.1
         "http://127.0.0.1:8080",
     ]
