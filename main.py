@@ -543,7 +543,10 @@ def get_cors_origins():
         # Vercel apps
         "https://gestor-proyectos-vercel.vercel.app",
         "https://gestor-proyectos-vercel-5ogb5wph8-juan-pablos-projects-56fe2e60.vercel.app",
+        # Artefacto CaliTrack 360 Frontend - Producción y variantes de Vercel
         "https://artefacto-calitrack-360-frontend-production-dbcd9wrsi.vercel.app",
+        "https://artefacto-calitrack-360-frontend-production.vercel.app",
+        "https://artefacto-calitrack-360-frontend.vercel.app",
         # Agrega aquí otros dominios específicos de producción según sea necesario
     ]
     
@@ -567,6 +570,20 @@ def get_cors_origins():
     origins = list(set(origins))
     
     return origins
+
+def get_cors_origin_regex():
+    """
+    Obtener patrón regex para permitir variantes de Vercel dinámicamente.
+    Vercel genera URLs como: project-name-hash-team.vercel.app
+    """
+    # Patrones para proyectos de Vercel que necesitan acceso
+    vercel_patterns = [
+        r"https://artefacto-calitrack-360-frontend.*\.vercel\.app",
+        r"https://gestor-proyectos-vercel.*\.vercel\.app",
+    ]
+    # Combinar todos los patrones en uno solo
+    combined_pattern = "|".join(f"({pattern})" for pattern in vercel_patterns)
+    return combined_pattern
 
 # 🔤 MIDDLEWARE UTF-8 PARA CARACTERES ESPECIALES
 @app.middleware("http")
@@ -609,13 +626,15 @@ async def performance_middleware(request: Request, call_next):
 
 # 🌐 CONFIGURACIÓN DE CORS
 cors_origins = get_cors_origins()
-print(f"🌐 CORS configured for {len(cors_origins)} specific origins")
+cors_origin_regex = get_cors_origin_regex()
+print(f"🌐 CORS configured for {len(cors_origins)} specific origins + regex patterns for Vercel variants")
 
-# Configuración restrictiva con orígenes específicos
+# Configuración restrictiva con orígenes específicos + regex para variantes de Vercel
 # Permite credentials (cookies, tokens) de manera segura
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,  # Lista específica de orígenes permitidos
+    allow_origin_regex=cors_origin_regex,  # Regex para variantes de Vercel
     allow_credentials=True,  # Permitir cookies y headers de autenticación
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"],
     allow_headers=[
