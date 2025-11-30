@@ -543,6 +543,7 @@ def get_cors_origins():
         # Vercel apps
         "https://gestor-proyectos-vercel.vercel.app",
         "https://gestor-proyectos-vercel-5ogb5wph8-juan-pablos-projects-56fe2e60.vercel.app",
+        "https://artefacto-calitrack-360-frontend-production-dbcd9wrsi.vercel.app",
         # Agrega aquí otros dominios específicos de producción según sea necesario
     ]
     
