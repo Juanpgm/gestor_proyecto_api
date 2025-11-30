@@ -48,59 +48,109 @@ def clean_firebase_document(doc: Dict[str, Any]) -> Dict[str, Any]:
 # ========== SUMMARY ENDPOINTS ==========
 
 @router.get("/summary", response_model=dict)
-async def get_quality_control_summary(
-    nombre_centro_gestor: Optional[str] = Query(None, description="Filtrar por centro gestor"),
-    estado: Optional[str] = Query(None, description="Filtrar por estado"),
-    limit: Optional[int] = Query(None, ge=1, le=1000, description="Límite de resultados")
-):
+async def get_quality_control_summary():
     """
-    Obtener resumen de control de calidad de unidades de proyecto.
+    Obtener el resumen de control de calidad de unidades de proyecto (último reporte).
     
-    Esta colección contiene información resumida sobre el estado del control
-    de calidad de las unidades de proyecto.
+    Retorna el documento `latest` con el reporte más reciente de calidad,
+    incluyendo métricas de comparación con el reporte anterior.
     
     **Colección**: `unidades_proyecto_quality_control_summary`
+    
+    **Campos principales:**
+    - `report_id`: Identificador único del reporte
+    - `global_quality_score`: Puntuación global de calidad (0-100)
+    - `total_records_validated`: Total de registros validados
+    - `total_issues_found`: Total de problemas encontrados
+    - `records_with_issues`: Registros con al menos un problema
+    - `records_without_issues`: Registros sin problemas
+    - `error_rate`: Tasa de error en porcentaje
+    - `system_status`: Estado del sistema (CRITICAL, WARNING, OK)
+    - `requires_immediate_action`: Indica si requiere acción inmediata
+    - `dimension_distribution`: Distribución de problemas por dimensión ISO 19157
+    - `severity_distribution`: Distribución por severidad (CRITICAL, HIGH, MEDIUM, LOW)
+    - `top_problematic_centros`: Top 10 centros gestores con más problemas
+    - `top_quality_centros`: Top 10 centros gestores con mejor calidad
+    - `centros_require_attention`: Cantidad de centros que requieren atención
+    - `total_centros_gestores`: Total de centros gestores evaluados
+    - `recommendations`: Recomendaciones priorizadas
+    - `dimensions_evaluated`: Lista de dimensiones ISO 19157 evaluadas
+    - `iso_standard`: Estándar ISO utilizado
+    - `validation_engine_version`: Versión del motor de validación
+    
+    **Métricas de comparación (`comparison_with_previous`):**
+    - `has_previous`: Indica si existe un reporte anterior para comparar
+    - `previous_report_id`: ID del reporte anterior
+    - `previous_timestamp`: Fecha del reporte anterior
+    - `changes`: Cambios en métricas principales:
+        - `quality_score`: Cambio en puntuación de calidad
+        - `total_records`: Cambio en registros totales
+        - `total_issues`: Cambio en total de problemas
+        - `records_with_issues`: Cambio en registros con problemas
+        - `error_rate`: Cambio en tasa de error
+        - `centros_require_attention`: Cambio en centros que requieren atención
+    - `severity_changes`: Cambios por nivel de severidad (CRITICAL, HIGH, MEDIUM, LOW, INFO)
+    
+    **Estructura de cada métrica de cambio:**
+    - `value`: Valor actual
+    - `previous`: Valor anterior
+    - `change`: Diferencia absoluta (value - previous)
+    - `change_percentage`: Cambio porcentual
+    - `trend`: Tendencia (`improving`, `stable`, `worsening`)
     """
     try:
         db = get_firestore_client()
         if db is None:
             raise HTTPException(status_code=503, detail="Firestore no disponible")
         
-        collection_ref = db.collection(QC_COLLECTIONS["summary"])
-        query = collection_ref
+        doc = db.collection(QC_COLLECTIONS["summary"]).document("latest").get()
         
-        # Aplicar filtros
-        if nombre_centro_gestor:
-            query = query.where("nombre_centro_gestor", "==", nombre_centro_gestor)
+        if not doc.exists:
+            raise HTTPException(status_code=404, detail="No se encontró el reporte de calidad")
         
-        if estado:
-            query = query.where("estado", "==", estado)
+        doc_dict = doc.to_dict()
+        doc_dict["id"] = doc.id
+        cleaned_doc = clean_firebase_document(doc_dict)
         
-        if limit:
-            query = query.limit(limit)
+        # Extraer resumen de tendencias y comparación
+        has_comparison = False
+        trends_summary = {}
+        overall_trend = "stable"
+        trends_count = {"improving": 0, "stable": 0, "worsening": 0}
         
-        # Ejecutar consulta
-        docs = query.stream()
-        
-        data = []
-        for doc in docs:
-            doc_dict = doc.to_dict()
-            doc_dict["id"] = doc.id
-            data.append(clean_firebase_document(doc_dict))
+        if "comparison_with_previous" in cleaned_doc:
+            comp = cleaned_doc["comparison_with_previous"]
+            has_comparison = comp.get("has_previous", False)
+            
+            if has_comparison and "changes" in comp:
+                for key, change_data in comp["changes"].items():
+                    if isinstance(change_data, dict):
+                        trend = change_data.get("trend", "stable")
+                        trends_summary[key] = {
+                            "trend": trend,
+                            "change": change_data.get("change", 0),
+                            "change_percentage": change_data.get("change_percentage", 0)
+                        }
+                        if trend in trends_count:
+                            trends_count[trend] += 1
+                
+                # Calcular tendencia general
+                if any(trends_count.values()):
+                    overall_trend = max(trends_count, key=trends_count.get)
         
         return {
             "success": True,
-            "data": data,
-            "count": len(data),
+            "data": cleaned_doc,
             "collection": QC_COLLECTIONS["summary"],
-            "filters_applied": {
-                "nombre_centro_gestor": nombre_centro_gestor,
-                "estado": estado,
-                "limit": limit
-            },
+            "has_comparison_data": has_comparison,
+            "trends_summary": trends_summary if trends_summary else None,
+            "overall_trend": overall_trend,
+            "trends_count": trends_count if has_comparison else None,
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error obteniendo resumen: {str(e)}")
 
