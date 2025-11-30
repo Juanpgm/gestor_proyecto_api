@@ -116,8 +116,92 @@ def extract_contract_fields(doc_data: Dict[str, Any], nombre_resumido_proceso: s
     }
 
 
+def extract_convenio_fields(doc_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Extraer y mapear campos de convenios de transferencia al formato estándar de contratos con programación funcional"""
+    
+    # Funciones auxiliares puras
+    def safe_get(data: dict, key: str, default='') -> str:
+        """Obtener valor de manera segura y limpia"""
+        value = data.get(key, default)
+        return clean_text_field(str(value)) if value else ''
+    
+    def safe_get_int(data: dict, key: str, default=0) -> int:
+        """Obtener valor entero de manera segura"""
+        value = data.get(key, default)
+        try:
+            return int(value) if value else default
+        except (ValueError, TypeError):
+            return default
+    
+    # Mapeo de campos de convenios al formato estándar de contratos
+    field_mappings = {
+        'bpin': lambda data: safe_get_int(data, 'bpin'),
+        'banco': lambda data: safe_get(data, 'banco'),
+        'nombre_centro_gestor': lambda data: safe_get(data, 'nombre_centro_gestor'),
+        'estado_contrato': lambda data: safe_get(data, 'estado_contrato'),
+        'referencia_contrato': lambda data: safe_get(data, 'referencia_contrato'),
+        'referencia_proceso': lambda data: safe_get(data, 'referencia_proceso'),
+        'nombre_resumido_proceso': lambda data: safe_get(data, 'nombre_resumido_proceso'),
+        'objeto_contrato': lambda data: safe_get(data, 'objeto_contrato'),
+        'modalidad_contratacion': lambda data: safe_get(data, 'modalidad_contrato'),  # Mapeo de modalidad_contrato a modalidad_contratacion
+        'fecha_inicio_contrato': lambda data: safe_get(data, 'fecha_inicio_contrato'),
+        'fecha_firma': lambda data: safe_get(data, 'fecha_firma'),
+        'fecha_fin_contrato': lambda data: safe_get(data, 'fecha_fin_contrato')
+    }
+    
+    # Aplicar mapeos usando programación funcional
+    return {key: mapper(doc_data) for key, mapper in field_mappings.items()}
+
+
+async def get_convenios_transferencias_init_data(filters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Obtener datos de convenios de transferencia con filtros por referencia_contrato y nombre_centro_gestor"""
+    try:
+        db = get_firestore_client()
+        if db is None:
+            return {"success": False, "error": "No se pudo conectar a Firestore", "data": [], "count": 0}
+        
+        collection_ref = db.collection('convenios_transferencias_emprestito')
+        query = collection_ref
+        
+        # Aplicar filtro server-side por nombre_centro_gestor (exacto)
+        if filters and filters.get('nombre_centro_gestor'):
+            query = query.where('nombre_centro_gestor', '==', filters['nombre_centro_gestor'])
+        
+        # Obtener documentos
+        docs = query.stream()
+        convenios_data = []
+        
+        for doc in docs:
+            doc_data = doc.to_dict()
+            
+            # Extraer y mapear campos del convenio al formato estándar
+            convenio_record = extract_convenio_fields(doc_data)
+            
+            # Filtro client-side por referencia_contrato (búsqueda parcial)
+            if filters and filters.get('referencia_contrato'):
+                search_term = str(filters['referencia_contrato']).lower()
+                if search_term not in str(convenio_record.get('referencia_contrato', '')).lower():
+                    continue
+            
+            convenios_data.append(convenio_record)
+        
+        return {
+            "success": True,
+            "data": convenios_data,
+            "count": len(convenios_data)
+        }
+        
+    except Exception as e:
+        return {
+            "success": False, 
+            "error": f"Error obteniendo convenios de transferencia: {str(e)}",
+            "data": [],
+            "count": 0
+        }
+
+
 async def get_contratos_init_data(filters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """Obtener datos combinados de contratos y órdenes de compra con filtros por referencia_contrato y nombre_centro_gestor"""
+    """Obtener datos combinados de contratos, órdenes de compra y convenios de transferencia con filtros por referencia_contrato y nombre_centro_gestor"""
     try:
         # Obtener datos de contratos
         contratos_result = await get_contratos_emprestito_init_data(filters)
@@ -125,11 +209,14 @@ async def get_contratos_init_data(filters: Optional[Dict[str, Any]] = None) -> D
         # Obtener datos de órdenes de compra
         ordenes_result = await get_ordenes_compra_init_data(filters)
         
+        # Obtener datos de convenios de transferencia
+        convenios_result = await get_convenios_transferencias_init_data(filters)
+        
         # Verificar si al menos uno fue exitoso
-        if not contratos_result["success"] and not ordenes_result["success"]:
+        if not contratos_result["success"] and not ordenes_result["success"] and not convenios_result["success"]:
             return {
                 "success": False,
-                "error": f"Error obteniendo datos: Contratos - {contratos_result.get('error', 'Error desconocido')}, Órdenes - {ordenes_result.get('error', 'Error desconocido')}",
+                "error": f"Error obteniendo datos: Contratos - {contratos_result.get('error', 'Error desconocido')}, Órdenes - {ordenes_result.get('error', 'Error desconocido')}, Convenios - {convenios_result.get('error', 'Error desconocido')}",
                 "data": [],
                 "count": 0
             }
@@ -137,6 +224,7 @@ async def get_contratos_init_data(filters: Optional[Dict[str, Any]] = None) -> D
         # Combinar datos usando programación funcional
         contratos_data = contratos_result["data"] if contratos_result["success"] else []
         ordenes_data = ordenes_result["data"] if ordenes_result["success"] else []
+        convenios_data = convenios_result["data"] if convenios_result["success"] else []
         
         # Función para agregar metadatos de origen
         def add_source_metadata(item: dict, source: str) -> dict:
@@ -146,9 +234,10 @@ async def get_contratos_init_data(filters: Optional[Dict[str, Any]] = None) -> D
         # Aplicar metadatos usando programación funcional
         contratos_with_source = [add_source_metadata(item, 'contratos_emprestito') for item in contratos_data]
         ordenes_with_source = [add_source_metadata(item, 'ordenes_compra_emprestito') for item in ordenes_data]
+        convenios_with_source = [add_source_metadata(item, 'convenios_transferencias_emprestito') for item in convenios_data]
         
         # Combinar datasets
-        combined_data = contratos_with_source + ordenes_with_source
+        combined_data = contratos_with_source + ordenes_with_source + convenios_with_source
         
         # Ordenar por referencia_contrato usando programación funcional
         sorted_data = sorted(combined_data, key=lambda x: str(x.get('referencia_contrato', '')))
@@ -165,6 +254,10 @@ async def get_contratos_init_data(filters: Optional[Dict[str, Any]] = None) -> D
                 "ordenes_compra_emprestito": {
                     "count": len(ordenes_data),
                     "success": ordenes_result["success"]
+                },
+                "convenios_transferencias_emprestito": {
+                    "count": len(convenios_data),
+                    "success": convenios_result["success"]
                 }
             },
             "filters_applied": filters or {},

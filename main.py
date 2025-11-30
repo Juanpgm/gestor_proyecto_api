@@ -3566,17 +3566,23 @@ async def init_contratos_seguimiento(
     """
     ## Inicialización de Contratos para Seguimiento
     
-    Obtiene datos de contratos desde la colección `contratos_emprestito` con filtros optimizados.
+    Obtiene datos combinados desde las colecciones `contratos_emprestito`, `ordenes_compra_emprestito` 
+    y `convenios_transferencias_emprestito` con filtros optimizados.
+    
+    **Colecciones incluidas**:
+    - `contratos_emprestito`: Contratos de empréstito
+    - `ordenes_compra_emprestito`: Órdenes de compra TVEC
+    - `convenios_transferencias_emprestito`: Convenios de transferencia
     
     **Campos retornados**: bpin, banco, nombre_centro_gestor, estado_contrato, referencia_contrato, 
     referencia_proceso, nombre_resumido_proceso, objeto_contrato, modalidad_contratacion, fecha_inicio_contrato, fecha_firma, 
-    fecha_fin_contrato
+    fecha_fin_contrato, _source (indica la colección de origen)
     
     **Filtros**:
     - `referencia_contrato`: Textbox - búsqueda parcial
     - `nombre_centro_gestor`: Dropdown - selección exacta
     
-    Sin filtros retorna todos los datos disponibles.
+    Sin filtros retorna todos los datos disponibles de las tres colecciones.
     """
     if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
         return {"success": False, "error": "Firebase no disponible", "data": [], "count": 0}
@@ -3803,12 +3809,13 @@ async def obtener_reportes_contratos(request: Request):
     
     **Propósito**: Obtener listado completo de todos los reportes de contratos almacenados en Firebase.
     Muestra todos los registros de la colección `reportes_contratos` con `nombre_centro_gestor` 
-    actualizado desde la colección `contratos_emprestito` cuando sea necesario.
+    actualizado desde las colecciones de empréstito cuando sea necesario.
     
-    ### 🔄 Integración con contratos_emprestito:
+    ### 🔄 Integración con colecciones de empréstito:
     - Si un reporte no tiene `nombre_centro_gestor` o está vacío, se busca automáticamente 
-      en la colección `contratos_emprestito` usando `referencia_contrato` como clave
-    - Los reportes actualizados incluyen el campo `nombre_centro_gestor_source: 'contratos_emprestito'`
+      en las colecciones `contratos_emprestito`, `ordenes_compra_emprestito` y 
+      `convenios_transferencias_emprestito` usando `referencia_contrato` como clave
+    - Los reportes actualizados incluyen el campo `nombre_centro_gestor_source` indicando la colección de origen
     
     ### 📊 Ordenamiento:
     Los resultados se ordenan por `fecha_reporte` descendente (más recientes primero).
