@@ -797,19 +797,30 @@ async def procesar_proceso_individual(db_client, proceso_data, referencia_proces
         with Socrata("www.datos.gov.co", None) as client:
             contratos_secop = client.get("jbjy-vk9h", limit=100, where=where_clause)
 
-        resultado["contratos_encontrados"] = len(contratos_secop)
-        logger.info(f"📊 Encontrados {len(contratos_secop)} contratos en SECOP para {proceso_contractual}")
+        # Filtrar contratos excluyendo estados "Borrador" y "Cancelado"
+        estados_excluidos = ["Borrador", "Cancelado"]
+        contratos_secop_filtrados = [
+            c for c in contratos_secop 
+            if c.get("estado_contrato", "").strip() not in estados_excluidos
+        ]
+        
+        contratos_excluidos = len(contratos_secop) - len(contratos_secop_filtrados)
+        if contratos_excluidos > 0:
+            logger.info(f"🚫 Excluidos {contratos_excluidos} contratos con estado 'Borrador' o 'Cancelado'")
+        
+        resultado["contratos_encontrados"] = len(contratos_secop_filtrados)
+        logger.info(f"📊 Encontrados {len(contratos_secop_filtrados)} contratos válidos en SECOP para {proceso_contractual} (total original: {len(contratos_secop)})")
 
-        if not contratos_secop:
+        if not contratos_secop_filtrados:
             resultado["exito"] = True  # No es error, simplemente no hay contratos
             resultado["sin_contratos"] = True  # Flag para distinguir de errores técnicos
-            logger.info(f"ℹ️  No se encontraron contratos para el proceso {proceso_contractual}")
+            logger.info(f"ℹ️  No se encontraron contratos válidos para el proceso {proceso_contractual}")
             return resultado
 
         # Procesar cada contrato encontrado
-        for j, contrato in enumerate(contratos_secop, 1):
+        for j, contrato in enumerate(contratos_secop_filtrados, 1):
             try:
-                logger.info(f"🔄 Procesando contrato {j}/{len(contratos_secop)}: {contrato.get('referencia_del_contrato', 'N/A')}")
+                logger.info(f"🔄 Procesando contrato {j}/{len(contratos_secop_filtrados)}: {contrato.get('referencia_del_contrato', 'N/A')}")
 
                 # Validar datos mínimos requeridos
                 if not contrato.get("referencia_del_contrato") and not contrato.get("id_contrato"):
