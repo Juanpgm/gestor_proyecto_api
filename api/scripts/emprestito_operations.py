@@ -2551,16 +2551,64 @@ async def leer_google_sheets_proyecciones(sheet_url: str) -> Dict[str, Any]:
                     "error": "El worksheet está vacío"
                 }
             
-            # Los headers están en la fila 1 (índice 0)
-            headers = all_values[0]
+            # IMPORTANTE: Los headers reales están en la fila 2 (índice 1), no en la fila 1
+            # La fila 1 (índice 0) contiene columnas vacías o metadatos
+            # Detectar automáticamente qué fila tiene las cabeceras reales
+            header_row_index = 0
+            
+            # Buscar la fila que contiene las cabeceras reales (tiene más valores no vacíos)
+            for idx, row in enumerate(all_values[:5]):  # Revisar primeras 5 filas
+                non_empty_count = sum(1 for cell in row if cell and str(cell).strip())
+                if non_empty_count > 5:  # Si tiene más de 5 columnas con contenido, es probable que sea la fila de headers
+                    # Verificar si contiene palabras clave de headers esperados
+                    row_text = ' '.join(str(cell).lower() for cell in row)
+                    if 'item' in row_text or 'proceso' in row_text or 'banco' in row_text:
+                        header_row_index = idx
+                        logger.info(f"📍 Detectada fila de headers en índice {idx}")
+                        break
+            
+            # Si no detectamos headers en fila 0, usar la fila detectada
+            if header_row_index > 0:
+                headers = all_values[header_row_index]
+                data_start_index = header_row_index + 1
+            else:
+                headers = all_values[0]
+                data_start_index = 1
+            
+            logger.info(f"📋 Headers detectados en fila {header_row_index}: {headers[:5]}...")
             
             # El contenido comienza desde la columna B (índice 1) según especificación
             # Filtrar headers y datos para empezar desde columna B
             headers_desde_b = headers[1:] if len(headers) > 1 else headers
-            datos_desde_b = [fila[1:] if len(fila) > 1 else fila for fila in all_values[1:]]
+            datos_desde_b = [fila[1:] if len(fila) > 1 else fila for fila in all_values[data_start_index:]]
+            
+            # Renombrar headers vacíos para evitar columnas duplicadas con nombre ''
+            # Esto previene el error "The truth value of a Series is ambiguous"
+            headers_unicos = []
+            contador_vacios = 0
+            for i, header in enumerate(headers_desde_b):
+                if not header or header.strip() == '':
+                    # Asignar nombre único a columnas vacías
+                    headers_unicos.append(f'_columna_vacia_{contador_vacios}')
+                    contador_vacios += 1
+                else:
+                    headers_unicos.append(header)
             
             # Crear DataFrame con pandas
-            df = pd.DataFrame(datos_desde_b, columns=headers_desde_b)
+            df = pd.DataFrame(datos_desde_b, columns=headers_unicos)
+            
+            # Eliminar columnas vacías (las que tienen nombres como '_columna_vacia_X')
+            # Solo si están completamente vacías
+            columnas_a_eliminar = []
+            for col in df.columns:
+                if col.startswith('_columna_vacia_'):
+                    # Verificar si la columna está completamente vacía
+                    if df[col].isna().all() or (df[col] == '').all():
+                        columnas_a_eliminar.append(col)
+            
+            if columnas_a_eliminar:
+                df = df.drop(columns=columnas_a_eliminar)
+                logger.info(f"🗑️ Eliminadas {len(columnas_a_eliminar)} columnas vacías sin nombre")
             
             # Limpiar DataFrame eliminando filas completamente vacías
             df = df.dropna(how='all')
@@ -2679,9 +2727,11 @@ async def procesar_datos_proyecciones(df: pd.DataFrame) -> Dict[str, Any]:
                 # Mapear cada campo según la especificación
                 for col_original, campo_destino in mapeo_campos.items():
                     # Si el campo destino ya fue asignado con un valor válido, no sobrescribir
-                    if campo_destino in registro and registro[campo_destino] != "":
-                        # Para otros campos, no sobrescribir si ya tiene valor
-                        continue
+                    if campo_destino in registro:
+                        valor_existente = str(registro[campo_destino]).strip()
+                        if valor_existente and valor_existente != "":
+                            # Para otros campos, no sobrescribir si ya tiene valor
+                            continue
                     
                     # Buscar la columna en el DataFrame (puede haber variaciones)
                     valor = None
@@ -2705,20 +2755,29 @@ async def procesar_datos_proyecciones(df: pd.DataFrame) -> Dict[str, Any]:
                                 valor = fila[col_df]
                                 break
                     
-                    # Procesar el valor
-                    if pd.isna(valor) or valor is None:
+                    # Procesar el valor - convertir a escalar si es necesario
+                    if valor is None:
+                        registro[campo_destino] = ""
+                    elif pd.isna(valor):
                         registro[campo_destino] = ""
                     else:
-                        valor_str = str(valor).strip()
+                        # Convertir a escalar si es un Series (para manejar columnas duplicadas)
+                        if isinstance(valor, pd.Series):
+                            valor = valor.iloc[0] if len(valor) > 0 else None
                         
-                        # Procesamiento especial para BP - agregar prefijo
-                        if campo_destino == "BP" and valor_str:
-                            if not valor_str.upper().startswith("BP"):
-                                registro[campo_destino] = f"BP{valor_str}"
+                        if valor is None or pd.isna(valor):
+                            registro[campo_destino] = ""
+                        else:
+                            valor_str = str(valor).strip()
+                            
+                            # Procesamiento especial para BP - agregar prefijo
+                            if campo_destino == "BP" and valor_str:
+                                if not valor_str.upper().startswith("BP"):
+                                    registro[campo_destino] = f"BP{valor_str}"
+                                else:
+                                    registro[campo_destino] = valor_str
                             else:
                                 registro[campo_destino] = valor_str
-                        else:
-                            registro[campo_destino] = valor_str
                 
                 # Procesar valor_proyectado por separado (con orden de prioridad)
                 valor_proyectado_encontrado = False
@@ -2755,28 +2814,33 @@ async def procesar_datos_proyecciones(df: pd.DataFrame) -> Dict[str, Any]:
                                 break
                     
                     # Si encontramos un valor válido, procesarlo
-                    if valor is not None and not pd.isna(valor):
-                        valor_str = str(valor).strip()
-                        if valor_str and valor_str != '':
-                            try:
-                                # Limpiar formato de número (quitar $, espacios, comas, puntos como separadores de miles)
-                                valor_limpio = valor_str.replace('$', '').replace(',', '').replace(' ', '').strip()
-                                
-                                # Remover puntos que actúan como separadores de miles (formato colombiano)
-                                # Solo si hay más de un punto o si el punto no está en los últimos 3 caracteres
-                                if '.' in valor_limpio:
-                                    puntos = valor_limpio.count('.')
-                                    if puntos > 1 or (puntos == 1 and len(valor_limpio.split('.')[-1]) != 2):
-                                        # Es separador de miles, no decimal
-                                        valor_limpio = valor_limpio.replace('.', '')
-                                
-                                if valor_limpio and valor_limpio != '':
-                                    registro["valor_proyectado"] = float(valor_limpio)
-                                    valor_proyectado_encontrado = True
-                                    col_display = columna_usada.replace('\n', '\\n').replace('\r', '\\r') if columna_usada else col_valor
-                                    logger.info(f"✅ Fila {index + 1}: valor_proyectado = {registro['valor_proyectado']:,.0f} desde columna '{col_display}'")
-                            except (ValueError, TypeError) as e:
-                                logger.warning(f"⚠️ No se pudo convertir valor '{valor_str}' a número en fila {index + 1}: {str(e)}")
+                    if valor is not None:
+                        # Convertir a escalar si es un Series
+                        if isinstance(valor, pd.Series):
+                            valor = valor.iloc[0] if len(valor) > 0 else None
+                        
+                        if valor is not None and not pd.isna(valor):
+                            valor_str = str(valor).strip()
+                            if valor_str and valor_str != '':
+                                try:
+                                    # Limpiar formato de número (quitar $, espacios, comas, puntos como separadores de miles)
+                                    valor_limpio = valor_str.replace('$', '').replace(',', '').replace(' ', '').strip()
+                                    
+                                    # Remover puntos que actúan como separadores de miles (formato colombiano)
+                                    # Solo si hay más de un punto o si el punto no está en los últimos 3 caracteres
+                                    if '.' in valor_limpio:
+                                        puntos = valor_limpio.count('.')
+                                        if puntos > 1 or (puntos == 1 and len(valor_limpio.split('.')[-1]) != 2):
+                                            # Es separador de miles, no decimal
+                                            valor_limpio = valor_limpio.replace('.', '')
+                                    
+                                    if valor_limpio and valor_limpio != '':
+                                        registro["valor_proyectado"] = float(valor_limpio)
+                                        valor_proyectado_encontrado = True
+                                        col_display = columna_usada.replace('\n', '\\n').replace('\r', '\\r') if columna_usada else col_valor
+                                        logger.info(f"✅ Fila {index + 1}: valor_proyectado = {registro['valor_proyectado']:,.0f} desde columna '{col_display}'")
+                                except (ValueError, TypeError) as e:
+                                    logger.warning(f"⚠️ No se pudo convertir valor '{valor_str}' a número en fila {index + 1}: {str(e)}")
                 
                 # Si no se encontró valor_proyectado, asignar 0
                 if "valor_proyectado" not in registro:
@@ -2789,7 +2853,8 @@ async def procesar_datos_proyecciones(df: pd.DataFrame) -> Dict[str, Any]:
                 registro["fila_origen"] = index + 1  # +1 porque pandas usa índice 0
                 
                 # Validar campos obligatorios mínimos (usar item en lugar de referencia_proceso)
-                if not registro.get("item") or registro["item"] == "":
+                item_value = str(registro.get("item", "")).strip()
+                if not item_value or item_value == "":
                     filas_con_errores.append({
                         "fila": index + 1,
                         "error": "item vacío o faltante",
@@ -2798,7 +2863,9 @@ async def procesar_datos_proyecciones(df: pd.DataFrame) -> Dict[str, Any]:
                     continue
                 
                 # Validar que al menos tenga un proyecto o descripción
-                if not registro.get("nombre_generico_proyecto") and not registro.get("nombre_resumido_proceso"):
+                proyecto_generico = str(registro.get("nombre_generico_proyecto", "")).strip()
+                proyecto_resumido = str(registro.get("nombre_resumido_proceso", "")).strip()
+                if not proyecto_generico and not proyecto_resumido:
                     filas_con_errores.append({
                         "fila": index + 1,
                         "error": "sin proyecto o descripción válida",
