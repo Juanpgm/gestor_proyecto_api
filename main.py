@@ -2123,6 +2123,7 @@ async def get_unidades_proyecto_init_360(request: Request):
     - avance_obra
     - presupuesto_base
     - geometry (datos geoespaciales del registro)
+    - direccion
     
     ### 🚫 Exclusiones aplicadas:
     
@@ -2191,7 +2192,8 @@ async def get_unidades_proyecto_init_360(request: Request):
             'estado',
             'avance_obra',
             'presupuesto_base',
-            'geometry'
+            'geometry',
+            'direccion'
         ]
         
         # Consultar colección
