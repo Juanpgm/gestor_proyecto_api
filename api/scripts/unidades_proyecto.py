@@ -84,6 +84,138 @@ def _convert_bpin_to_positive_int(value) -> Optional[int]:
         return None
     return None
 
+
+def crear_intervencion_desde_documento(doc_data: Dict[str, Any], index: int = 0) -> Dict[str, Any]:
+    """
+    Convertir campos de intervención del documento Firebase en objeto Intervencion
+    
+    Args:
+        doc_data: Documento de Firebase con datos mezclados
+        index: Índice de la intervención (para generar ID único)
+    
+    Returns:
+        Dict con estructura de Intervencion
+    """
+    upid = doc_data.get('upid', 'UNKNOWN')
+    
+    return {
+        "intervencion_id": f"{upid}-{index}",  # ID sintético
+        "ano": _convert_to_int(doc_data.get('ano')),
+        "estado": doc_data.get('estado'),
+        "tipo_intervencion": doc_data.get('tipo_intervencion'),
+        "presupuesto_base": _convert_to_float(doc_data.get('presupuesto_base')),
+        "avance_obra": _convert_to_float(doc_data.get('avance_obra')),
+        "fuente_financiacion": doc_data.get('fuente_financiacion'),
+        "cantidad": _convert_to_int(doc_data.get('cantidad')),
+        "fecha_inicio": doc_data.get('fecha_inicio'),
+        "fecha_fin": doc_data.get('fecha_fin'),
+        "bpin": doc_data.get('bpin'),
+        "referencia_contrato": doc_data.get('referencia_contrato'),
+        "referencia_proceso": doc_data.get('referencia_proceso'),
+        "frente_activo": doc_data.get('frente_activo'),
+        "descripcion_intervencion": doc_data.get('descripcion_intervencion'),
+        "url_proceso": doc_data.get('url_proceso')
+    }
+
+
+def transformar_documento_a_unidad_con_intervenciones(doc_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Transformar documento Firebase plano a estructura con intervenciones anidadas
+    
+    Args:
+        doc_data: Documento de Firebase con estructura plana
+    
+    Returns:
+        Dict con estructura de UnidadProyectoConIntervenciones
+    """
+    # Crear objeto de intervención desde los campos del documento
+    intervencion = crear_intervencion_desde_documento(doc_data, index=0)
+    
+    # Campos que pertenecen a la unidad (no a la intervención)
+    campos_unidad = {
+        'upid': doc_data.get('upid'),
+        'nombre_up': doc_data.get('nombre_up'),
+        'nombre_up_detalle': doc_data.get('nombre_up_detalle'),
+        'direccion': doc_data.get('direccion'),
+        'barrio_vereda': doc_data.get('barrio_vereda'),
+        'comuna_corregimiento': doc_data.get('comuna_corregimiento'),
+        'departamento': doc_data.get('departamento'),
+        'municipio': doc_data.get('municipio'),
+        'tipo_equipamiento': doc_data.get('tipo_equipamiento'),
+        # 🔄 TRANSFORMACIÓN CLAVE: clase_obra → clase_up
+        'clase_up': doc_data.get('clase_obra'),  # Renombrar campo
+        'nombre_centro_gestor': doc_data.get('nombre_centro_gestor'),
+        'identificador': doc_data.get('identificador'),
+        'geometry_type': doc_data.get('geometry_type'),
+        'has_geometry': doc_data.get('has_geometry', False),
+        'has_valid_geometry': doc_data.get('has_valid_geometry', False),
+        'centros_gravedad': doc_data.get('centros_gravedad', False),
+        'n_intervenciones': 1,
+        'intervenciones': [intervencion]
+    }
+    
+    return campos_unidad
+
+
+def aplicar_filtros_a_intervenciones(
+    features: List[Dict[str, Any]], 
+    estado: Optional[str] = None,
+    tipo_intervencion: Optional[str] = None,
+    ano: Optional[int] = None,
+    frente_activo: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    Filtrar intervenciones dentro de features y retornar solo las que cumplen
+    
+    Args:
+        features: Lista de Features con array intervenciones
+        estado: Filtrar por estado de intervención
+        tipo_intervencion: Filtrar por tipo de intervención
+        ano: Filtrar por año
+        frente_activo: Filtrar por estado de frente activo
+    
+    Returns:
+        Lista de features con solo las intervenciones que cumplen los filtros
+    """
+    resultados = []
+    
+    for feature in features:
+        properties = feature.get('properties', {})
+        intervenciones = properties.get('intervenciones', [])
+        
+        # Filtrar intervenciones
+        intervenciones_filtradas = []
+        for interv in intervenciones:
+            cumple = True
+            
+            if estado and interv.get('estado') != estado:
+                cumple = False
+            if tipo_intervencion and interv.get('tipo_intervencion') != tipo_intervencion:
+                cumple = False
+            if ano and interv.get('ano') != ano:
+                cumple = False
+            if frente_activo and interv.get('frente_activo') != frente_activo:
+                cumple = False
+            
+            if cumple:
+                intervenciones_filtradas.append(interv)
+        
+        # Si hay intervenciones que cumplen, incluir la feature
+        if intervenciones_filtradas:
+            feature_filtrada = {
+                "type": "Feature",
+                "geometry": feature.get('geometry'),
+                "properties": {
+                    **properties,
+                    "intervenciones": intervenciones_filtradas,
+                    "n_intervenciones": len(intervenciones_filtradas)
+                }
+            }
+            resultados.append(feature_filtrada)
+    
+    return resultados
+
+
 def apply_client_side_filters(data: List[Dict[str, Any]], filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     """
     Aplicar filtros del lado del cliente a los datos obtenidos de Firestore
@@ -120,19 +252,41 @@ def apply_client_side_filters(data: List[Dict[str, Any]], filters: Optional[Dict
                                if item.get('upid') == upid_filter or 
                                   item.get('properties', {}).get('upid') == upid_filter]
         
-        # Filtro por estado
+        # Filtro por estado (busca en intervenciones anidadas)
         if 'estado' in filters and filters['estado']:
             estado_value = filters['estado']
-            filtered_data = [item for item in filtered_data
-                           if item.get('estado') == estado_value or
-                              item.get('properties', {}).get('estado') == estado_value]
+            def tiene_estado(item):
+                # Nivel directo (estructura antigua)
+                if item.get('estado') == estado_value or item.get('properties', {}).get('estado') == estado_value:
+                    return True
+                # Nivel de intervenciones (estructura nueva)
+                intervenciones = item.get('intervenciones') or item.get('properties', {}).get('intervenciones', [])
+                if isinstance(intervenciones, list):
+                    return any(
+                        interv.get('estado') == estado_value 
+                        for interv in intervenciones 
+                        if isinstance(interv, dict)
+                    )
+                return False
+            filtered_data = [item for item in filtered_data if tiene_estado(item)]
         
-        # Filtro por tipo de intervención
+        # Filtro por tipo de intervención (busca en intervenciones anidadas)
         if 'tipo_intervencion' in filters and filters['tipo_intervencion']:
             tipo_value = filters['tipo_intervencion']
-            filtered_data = [item for item in filtered_data
-                           if item.get('tipo_intervencion') == tipo_value or
-                              item.get('properties', {}).get('tipo_intervencion') == tipo_value]
+            def tiene_tipo_intervencion(item):
+                # Nivel directo (estructura antigua)
+                if item.get('tipo_intervencion') == tipo_value or item.get('properties', {}).get('tipo_intervencion') == tipo_value:
+                    return True
+                # Nivel de intervenciones (estructura nueva)
+                intervenciones = item.get('intervenciones') or item.get('properties', {}).get('intervenciones', [])
+                if isinstance(intervenciones, list):
+                    return any(
+                        interv.get('tipo_intervencion') == tipo_value 
+                        for interv in intervenciones 
+                        if isinstance(interv, dict)
+                    )
+                return False
+            filtered_data = [item for item in filtered_data if tiene_tipo_intervencion(item)]
         
         # Filtro por clase_up (busca tanto clase_up como clase_obra para compatibilidad)
         if 'clase_up' in filters and filters['clase_up']:
@@ -185,12 +339,23 @@ def apply_client_side_filters(data: List[Dict[str, Any]], filters: Optional[Dict
                            if item.get('barrio_vereda') == barrio_value or
                               item.get('properties', {}).get('barrio_vereda') == barrio_value]
         
-        # Filtro por frente_activo
+        # Filtro por frente_activo (busca en intervenciones anidadas)
         if 'frente_activo' in filters and filters['frente_activo']:
             frente_value = filters['frente_activo']
-            filtered_data = [item for item in filtered_data
-                           if item.get('frente_activo') == frente_value or
-                              item.get('properties', {}).get('frente_activo') == frente_value]
+            def tiene_frente_activo(item):
+                # Nivel directo (estructura antigua)
+                if item.get('frente_activo') == frente_value or item.get('properties', {}).get('frente_activo') == frente_value:
+                    return True
+                # Nivel de intervenciones (estructura nueva)
+                intervenciones = item.get('intervenciones') or item.get('properties', {}).get('intervenciones', [])
+                if isinstance(intervenciones, list):
+                    return any(
+                        interv.get('frente_activo') == frente_value 
+                        for interv in intervenciones 
+                        if isinstance(interv, dict)
+                    )
+                return False
+            filtered_data = [item for item in filtered_data if tiene_frente_activo(item)]
         
         # Filtro por presupuesto_base (rango numérico mínimo)
         if 'presupuesto_base' in filters and filters['presupuesto_base']:
@@ -570,34 +735,59 @@ async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = Non
                         return record[field_name]
                     return None
                 
-                # Crear registro completo con estructura GeoJSON (TODOS los registros incluidos)
+                # 🔄 ESTRATEGIA HÍBRIDA: Detectar si ya tiene estructura con intervenciones
+                if 'intervenciones' in doc_data and isinstance(doc_data.get('intervenciones'), list):
+                    # Ya tiene estructura nueva - parsear strings a diccionarios
+                    import json
+                    intervenciones_raw = doc_data.get('intervenciones', [])
+                    intervenciones_parsed = []
+                    for interv in intervenciones_raw:
+                        if isinstance(interv, str):
+                            # Es string - parsear JSON
+                            try:
+                                intervenciones_parsed.append(json.loads(interv))
+                            except json.JSONDecodeError:
+                                # Si falla el parsing, intentar eval (fallback)
+                                try:
+                                    intervenciones_parsed.append(eval(interv))
+                                except:
+                                    print(f"⚠️ No se pudo parsear intervención: {interv[:100]}")
+                        elif isinstance(interv, dict):
+                            # Ya es diccionario
+                            intervenciones_parsed.append(interv)
+                    
+                    unidad_properties = {
+                        'upid': doc_data.get('upid'),
+                        'nombre_up': doc_data.get('nombre_up'),
+                        'nombre_up_detalle': doc_data.get('nombre_up_detalle'),
+                        'direccion': doc_data.get('direccion'),
+                        'barrio_vereda': doc_data.get('barrio_vereda'),
+                        'barrio_vereda_2': doc_data.get('barrio_vereda_2'),
+                        'comuna_corregimiento': doc_data.get('comuna_corregimiento'),
+                        'comuna_corregimiento_2': doc_data.get('comuna_corregimiento_2'),
+                        'departamento': doc_data.get('departamento'),
+                        'municipio': doc_data.get('municipio'),
+                        'tipo_equipamiento': doc_data.get('tipo_equipamiento'),
+                        'clase_up': doc_data.get('clase_up') or doc_data.get('clase_obra'),
+                        'nombre_centro_gestor': doc_data.get('nombre_centro_gestor'),
+                        'identificador': doc_data.get('identificador'),
+                        'geometry_type': doc_data.get('geometry_type'),
+                        'has_geometry': doc_data.get('has_geometry', False),
+                        'has_valid_geometry': geometry_found,
+                        'centros_gravedad': doc_data.get('centros_gravedad', False),
+                        'n_intervenciones': doc_data.get('n_intervenciones', len(intervenciones_parsed)),
+                        'intervenciones': intervenciones_parsed
+                    }
+                else:
+                    # Estructura antigua - transformar
+                    unidad_properties = transformar_documento_a_unidad_con_intervenciones(doc_data)
+                    unidad_properties["has_valid_geometry"] = geometry_found
+                
+                # Crear registro completo con estructura GeoJSON (con array intervenciones)
                 feature = {
                     "type": "Feature",
                     "geometry": geometry_data_obj,
-                    "properties": {
-                        "upid": upid_value,
-                        "has_valid_geometry": geometry_found,  # Marcar si tiene geometría real
-                        # Extraer todos los campos usando la función auxiliar
-                        "nombre_up": get_field_value('nombre_up'),
-                        "comuna_corregimiento": get_field_value('comuna_corregimiento'),
-                        "barrio_vereda": get_field_value('barrio_vereda'),
-                        "estado": get_field_value('estado'),
-                        "direccion": get_field_value('direccion'),
-                        "ano": get_field_value('ano'),
-                        # Campos numéricos con conversión
-                        "presupuesto_base": _convert_to_int(get_field_value('presupuesto_base')),
-                        "presupuesto_total_up": _convert_to_int(get_field_value('presupuesto_total_up')),
-                        "avance_obra": _convert_to_float(get_field_value('avance_obra')),
-                        "bpin": _convert_bpin_to_positive_int(get_field_value('bpin')),
-                        # Campos de clasificación
-                        "tipo_intervencion": get_field_value('tipo_intervencion'),
-                        "clase_up": get_field_value('clase_obra'),  # 🔄 Leer clase_obra de Firebase, exponer como clase_up
-                        "nombre_centro_gestor": get_field_value('nombre_centro_gestor'),
-                        "centro_gestor": get_field_value('centro_gestor'),
-                        "tipo_equipamiento": get_field_value('tipo_equipamiento'),
-                        "fuente_financiacion": get_field_value('fuente_financiacion'),
-                        "frente_activo": get_field_value('frente_activo'),
-                    }
+                    "properties": unidad_properties
                 }
                 geometry_data.append(feature)
         
@@ -616,12 +806,33 @@ async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = Non
                                    if item.get('properties', {}).get('upid') == upid_filter]
                 print(f"🔍 DEBUG: Filtro por upid aplicado: {len(geometry_data)} registros")
             
-            # Otros filtros de contenido
-            content_filters = {k: v for k, v in filters.items() 
-                             if k in ['comuna_corregimiento', 'barrio_vereda', 'estado', 'tipo_intervencion', 'clase_up', 'nombre_centro_gestor', 'presupuesto_base', 'avance_obra', 'tipo_equipamiento', 'frente_activo']}
-            if content_filters:
-                geometry_data = apply_client_side_filters(geometry_data, content_filters)
-                print(f"🔧 DEBUG: Filtros de contenido aplicados: {len(geometry_data)} registros")
+            # 🔄 NUEVO: Filtros de intervención (estado, tipo_intervencion, ano, frente_activo)
+            filtros_intervencion = {}
+            if 'estado' in filters and filters['estado']:
+                filtros_intervencion['estado'] = filters['estado']
+            if 'tipo_intervencion' in filters and filters['tipo_intervencion']:
+                filtros_intervencion['tipo_intervencion'] = filters['tipo_intervencion']
+            if 'ano' in filters and filters['ano']:
+                filtros_intervencion['ano'] = _convert_to_int(filters['ano'])
+            if 'frente_activo' in filters and filters['frente_activo']:
+                filtros_intervencion['frente_activo'] = filters['frente_activo']
+            
+            if filtros_intervencion:
+                geometry_data = aplicar_filtros_a_intervenciones(
+                    geometry_data,
+                    estado=filtros_intervencion.get('estado'),
+                    tipo_intervencion=filtros_intervencion.get('tipo_intervencion'),
+                    ano=filtros_intervencion.get('ano'),
+                    frente_activo=filtros_intervencion.get('frente_activo')
+                )
+                print(f"🔧 DEBUG: Filtros de intervención aplicados: {len(geometry_data)} registros")
+            
+            # Filtros de unidad (campos que no son de intervención)
+            filtros_unidad = {k: v for k, v in filters.items() 
+                             if k in ['comuna_corregimiento', 'barrio_vereda', 'clase_up', 'nombre_centro_gestor', 'tipo_equipamiento']}
+            if filtros_unidad:
+                geometry_data = apply_client_side_filters(geometry_data, filtros_unidad)
+                print(f"🔧 DEBUG: Filtros de unidad aplicados: {len(geometry_data)} registros")
             
             # Aplicar límite
             if 'limit' in filters and filters['limit']:
@@ -809,6 +1020,27 @@ async def get_unidades_proyecto_attributes(
                             attributes_record[field] = _convert_bpin_to_positive_int(value)
                         else:
                             attributes_record[field] = value
+            
+            # 🔄 TRANSFORMACIÓN: Parsear intervenciones si es string JSON
+            if 'intervenciones' in attributes_record and isinstance(attributes_record['intervenciones'], list):
+                import json
+                intervenciones_raw = attributes_record['intervenciones']
+                intervenciones_parsed = []
+                for interv in intervenciones_raw:
+                    if isinstance(interv, str):
+                        # Es string - parsear JSON
+                        try:
+                            intervenciones_parsed.append(json.loads(interv))
+                        except json.JSONDecodeError:
+                            # Si falla el parsing, intentar eval (fallback)
+                            try:
+                                intervenciones_parsed.append(eval(interv))
+                            except:
+                                pass  # Ignorar intervenciones no parseables
+                    elif isinstance(interv, dict):
+                        # Ya es diccionario
+                        intervenciones_parsed.append(interv)
+                attributes_record['intervenciones'] = intervenciones_parsed
             
             # 🔄 TRANSFORMACIÓN: Renombrar clase_obra a clase_up
             if 'clase_obra' in attributes_record:
@@ -1352,6 +1584,147 @@ async def get_unidades_proyecto_summary() -> Dict[str, Any]:
             "success": False,
             "error": f"Error generando dashboard: {str(e)}",
             "dashboard": {}
+        }
+
+
+async def get_intervencion_by_id(intervencion_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Buscar una intervención específica dentro de todas las unidades
+    
+    Args:
+        intervencion_id: ID de la intervención a buscar
+    
+    Returns:
+        Dict con información de la unidad y la intervención, o None si no se encuentra
+    """
+    try:
+        # Obtener todas las unidades
+        result = await get_unidades_proyecto_geometry({})
+        
+        if result.get("type") != "FeatureCollection":
+            return None
+        
+        # Buscar en todas las unidades
+        for feature in result["features"]:
+            properties = feature["properties"]
+            intervenciones = properties.get("intervenciones", [])
+            
+            for interv in intervenciones:
+                if interv.get("intervencion_id") == intervencion_id:
+                    return {
+                        "unidad": {
+                            "upid": properties.get("upid"),
+                            "nombre_up": properties.get("nombre_up"),
+                            "direccion": properties.get("direccion"),
+                            "barrio_vereda": properties.get("barrio_vereda"),
+                            "comuna_corregimiento": properties.get("comuna_corregimiento"),
+                            "tipo_equipamiento": properties.get("tipo_equipamiento"),
+                            "clase_up": properties.get("clase_up"),
+                            "geometry": feature.get("geometry")
+                        },
+                        "intervencion": interv
+                    }
+        
+        return None
+        
+    except Exception as e:
+        print(f"❌ ERROR en get_intervencion_by_id: {str(e)}")
+        return None
+
+
+async def get_intervenciones_filtradas(
+    estado: Optional[str] = None,
+    tipo_intervencion: Optional[str] = None,
+    ano: Optional[int] = None,
+    frente_activo: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Filtrar intervenciones dentro de todas las unidades
+    
+    Args:
+        estado: Filtrar por estado
+        tipo_intervencion: Filtrar por tipo
+        ano: Filtrar por año
+        frente_activo: Filtrar por frente activo
+    
+    Returns:
+        GeoJSON FeatureCollection con unidades que tienen intervenciones filtradas
+    """
+    try:
+        # Obtener todas las unidades
+        result = await get_unidades_proyecto_geometry({})
+        
+        if result.get("type") != "FeatureCollection":
+            return {
+                "type": "FeatureCollection",
+                "features": [],
+                "properties": {"success": False, "error": "Error obteniendo datos"}
+            }
+        
+        # Aplicar filtros a intervenciones
+        features_filtradas = aplicar_filtros_a_intervenciones(
+            result["features"],
+            estado=estado,
+            tipo_intervencion=tipo_intervencion,
+            ano=ano,
+            frente_activo=frente_activo
+        )
+        
+        return {
+            "type": "FeatureCollection",
+            "features": features_filtradas,
+            "properties": {
+                "success": True,
+                "count": len(features_filtradas),
+                "total_intervenciones": sum(
+                    len(f["properties"]["intervenciones"]) 
+                    for f in features_filtradas
+                ),
+                "filters": {
+                    "estado": estado,
+                    "tipo_intervencion": tipo_intervencion,
+                    "ano": ano,
+                    "frente_activo": frente_activo
+                }
+            }
+        }
+        
+    except Exception as e:
+        print(f"❌ ERROR en get_intervenciones_filtradas: {str(e)}")
+        return {
+            "type": "FeatureCollection",
+            "features": [],
+            "properties": {"success": False, "error": str(e)}
+        }
+
+
+async def get_frentes_activos() -> Dict[str, Any]:
+    """
+    Obtener todas las unidades con frentes activos
+    
+    Returns:
+        GeoJSON con unidades que tienen intervenciones con frente activo
+    """
+    try:
+        result = await get_intervenciones_filtradas(frente_activo="Frente activo")
+        
+        if result.get("type") == "FeatureCollection":
+            total_frentes = sum(
+                len(feature["properties"]["intervenciones"])
+                for feature in result["features"]
+            )
+            
+            result["properties"]["total_frentes_activos"] = total_frentes
+            result["properties"]["total_unidades_con_frentes"] = len(result["features"])
+        
+        return result
+        
+    except Exception as e:
+        print(f"❌ ERROR en get_frentes_activos: {str(e)}")
+        return {
+            "type": "FeatureCollection",
+            "features": [],
+            "properties": {"success": False, "error": str(e)}
         }
 
 

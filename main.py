@@ -35,7 +35,7 @@ if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
 if hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8')
-from fastapi import FastAPI, HTTPException, Query, Request, status, Form, UploadFile, File
+from fastapi import FastAPI, HTTPException, Query, Request, status, Form, UploadFile, File, Path
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from typing import Dict, Any, Optional, Union, List
@@ -2397,6 +2397,265 @@ async def get_filters_endpoint(
         raise HTTPException(
             status_code=500,
             detail=f"Error procesando filtros: {str(e)}"
+        )
+
+
+# ============================================================================
+# NUEVOS ENDPOINTS PARA ESTRUCTURA CON INTERVENCIONES
+# ============================================================================
+
+@app.get("/unidades-proyecto/{upid}", tags=["Unidades de Proyecto"], summary="🔵 GET | Unidad Específica con Intervenciones")
+@optional_rate_limit("60/minute")
+async def get_unidad_by_upid(
+    upid: str = Path(..., description="ID único de la unidad de proyecto (ej: UNP-1978)")
+):
+    """
+    ## 🔵 GET | Obtener Unidad de Proyecto Específica
+    
+    **Propósito**: Retorna una unidad de proyecto específica con todas sus intervenciones.
+    
+    ### Estructura de Respuesta
+    
+    Retorna un GeoJSON Feature con:
+    - **geometry**: Geometría de la unidad (Point, LineString, etc.)
+    - **properties.intervenciones**: Array de intervenciones en esta unidad
+    - **properties.n_intervenciones**: Conteo de intervenciones
+    
+    ### Ejemplo de Uso
+    
+    ```javascript
+    // Obtener unidad UNP-1978
+    const response = await fetch('/unidades-proyecto/UNP-1978');
+    const unidad = await response.json();
+    
+    console.log(unidad.properties.nombre_up);
+    console.log(unidad.properties.n_intervenciones); // 1
+    console.log(unidad.properties.intervenciones[0].estado); // "Terminado"
+    ```
+    
+    ### Campos Retornados
+    
+    **Unidad:**
+    - upid, nombre_up, direccion, barrio_vereda, comuna_corregimiento
+    - tipo_equipamiento, clase_up, nombre_centro_gestor
+    
+    **Intervenciones (array):**
+    - intervencion_id, ano, estado, tipo_intervencion
+    - presupuesto_base, avance_obra, frente_activo
+    - fecha_inicio, fecha_fin, referencias
+    """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase not available")
+    
+    try:
+        from api.scripts.unidades_proyecto import get_unidades_proyecto_geometry
+        
+        result = await get_unidades_proyecto_geometry({"upid": upid})
+        
+        if result.get("type") == "FeatureCollection":
+            features = result["features"]
+            if features:
+                return create_utf8_response(features[0])
+        
+        raise HTTPException(status_code=404, detail=f"Unidad {upid} no encontrada")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error obteniendo unidad: {str(e)}"
+        )
+
+
+@app.get("/intervenciones/{intervencion_id}", tags=["Unidades de Proyecto"], summary="🔵 GET | Intervención Específica")
+@optional_rate_limit("60/minute")
+async def get_intervencion_by_id_endpoint(
+    intervencion_id: str = Path(..., description="ID de la intervención (ej: UNP-1978-0)")
+):
+    """
+    ## 🔵 GET | Obtener Intervención Específica
+    
+    **Propósito**: Buscar una intervención específica dentro de todas las unidades.
+    
+    ### Estructura de Respuesta
+    
+    ```json
+    {
+      "unidad": {
+        "upid": "UNP-1978",
+        "nombre_up": "Carrera 118 Entre Calle 15 Y 16",
+        "direccion": "...",
+        "geometry": {...}
+      },
+      "intervencion": {
+        "intervencion_id": "UNP-1978-0",
+        "ano": 2024,
+        "estado": "Terminado",
+        "presupuesto_base": 55041504.84,
+        "avance_obra": 100.0
+      }
+    }
+    ```
+    
+    ### Ejemplo de Uso
+    
+    ```javascript
+    const response = await fetch('/intervenciones/UNP-1978-0');
+    const data = await response.json();
+    
+    console.log(data.unidad.nombre_up);
+    console.log(data.intervencion.estado);
+    ```
+    """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase not available")
+    
+    try:
+        from api.scripts.unidades_proyecto import get_intervencion_by_id
+        
+        result = await get_intervencion_by_id(intervencion_id)
+        
+        if not result:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Intervención {intervencion_id} no encontrada"
+            )
+        
+        return create_utf8_response(result)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error obteniendo intervención: {str(e)}"
+        )
+
+
+@app.get("/intervenciones", tags=["Unidades de Proyecto"], summary="🔵 GET | Filtrar Intervenciones")
+@optional_rate_limit("60/minute")
+async def get_intervenciones_filtradas_endpoint(
+    estado: Optional[str] = Query(None, description="Estado de la intervención"),
+    tipo_intervencion: Optional[str] = Query(None, description="Tipo de intervención"),
+    ano: Optional[int] = Query(None, description="Año de la intervención"),
+    frente_activo: Optional[str] = Query(None, description="Estado del frente activo")
+):
+    """
+    ## 🔵 GET | Filtrar Intervenciones
+    
+    **Propósito**: Filtrar intervenciones dentro de todas las unidades y retornar
+    solo las unidades que tienen intervenciones que cumplen los criterios.
+    
+    ### Filtros Disponibles
+    
+    - **estado**: "En ejecución", "Terminado", "En alistamiento", etc.
+    - **tipo_intervencion**: Tipo de obra o intervención
+    - **ano**: Año específico (ej: 2024)
+    - **frente_activo**: "Frente activo", "Inactivo", "No aplica"
+    
+    ### Estructura de Respuesta
+    
+    GeoJSON FeatureCollection donde:
+    - Cada feature es una unidad que tiene intervenciones que cumplen los filtros
+    - `properties.intervenciones` contiene SOLO las intervenciones filtradas
+    - `properties.n_intervenciones` es el conteo de intervenciones filtradas
+    
+    ### Ejemplo de Uso
+    
+    ```javascript
+    // Obtener todas las intervenciones en ejecución de 2024
+    const response = await fetch('/intervenciones?estado=En ejecución&ano=2024');
+    const data = await response.json();
+    
+    console.log(data.properties.total_intervenciones); // Total de intervenciones encontradas
+    console.log(data.features.length); // Unidades con intervenciones que cumplen
+    ```
+    
+    ### Casos de Uso
+    
+    - Ver todas las intervenciones activas
+    - Filtrar por año para análisis temporal
+    - Buscar frentes activos específicos
+    - Combinar múltiples filtros para búsquedas precisas
+    """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase not available")
+    
+    try:
+        from api.scripts.unidades_proyecto import get_intervenciones_filtradas
+        
+        result = await get_intervenciones_filtradas(
+            estado=estado,
+            tipo_intervencion=tipo_intervencion,
+            ano=ano,
+            frente_activo=frente_activo
+        )
+        
+        return create_utf8_response(result)
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error filtrando intervenciones: {str(e)}"
+        )
+
+
+@app.get("/frentes-activos", tags=["Unidades de Proyecto"], summary="🔵 GET | Frentes Activos")
+@optional_rate_limit("60/minute")
+async def get_frentes_activos_endpoint():
+    """
+    ## 🔵 GET | Obtener Frentes Activos
+    
+    **Propósito**: Retornar todas las unidades que tienen intervenciones
+    con frente activo.
+    
+    ### Estructura de Respuesta
+    
+    GeoJSON FeatureCollection con:
+    - **features**: Unidades con frentes activos
+    - **properties.total_frentes_activos**: Conteo total de intervenciones con frente activo
+    - **properties.total_unidades_con_frentes**: Número de unidades que tienen frentes activos
+    
+    ### Ejemplo de Uso
+    
+    ```javascript
+    const response = await fetch('/frentes-activos');
+    const data = await response.json();
+    
+    console.log(data.properties.total_frentes_activos); // Total de frentes activos
+    console.log(data.properties.total_unidades_con_frentes); // Unidades con frentes
+    
+    // Renderizar en mapa con icono especial
+    data.features.forEach(feature => {
+      const marker = L.marker([...], {
+        icon: iconFrenteActivo
+      });
+      marker.addTo(map);
+    });
+    ```
+    
+    ### Aplicaciones
+    
+    - Visualización de frentes activos en mapa
+    - Dashboard de seguimiento de obras activas
+    - Alertas y notificaciones sobre frentes activos
+    - Reportes de avance de obra
+    """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase not available")
+    
+    try:
+        from api.scripts.unidades_proyecto import get_frentes_activos
+        
+        result = await get_frentes_activos()
+        
+        return create_utf8_response(result)
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error obteniendo frentes activos: {str(e)}"
         )
 
 

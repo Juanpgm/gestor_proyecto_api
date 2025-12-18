@@ -1,6 +1,7 @@
 """
 Modelos de datos para la colección 'unidades_proyecto' en Firebase
 Esquema completo para gestionar unidades de proyecto con información geográfica
+Incluye soporte para múltiples intervenciones por unidad
 """
 
 from typing import Optional, Dict, Any, List, Union
@@ -76,6 +77,121 @@ class GeometryMultiLineString(BaseModel):
         if v != "MultiLineString":
             raise ValueError("El tipo debe ser 'MultiLineString'")
         return v
+
+
+class Intervencion(BaseModel):
+    """
+    Modelo para una intervención dentro de una unidad de proyecto
+    Representa una actividad o proyecto específico en una ubicación
+    """
+    # Identificador único de la intervención
+    intervencion_id: str = Field(..., description="ID único de la intervención (generado o desde datos)")
+    
+    # Información temporal
+    ano: Optional[int] = Field(None, description="Año de la intervención")
+    fecha_inicio: Optional[str] = Field(None, description="Fecha de inicio")
+    fecha_fin: Optional[str] = Field(None, description="Fecha de finalización")
+    
+    # Estado y clasificación
+    estado: Optional[str] = Field(None, description="Estado: En ejecución, Terminado, etc.")
+    tipo_intervencion: Optional[str] = Field(None, description="Tipo de intervención")
+    frente_activo: Optional[str] = Field(None, description="Estado del frente: Frente activo, Inactivo, No aplica")
+    
+    # Información financiera
+    presupuesto_base: Optional[float] = Field(None, description="Presupuesto base de la intervención")
+    fuente_financiacion: Optional[str] = Field(None, description="Fuente de financiación")
+    
+    # Progreso
+    avance_obra: Optional[float] = Field(None, description="Porcentaje de avance (0-100)")
+    cantidad: Optional[int] = Field(None, description="Cantidad o volumen de obra")
+    
+    # Referencias
+    bpin: Optional[str] = Field(None, description="Código BPIN")
+    referencia_contrato: Optional[str] = Field(None, description="Referencia del contrato")
+    referencia_proceso: Optional[str] = Field(None, description="Referencia del proceso")
+    url_proceso: Optional[str] = Field(None, description="URL del proceso en SECOP")
+    
+    # Descripción
+    descripcion_intervencion: Optional[str] = Field(None, description="Descripción de la intervención")
+    
+    class Config:
+        extra = "allow"
+        schema_extra = {
+            "example": {
+                "intervencion_id": "UNP-1978-0",
+                "ano": 2024,
+                "estado": "Terminado",
+                "tipo_intervencion": "Obras",
+                "presupuesto_base": 55041504.84,
+                "avance_obra": 100.0,
+                "frente_activo": "Frente activo",
+                "fuente_financiacion": "Recursos Propios",
+                "fecha_inicio": "2024-01-15T00:00:00",
+                "fecha_fin": "2024-12-31T00:00:00"
+            }
+        }
+
+
+class UnidadProyectoConIntervenciones(BaseModel):
+    """
+    Modelo para unidad de proyecto con array de intervenciones
+    Nueva estructura que agrupa múltiples intervenciones por ubicación
+    """
+    # Identificadores
+    upid: str = Field(..., description="ID único de la unidad de proyecto")
+    
+    # Información básica de la unidad
+    nombre_up: Optional[str] = Field(None, description="Nombre de la unidad de proyecto")
+    nombre_up_detalle: Optional[str] = Field(None, description="Detalle adicional del nombre")
+    
+    # Ubicación
+    direccion: Optional[str] = Field(None, description="Dirección física")
+    barrio_vereda: Optional[str] = Field(None, description="Barrio o vereda")
+    comuna_corregimiento: Optional[str] = Field(None, description="Comuna o corregimiento")
+    departamento: Optional[str] = Field(None, description="Departamento")
+    municipio: Optional[str] = Field(None, description="Municipio")
+    
+    # Clasificación
+    tipo_equipamiento: Optional[str] = Field(None, description="Tipo de equipamiento")
+    clase_up: Optional[str] = Field(None, description="Clase de la unidad de proyecto")
+    
+    # Gestión
+    nombre_centro_gestor: Optional[str] = Field(None, description="Centro gestor responsable")
+    identificador: Optional[str] = Field(None, description="Identificador tipo")
+    
+    # Intervenciones
+    n_intervenciones: int = Field(default=0, description="Número de intervenciones en esta unidad")
+    intervenciones: List[Intervencion] = Field(default=[], description="Array de intervenciones")
+    
+    # Metadatos geométricos (sin la geometría en sí)
+    geometry_type: Optional[str] = Field(None, description="Tipo de geometría")
+    has_geometry: bool = Field(False, description="Indica si tiene geometría válida")
+    has_valid_geometry: bool = Field(False, description="Indica si las coordenadas son reales")
+    
+    class Config:
+        extra = "allow"
+        schema_extra = {
+            "example": {
+                "upid": "UNP-1978",
+                "nombre_up": "Carrera 118 Entre Calle 15 Y 16",
+                "direccion": "Carrera 118 Entre Calle 15 Y 16",
+                "barrio_vereda": "Parcelaciones Pance",
+                "comuna_corregimiento": "PANCE",
+                "tipo_equipamiento": "Vias",
+                "clase_up": "Obra Vial",
+                "nombre_centro_gestor": "Secretaría de Infraestructura",
+                "n_intervenciones": 1,
+                "intervenciones": [
+                    {
+                        "intervencion_id": "UNP-1978-0",
+                        "ano": 2024,
+                        "estado": "Terminado",
+                        "presupuesto_base": 55041504.84,
+                        "avance_obra": 100.0
+                    }
+                ]
+            }
+        }
 
 
 class UnidadProyectoProperties(BaseModel):
