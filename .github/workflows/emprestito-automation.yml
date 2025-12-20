@@ -113,6 +113,7 @@ jobs:
           step3_start=$(date +%s)
           
           response=$(curl -s -w "\n%{http_code}\n%{size_download}\n%{time_total}" \
+            --max-time 300 \
             -X POST "$API_BASE_URL/emprestito/obtener-contratos-secop" \
             -H "Content-Type: application/json")
           
@@ -150,6 +151,7 @@ jobs:
           step4_start=$(date +%s)
           
           response=$(curl -s -w "\n%{http_code}\n%{size_download}\n%{time_total}" \
+            --max-time 300 \
             -X POST "$API_BASE_URL/emprestito/obtener-ordenes-compra-TVEC" \
             -H "Content-Type: application/json")
           
