@@ -8454,12 +8454,14 @@ async def get_all_asignaciones_emprestito_banco_centro_gestor():
     - Timestamp de la consulta
     
     ### 🗄️ Campos principales esperados:
-    - **nombre_banco**: Nombre del banco financiador
+    - **banco**: Nombre del banco financiador
     - **nombre_centro_gestor**: Nombre del centro gestor
-    - **monto_asignado**: Monto asignado para el banco y centro gestor
-    - **moneda**: Tipo de moneda (USD, COP, etc.)
-    - **fecha_asignacion**: Fecha de la asignación
-    - **estado**: Estado de la asignación (activa, modificada, etc.)
+    - **bp**: Código del proyecto presupuestal (BP)
+    - **monto_programado**: Monto programado para el banco y centro gestor
+    - **anio**: Año de la asignación
+    - **created_at**: Fecha de creación del registro
+    - **updated_at**: Fecha de última actualización
+    - **data_hash**: Hash para control de duplicados
     
     ### ✅ Respuesta exitosa (200):
     ```json
@@ -8467,19 +8469,21 @@ async def get_all_asignaciones_emprestito_banco_centro_gestor():
         "success": true,
         "data": [
             {
-                "id": "doc_id_123",
-                "nombre_banco": "Banco Mundial",
-                "nombre_centro_gestor": "Secretaría de Salud",
-                "monto_asignado": 1500000.00,
-                "moneda": "USD",
-                "fecha_asignacion": "2024-11-17T...",
-                "estado": "activa"
+                "id": "BBVA_BP26004701_2026",
+                "banco": "BBVA",
+                "nombre_centro_gestor": "Secretaría de Educación",
+                "bp": "BP26004701",
+                "monto_programado": 1500000.00,
+                "anio": 2026,
+                "created_at": "2024-11-17T...",
+                "updated_at": "2024-11-17T...",
+                "data_hash": "abc123..."
             }
         ],
-        "count": 10,
+        "count": 83,
         "collection": "montos_emprestito_asignados_centro_gestor",
         "timestamp": "2024-11-17T...",
-        "message": "Se obtuvieron 10 asignaciones de empréstito banco-centro gestor exitosamente"
+        "message": "Se obtuvieron 83 asignaciones de empréstito banco-centro gestor exitosamente"
     }
     ```
     """
