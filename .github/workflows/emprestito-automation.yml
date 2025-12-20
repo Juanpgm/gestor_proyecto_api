@@ -1,0 +1,170 @@
+name: 🔄 Empréstito Data Pipeline Automation
+
+on:
+  schedule:
+    - cron: "0 0,5,10,15,17,22 * * *"
+  workflow_dispatch:
+
+env:
+  API_BASE_URL: ${{ secrets.API_BASE_URL }}
+  PROJECT_ID: dev-test-e778d
+  FIREBASE_UID: ${{ secrets.FIREBASE_AUTOMATION_UID }}
+
+jobs:
+  emprestito-pipeline:
+    name: 🔄 Ejecutar Pipeline de Empréstito
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔐 Authenticate with Google Cloud WIF
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER_ID }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+          project_id: ${{ env.PROJECT_ID }}
+          token_format: "access_token"
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
+
+      - name: 📦 Install Firebase Admin SDK
+        run: |
+          pip install firebase-admin google-auth
+
+      - name: 🔑 Generate Firebase Custom Token with WIF
+        id: firebase_token
+        run: |
+          python << 'PYTHON_SCRIPT'
+          import firebase_admin
+          from firebase_admin import credentials, auth
+          import os
+          import sys
+          
+          try:
+              cred = credentials.ApplicationDefault()
+              firebase_admin.initialize_app(cred, {
+                  'projectId': '${{ env.PROJECT_ID }}'
+              })
+              
+              uid = '${{ env.FIREBASE_UID }}'
+              custom_token = auth.create_custom_token(uid)
+              
+              # SEGURIDAD: Exportar como variable de entorno en lugar de archivo
+              # Esto evita que el token quede en disco
+              token_str = custom_token.decode()
+              print(f"::add-mask::{token_str}")  # Ocultar token en logs
+              print(f"FIREBASE_TOKEN={token_str}", file=open(os.environ['GITHUB_ENV'], 'a'))
+              
+              print("✅ Custom token generado exitosamente con WIF")
+              print(f"🔑 Token generado para UID: {uid[:8]}...{uid[-4:]}")
+              
+          except Exception as e:
+              print(f"❌ Error generando token: {e}")
+              sys.exit(1)
+
+      - name: 1️⃣ Crear Tabla de Proyecciones
+        id: step1
+        run: |
+          echo "📊 Ejecutando: Crear tabla de proyecciones..."
+
+            -H "Authorization: Bearer $FIREBASE_TOKEN")
+
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | sed '$d')
+
+          echo "📋 Respuesta HTTP: $http_code"
+          echo "$body" | jq '.' || echo "$body"
+
+          if [ "$http_code" != "200" ]; then
+            echo "❌ Error en paso 1: HTTP $http_code"
+            exit 1
+          fi
+
+          echo "✅ Paso 1 completado exitosamente"
+
+      - name: 2️⃣ Obtener Procesos SECOP
+        id: step2
+        if: success()
+        run: |
+          echo "🔍 Ejecutando: Obtener procesos SECOP..."
+
+
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | sed '$d')
+
+          echo "📋 Respuesta HTTP: $http_code"
+          echo "$body" | jq '.' || echo "$body"
+
+          if [ "$http_code" != "200" ]; then
+            echo "❌ Error en paso 2: HTTP $http_code"
+            exit 1
+          fi
+
+          echo "✅ Paso 2 completado exitosamente"
+
+      - name: 3️⃣ Obtener Contratos SECOP
+        id: step3
+        if: success()
+        run: |
+          echo "📄 Ejecutando: Obtener contratos SECOP..."
+          FIREBASE_TOKEN=$(cat firebase_token.txt)
+
+          response=$(curl -s -w "\n%{http_code}" \
+            -X POST "$API_BASE_URL/emprestito/obtener-contratos-secop" \
+            -H "Content-Type: application/json" \
+
+          echo "$body" | jq '.' || echo "$body"
+
+          if [ "$http_code" != "200" ]; then
+            echo "❌ Error en paso 3: HTTP $http_code"
+            exit 1
+          fi
+
+          echo "✅ Paso 3 completado exitosamente"
+
+      - name: 4️⃣ Obtener Órdenes de Compra TVEC
+        id: step4
+        if: success()
+        run: |
+          echo "📦 Ejecutando: Obtener órdenes de compra TVEC..."
+          FIREBASE_TOKEN=$(cat firebase_token.txt)
+
+          response=$(curl -s -w "\n%{http_code}" \
+            -X POST "$API_BASE_URL/emprestito/obtener-ordenes-compra-TVEC" \
+            -H "Content-Type: application/json" \
+
+          echo "$body" | jq '.' || echo "$body"
+
+          if [ "$http_code" != "200" ]; then
+            echo "❌ Error en paso 4: HTTP $http_code"
+            exit 1
+          fi
+
+          echo "✅ Paso 4 completado exitosamente"
+
+      - name: ✅ Pipeline Completado
+        if: success()
+        run: |
+          echo "🎉 Pipeline completado exitosamente!"
+          echo "✅ 1. Tabla de proyecciones creada"
+          echo "✅ 2. Procesos SECOP obtenidos"
+          echo "✅ 3. Contratos SECOP obtenidos"
+          echo "✅ 4. Órdenes de compra TVEC obtenidas"
+          echo "⏰ Finalizado: $(date)"
+
+      - name: ❌ Pipeline Error
+        if: failure()
+        run: |
+          echo "❌ El pipeline falló en algún paso"
+          echo "🔍 Revisa los logs anteriores para más detalles"
+          echo "⏰ Falló en: $(date)"
