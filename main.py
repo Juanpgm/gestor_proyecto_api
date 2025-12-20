@@ -7350,41 +7350,46 @@ async def actualizar_proceso_emprestito_endpoint(
 
 
 @app.post("/emprestito/obtener-contratos-secop", tags=["Gestión de Empréstito"], summary="🟢 Obtener Contratos SECOP")
-async def obtener_contratos_secop_endpoint():
+async def obtener_contratos_secop_endpoint(offset: int = 0, limit: int = 10):
     """
-    ## � POST | 🔄 Procesamiento Masivo | Obtener Contratos de SECOP desde Todos los Procesos
+    ## � POST | 🔄 Procesamiento por Lotes | Obtener Contratos de SECOP desde Procesos
     
-    Procesa TODOS los registros de la colección 'procesos_emprestito', busca contratos en SECOP 
+    Procesa registros de la colección 'procesos_emprestito' en lotes, busca contratos en SECOP 
     para cada proceso y guarda los resultados en la nueva colección 'contratos_emprestito'.
     
-    ### 📝 No requiere parámetros:
-    Este endpoint procesa automáticamente todos los registros existentes en 'procesos_emprestito'.
+    ### 📝 Parámetros opcionales:
+    - **offset**: Índice inicial para procesar (default: 0)
+    - **limit**: Cantidad de registros a procesar (default: 10, máximo: 50)
     
     ### 📤 Envío:
     ```http
-    POST /emprestito/obtener-contratos-secop
+    POST /emprestito/obtener-contratos-secop?offset=0&limit=10
     ```
-    **No es necesario enviar ningún cuerpo JSON**.
     
     ### 🔄 Proceso:
-    1. Leer TODOS los registros de la colección 'procesos_emprestito'
+    1. Leer registros de 'procesos_emprestito' desde offset hasta offset+limit
     2. Para cada proceso, extraer referencia_proceso y proceso_contractual
     3. Conectar con la API de SECOP (www.datos.gov.co) para cada proceso
     4. Buscar contratos que contengan el proceso_contractual y NIT = 890399011
     5. Transformar los datos al esquema de la colección 'contratos_emprestito'
     6. Verificar duplicados y actualizar/crear registros en Firebase
-    7. Retornar resumen completo del procesamiento masivo
+    7. Retornar resumen del lote procesado con información de paginación
     
     ### ✅ Respuesta exitosa:
     ```json
     {
         "success": true,
-        "message": "Se procesaron 5 procesos de empréstito. Contratos: 12 total (8 nuevos, 3 actualizados, 1 ignorados)",
+        "message": "Lote procesado: 10 procesos (offset 0-10)",
         "resumen_procesamiento": {
-            "total_procesos": 5,
-            "procesos_procesados": 4,
+            "offset": 0,
+            "limit": 10,
+            "total_procesos_coleccion": 50,
+            "procesos_en_lote": 10,
+            "procesos_procesados": 9,
             "procesos_sin_contratos": 1,
-            "procesos_con_errores": 0
+            "procesos_con_errores": 0,
+            "mas_registros": true,
+            "siguiente_offset": 10
         },
         "criterios_busqueda": {
             "coleccion_origen": "procesos_emprestito",
@@ -7480,8 +7485,16 @@ async def obtener_contratos_secop_endpoint():
     try:
         check_emprestito_availability()
         
-        # Ejecutar procesamiento completo de todos los procesos de empréstito
-        resultado = await obtener_contratos_desde_proceso_contractual()
+        # Validar límites
+        if limit > 50:
+            limit = 50
+        if limit < 1:
+            limit = 10
+        if offset < 0:
+            offset = 0
+        
+        # Ejecutar procesamiento por lotes
+        resultado = await obtener_contratos_desde_proceso_contractual(offset=offset, limit=limit)
         
         # Retornar resultado
         return JSONResponse(

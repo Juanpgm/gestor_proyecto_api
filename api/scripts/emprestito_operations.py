@@ -1135,13 +1135,14 @@ async def buscar_y_poblar_contratos_secop(*args, **kwargs):
     """Función stub - No implementada temporalmente"""
     return {"success": False, "error": "Función no implementada temporalmente"}
 
-async def obtener_contratos_desde_proceso_contractual() -> Dict[str, Any]:
+async def obtener_contratos_desde_proceso_contractual(offset: int = 0, limit: int = 10) -> Dict[str, Any]:
     """
-    Obtener TODOS los registros de procesos_emprestito y buscar contratos en SECOP para cada uno,
+    Obtener registros de procesos_emprestito en lotes y buscar contratos en SECOP para cada uno,
     guardando los resultados en la colección contratos_emprestito
 
-    OPTIMIZADO para procesamiento completo:
-    - Procesa TODOS los procesos de empréstito automáticamente
+    OPTIMIZADO para procesamiento por lotes:
+    - Procesa lotes de procesos de empréstito (por defecto 10, máximo 50)
+    - Parámetros: offset (inicio) y limit (cantidad)
     - Hereda campos: nombre_centro_gestor, banco (desde nombre_banco), bp
     - Mapea bpin desde c_digo_bpin de SECOP
     - Elimina campos redundantes (valor_del_contrato, proceso_de_compra)
@@ -1154,7 +1155,7 @@ async def obtener_contratos_desde_proceso_contractual() -> Dict[str, Any]:
         }
 
     inicio_tiempo = datetime.now()
-    logger.info("🚀 Iniciando obtención completa de contratos desde SECOP (procesamiento automático de TODOS los procesos)...")
+    logger.info(f"🚀 Iniciando obtención de contratos desde SECOP (procesamiento por lotes: offset={offset}, limit={limit})...")
 
     try:
         db_client = get_firestore_client()
@@ -1166,17 +1167,37 @@ async def obtener_contratos_desde_proceso_contractual() -> Dict[str, Any]:
 
         # 1. Obtener todos los registros de la colección procesos_emprestito
         procesos_ref = db_client.collection('procesos_emprestito')
-        procesos_docs = list(procesos_ref.stream())
+        todos_procesos_docs = list(procesos_ref.stream())
+        
+        total_procesos_coleccion = len(todos_procesos_docs)
 
-        if not procesos_docs:
+        if not todos_procesos_docs:
             return {
                 "success": False,
                 "error": "No se encontraron procesos en la colección procesos_emprestito",
                 "timestamp": datetime.now().isoformat()
             }
+        
+        # Aplicar offset y limit
+        fin = min(offset + limit, total_procesos_coleccion)
+        procesos_docs = todos_procesos_docs[offset:fin]
+        procesos_en_lote = len(procesos_docs)
+        
+        if procesos_en_lote == 0:
+            return {
+                "success": True,
+                "message": f"No hay más procesos para procesar (offset {offset} excede total {total_procesos_coleccion})",
+                "resumen_procesamiento": {
+                    "offset": offset,
+                    "limit": limit,
+                    "total_procesos_coleccion": total_procesos_coleccion,
+                    "procesos_en_lote": 0,
+                    "mas_registros": False
+                },
+                "timestamp": datetime.now().isoformat()
+            }
 
         # Variables de control
-        total_procesos = len(procesos_docs)
         total_contratos_encontrados = 0
         total_documentos_nuevos = 0
         total_documentos_actualizados = 0
@@ -1184,10 +1205,10 @@ async def obtener_contratos_desde_proceso_contractual() -> Dict[str, Any]:
         procesos_con_errores_tecnicos = []
         procesos_sin_contratos = []
 
-        # Procesar TODOS los procesos de empréstito
+        # Procesar el lote de procesos
         procesos_a_procesar = procesos_docs
 
-        logger.info(f"🔄 Procesamiento completo iniciado: {len(procesos_a_procesar)} procesos totales a procesar")
+        logger.info(f"🔄 Procesamiento por lotes iniciado: {procesos_en_lote} procesos en este lote (offset {offset}-{fin} de {total_procesos_coleccion} total)")
 
         # Crear la colección si no existe (Firestore la crea automáticamente al agregar el primer documento)
         contratos_ref = db_client.collection('contratos_emprestito')
@@ -1198,7 +1219,7 @@ async def obtener_contratos_desde_proceso_contractual() -> Dict[str, Any]:
 
         for i, proceso_doc in enumerate(procesos_a_procesar, 1):
             logger.info(f"\n{'='*60}")
-            logger.info(f"🎯 PROCESO {i}/{total_procesos} - PROCESAMIENTO INDIVIDUAL")
+            logger.info(f"🎯 PROCESO {i}/{procesos_en_lote} (Global: {offset + i}/{total_procesos_coleccion}) - PROCESAMIENTO INDIVIDUAL")
             logger.info(f"{'='*60}")
 
             try:
@@ -1240,9 +1261,9 @@ async def obtener_contratos_desde_proceso_contractual() -> Dict[str, Any]:
                             "proceso_contractual": proceso_contractual,
                             "motivo": "No se encontraron contratos en SECOP para este proceso"
                         })
-                        logger.info(f"ℹ️  SIN CONTRATOS - Proceso {i}/{total_procesos}: {proceso_contractual}")
+                        logger.info(f"ℹ️  SIN CONTRATOS - Proceso {i}/{procesos_en_lote}: {proceso_contractual}")
                     else:
-                        logger.info(f"✅ ÉXITO - Proceso {i}/{total_procesos}: {resultado_individual['contratos_encontrados']} contratos encontrados, {resultado_individual['documentos_nuevos']} nuevos, {resultado_individual['documentos_actualizados']} actualizados")
+                        logger.info(f"✅ ÉXITO - Proceso {i}/{procesos_en_lote}: {resultado_individual['contratos_encontrados']} contratos encontrados, {resultado_individual['documentos_nuevos']} nuevos, {resultado_individual['documentos_actualizados']} actualizados")
                 else:
                     # Error técnico real
                     procesos_con_errores_tecnicos.append({
@@ -1250,14 +1271,14 @@ async def obtener_contratos_desde_proceso_contractual() -> Dict[str, Any]:
                         "referencia_proceso": referencia_proceso,
                         "error": resultado_individual["error"]
                     })
-                    logger.error(f"❌ ERROR TÉCNICO - Proceso {i}/{total_procesos}: {resultado_individual['error']}")
+                    logger.error(f"❌ ERROR TÉCNICO - Proceso {i}/{procesos_en_lote}: {resultado_individual['error']}")
 
                 # Log de progreso
                 tiempo_transcurrido = (datetime.now() - inicio_tiempo).total_seconds()
                 logger.info(f"⏱️  Tiempo transcurrido: {tiempo_transcurrido:.1f}s | Exitosos: {procesados_exitosos}/{i}")
 
             except Exception as e:
-                logger.error(f"💥 EXCEPCIÓN en proceso {i}/{total_procesos}: {e}")
+                logger.error(f"💥 EXCEPCIÓN en proceso {i}/{procesos_en_lote}: {e}")
                 procesos_con_errores_tecnicos.append({
                     "id": proceso_doc.id,
                     "referencia_proceso": referencia_proceso if 'referencia_proceso' in locals() else "DESCONOCIDO",
@@ -1267,30 +1288,42 @@ async def obtener_contratos_desde_proceso_contractual() -> Dict[str, Any]:
 
         # Actualizar estadísticas finales
         procesos_procesados = procesados_exitosos
-        total_duplicados_ignorados = 0  # Ya se cuenta en el procesamiento individual
+        total_duplicados_ignorados = 0
+        mas_registros = fin < total_procesos_coleccion
+        siguiente_offset = fin if mas_registros else None
 
-        logger.info(f"\n🏁 PROCESAMIENTO COMPLETO FINALIZADO")
-        logger.info(f"📊 Estadísticas finales:")
-        logger.info(f"   - Total procesos en BD: {total_procesos}")
+        logger.info(f"\n🏁 LOTE PROCESADO")
+        logger.info(f"📊 Estadísticas del lote:")
+        logger.info(f"   - Lote: offset {offset}, limit {limit}")
+        logger.info(f"   - Procesos en lote: {procesos_en_lote}")
+        logger.info(f"   - Total en colección: {total_procesos_coleccion}")
         logger.info(f"   - Procesados exitosamente: {procesados_exitosos}")
         logger.info(f"   - Procesos sin contratos en SECOP: {len(procesos_sin_contratos)}")
         logger.info(f"   - Errores técnicos: {len(procesos_con_errores_tecnicos)}")
         logger.info(f"   - Contratos encontrados: {total_contratos_encontrados}")
         logger.info(f"   - Documentos nuevos: {total_documentos_nuevos}")
         logger.info(f"   - Documentos actualizados: {total_documentos_actualizados}")
+        logger.info(f"   - Más registros: {'Sí' if mas_registros else 'No'}")
+        if siguiente_offset:
+            logger.info(f"   - Siguiente offset: {siguiente_offset}")
 
         # 4. Preparar respuesta final
         total_procesados = total_documentos_nuevos + total_documentos_actualizados + total_duplicados_ignorados
 
         return {
             "success": True,
-            "message": f"✅ PROCESAMIENTO COMPLETO: {procesados_exitosos}/{total_procesos} procesos procesados. Contratos: {total_procesados} total ({total_documentos_nuevos} nuevos, {total_documentos_actualizados} actualizados)",
+            "message": f"✅ LOTE PROCESADO: {procesados_exitosos}/{procesos_en_lote} procesos. Contratos: {total_procesados} total ({total_documentos_nuevos} nuevos, {total_documentos_actualizados} actualizados)",
             "resumen_procesamiento": {
-                "total_procesos_en_bd": total_procesos,
+                "offset": offset,
+                "limit": limit,
+                "total_procesos_coleccion": total_procesos_coleccion,
+                "procesos_en_lote": procesos_en_lote,
                 "procesos_procesados_exitosamente": procesados_exitosos,
                 "procesos_sin_contratos_en_secop": len(procesos_sin_contratos),
                 "procesos_con_errores_tecnicos": len(procesos_con_errores_tecnicos),
-                "tasa_exito": f"{(procesados_exitosos/total_procesos*100):.1f}%" if total_procesos > 0 else "0%"
+                "tasa_exito": f"{(procesados_exitosos/procesos_en_lote*100):.1f}%" if procesos_en_lote > 0 else "0%",
+                "mas_registros": mas_registros,
+                "siguiente_offset": siguiente_offset
             },
             "criterios_busqueda": {
                 "coleccion_origen": "procesos_emprestito",
