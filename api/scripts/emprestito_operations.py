@@ -2036,6 +2036,63 @@ async def get_rpc_contratos_emprestito_all() -> Dict[str, Any]:
             "count": 0
         }
 
+async def get_asignaciones_emprestito_banco_centro_gestor_all() -> Dict[str, Any]:
+    """
+    Obtener todas las asignaciones de empréstito banco-centro gestor
+    desde la colección montos_emprestito_asignados_centro_gestor
+    """
+    if not FIRESTORE_AVAILABLE:
+        return {
+            "success": False,
+            "error": "Firebase no disponible",
+            "data": [],
+            "count": 0
+        }
+
+    try:
+        db_client = get_firestore_client()
+        if not db_client:
+            return {
+                "success": False,
+                "error": "Error obteniendo cliente Firestore",
+                "data": [],
+                "count": 0
+            }
+
+        # Obtener todos los documentos de la colección
+        asignaciones_ref = db_client.collection('montos_emprestito_asignados_centro_gestor')
+        docs = asignaciones_ref.stream()
+
+        # Procesar documentos
+        asignaciones_list = []
+        for doc in docs:
+            asignacion_data = doc.to_dict()
+            asignacion_data['id'] = doc.id
+            
+            # Serializar objetos datetime
+            asignacion_data = serialize_datetime_objects(asignacion_data)
+            
+            asignaciones_list.append(asignacion_data)
+
+        logger.info(f"Se obtuvieron {len(asignaciones_list)} asignaciones de empréstito banco-centro gestor")
+
+        return {
+            "success": True,
+            "data": asignaciones_list,
+            "count": len(asignaciones_list),
+            "collection": "montos_emprestito_asignados_centro_gestor",
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Error obteniendo asignaciones de empréstito banco-centro gestor: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "data": [],
+            "count": 0
+        }
+
 async def obtener_datos_secop_completos(referencia_proceso: str) -> Dict[str, Any]:
     """
     Obtener datos completos de un proceso desde la API del SECOP

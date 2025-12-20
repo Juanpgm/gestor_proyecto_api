@@ -5159,6 +5159,7 @@ try:
         cargar_pago_emprestito,
         get_pagos_emprestito_all,
         get_rpc_contratos_emprestito_all,
+        get_asignaciones_emprestito_banco_centro_gestor_all,
         get_convenios_transferencia_emprestito_all,
         obtener_ordenes_compra_tvec_enriquecidas,
         get_tvec_enrich_status,
@@ -8429,6 +8430,94 @@ async def obtener_procesos_secop_completo_endpoint():
                 "success": False,
                 "error": "Error interno del servidor",
                 "message": "Error obteniendo datos completos de SECOP para todos los procesos"
+            }
+        )
+
+
+@app.get("/asignaciones-emprestito-banco-centro-gestor", tags=["Gestión de Empréstito"], summary="🔵 Obtener Asignaciones Banco-Centro Gestor")
+async def get_all_asignaciones_emprestito_banco_centro_gestor():
+    """
+    ## 🔵 GET | 📋 Consultas | Obtener Todas las Asignaciones de Empréstito Banco-Centro Gestor
+    
+    Endpoint para obtener todas las asignaciones de montos de empréstito por banco y centro gestor
+    almacenadas en la colección `montos_emprestito_asignados_centro_gestor`.
+    
+    ### ✅ Funcionalidades principales:
+    - **Listado completo**: Retorna todas las asignaciones registradas
+    - **Datos completos**: Incluye todos los campos de cada asignación
+    - **Metadatos**: Incluye ID del documento, conteo total y timestamp
+    
+    ### 📊 Información incluida:
+    - Todos los campos de la asignación
+    - ID del documento para referencia
+    - Conteo total de registros
+    - Timestamp de la consulta
+    
+    ### 🗄️ Campos principales esperados:
+    - **nombre_banco**: Nombre del banco financiador
+    - **nombre_centro_gestor**: Nombre del centro gestor
+    - **monto_asignado**: Monto asignado para el banco y centro gestor
+    - **moneda**: Tipo de moneda (USD, COP, etc.)
+    - **fecha_asignacion**: Fecha de la asignación
+    - **estado**: Estado de la asignación (activa, modificada, etc.)
+    
+    ### ✅ Respuesta exitosa (200):
+    ```json
+    {
+        "success": true,
+        "data": [
+            {
+                "id": "doc_id_123",
+                "nombre_banco": "Banco Mundial",
+                "nombre_centro_gestor": "Secretaría de Salud",
+                "monto_asignado": 1500000.00,
+                "moneda": "USD",
+                "fecha_asignacion": "2024-11-17T...",
+                "estado": "activa"
+            }
+        ],
+        "count": 10,
+        "collection": "montos_emprestito_asignados_centro_gestor",
+        "timestamp": "2024-11-17T...",
+        "message": "Se obtuvieron 10 asignaciones de empréstito banco-centro gestor exitosamente"
+    }
+    ```
+    """
+    try:
+        check_emprestito_availability()
+        
+        result = await get_asignaciones_emprestito_banco_centro_gestor_all()
+        
+        if not result["success"]:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error obteniendo asignaciones de empréstito banco-centro gestor: {result.get('error', 'Error desconocido')}"
+            )
+        
+        return JSONResponse(
+            content={
+                "success": True,
+                "data": result["data"],
+                "count": result["count"],
+                "collection": result["collection"],
+                "timestamp": result["timestamp"],
+                "message": f"Se obtuvieron {result['count']} asignaciones de empréstito banco-centro gestor exitosamente"
+            },
+            status_code=200,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en endpoint de asignaciones de empréstito banco-centro gestor: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "success": False,
+                "error": "Error interno del servidor",
+                "message": "Error al obtener asignaciones de empréstito banco-centro gestor",
+                "code": "INTERNAL_SERVER_ERROR"
             }
         )
 
