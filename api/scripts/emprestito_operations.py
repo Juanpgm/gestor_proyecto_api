@@ -329,10 +329,14 @@ async def verificar_proceso_existente(referencia_proceso: str) -> Dict[str, Any]
         logger.error(f"Error verificando proceso existente: {str(e)}")
         return {"existe": False, "error": str(e)}
 
-async def obtener_datos_secop(referencia_proceso: str) -> Dict[str, Any]:
+async def obtener_datos_secop(referencia_proceso: str, nit_entidad: Optional[str] = None) -> Dict[str, Any]:
     """
     Obtener datos de un proceso desde la API del SECOP
     Optimizada para obtener solo los campos necesarios
+    
+    Args:
+        referencia_proceso: Referencia del proceso a buscar
+        nit_entidad: NIT de la entidad (opcional). Si no se proporciona, busca sin filtro de NIT.
     """
     try:
         # Importar Socrata aquí para evitar errores de importación si no está disponible
@@ -347,7 +351,13 @@ async def obtener_datos_secop(referencia_proceso: str) -> Dict[str, Any]:
         client = Socrata(SECOP_DOMAIN, None, timeout=30)
 
         # Construir filtro para búsqueda específica
-        where_clause = f"nit_entidad='{NIT_ENTIDAD_CALI}' AND referencia_del_proceso='{referencia_proceso}'"
+        # Si se proporciona NIT, filtrar por él. Si no, buscar sin filtro de NIT
+        if nit_entidad:
+            where_clause = f"nit_entidad='{nit_entidad}' AND referencia_del_proceso='{referencia_proceso}'"
+            logger.info(f"🔍 Buscando proceso {referencia_proceso} con NIT {nit_entidad}")
+        else:
+            where_clause = f"referencia_del_proceso='{referencia_proceso}'"
+            logger.info(f"🔍 Buscando proceso {referencia_proceso} sin filtro de NIT")
 
         # Realizar consulta
         results = client.get(
@@ -359,6 +369,11 @@ async def obtener_datos_secop(referencia_proceso: str) -> Dict[str, Any]:
         client.close()
 
         if not results:
+            # Si no se encontró con el NIT proporcionado (o sin NIT), intentar sin restricción
+            if nit_entidad:
+                logger.warning(f"⚠️ No se encontró el proceso {referencia_proceso} con NIT {nit_entidad}, reintentando sin filtro de NIT...")
+                return await obtener_datos_secop(referencia_proceso, nit_entidad=None)
+            
             return {
                 "success": False,
                 "error": f"No se encontró el proceso {referencia_proceso} en SECOP"
@@ -658,8 +673,9 @@ async def procesar_emprestito_completo(datos_iniciales: Dict[str, Any]) -> Dict[
         datos_completos = datos_iniciales.copy()
 
         if tipo_plataforma == "SECOP":
-            # Obtener datos de SECOP
-            resultado_secop = await obtener_datos_secop(referencia_proceso)
+            # Obtener datos de SECOP - Intentar primero con NIT de Cali, luego sin restricción
+            NIT_ENTIDAD_CALI = "890399011"
+            resultado_secop = await obtener_datos_secop(referencia_proceso, nit_entidad=NIT_ENTIDAD_CALI)
 
             if not resultado_secop.get("success"):
                 return {
@@ -791,11 +807,20 @@ async def procesar_proceso_individual(db_client, proceso_data, referencia_proces
         
         logger.info(f"🔍 Buscando contratos en SECOP para proceso: {proceso_contractual}")
 
-        # Buscar contratos que contengan el proceso_contractual y el NIT específico
-        where_clause = f"proceso_de_compra LIKE '%{proceso_contractual}%' AND nit_entidad = '890399011'"
+        # Buscar contratos que contengan el proceso_contractual
+        # Primero intentar con NIT específico de Cali
+        NIT_ENTIDAD_CALI = "890399011"
+        where_clause = f"proceso_de_compra LIKE '%{proceso_contractual}%' AND nit_entidad = '{NIT_ENTIDAD_CALI}'"
 
         with Socrata("www.datos.gov.co", None) as client:
             contratos_secop = client.get("jbjy-vk9h", limit=100, where=where_clause)
+        
+        # Si no se encuentran contratos con el NIT de Cali, buscar sin restricción de NIT
+        if not contratos_secop:
+            logger.warning(f"⚠️ No se encontraron contratos para {proceso_contractual} con NIT {NIT_ENTIDAD_CALI}, buscando sin restricción de NIT...")
+            where_clause = f"proceso_de_compra LIKE '%{proceso_contractual}%'"
+            with Socrata("www.datos.gov.co", None) as client:
+                contratos_secop = client.get("jbjy-vk9h", limit=100, where=where_clause)
 
         # Filtrar contratos excluyendo estados "Borrador" y "Cancelado"
         estados_excluidos = ["Borrador", "Cancelado"]
@@ -2093,10 +2118,14 @@ async def get_asignaciones_emprestito_banco_centro_gestor_all() -> Dict[str, Any
             "count": 0
         }
 
-async def obtener_datos_secop_completos(referencia_proceso: str) -> Dict[str, Any]:
+async def obtener_datos_secop_completos(referencia_proceso: str, nit_entidad: Optional[str] = None) -> Dict[str, Any]:
     """
     Obtener datos completos de un proceso desde la API del SECOP
     Incluye todos los campos adicionales solicitados para complementar procesos_emprestito
+    
+    Args:
+        referencia_proceso: Referencia del proceso a buscar
+        nit_entidad: NIT de la entidad (opcional). Si no se proporciona, busca sin filtro de NIT.
     """
     try:
         # Importar Socrata aquí para evitar errores de importación si no está disponible
@@ -2111,7 +2140,13 @@ async def obtener_datos_secop_completos(referencia_proceso: str) -> Dict[str, An
         client = Socrata(SECOP_DOMAIN, None, timeout=30)
 
         # Construir filtro para búsqueda específica
-        where_clause = f"nit_entidad='{NIT_ENTIDAD_CALI}' AND referencia_del_proceso='{referencia_proceso}'"
+        # Si se proporciona NIT, filtrar por él. Si no, buscar sin filtro de NIT
+        if nit_entidad:
+            where_clause = f"nit_entidad='{nit_entidad}' AND referencia_del_proceso='{referencia_proceso}'"
+            logger.info(f"🔍 Buscando proceso {referencia_proceso} con NIT {nit_entidad}")
+        else:
+            where_clause = f"referencia_del_proceso='{referencia_proceso}'"
+            logger.info(f"🔍 Buscando proceso {referencia_proceso} sin filtro de NIT")
 
         # Realizar consulta
         results = client.get(
@@ -2123,6 +2158,11 @@ async def obtener_datos_secop_completos(referencia_proceso: str) -> Dict[str, An
         client.close()
 
         if not results:
+            # Si no se encontró con el NIT proporcionado (o sin NIT), intentar sin restricción
+            if nit_entidad:
+                logger.warning(f"⚠️ No se encontró el proceso {referencia_proceso} con NIT {nit_entidad}, reintentando sin filtro de NIT...")
+                return await obtener_datos_secop_completos(referencia_proceso, nit_entidad=None)
+            
             return {
                 "success": False,
                 "error": f"No se encontró el proceso {referencia_proceso} en SECOP"
@@ -2227,7 +2267,9 @@ async def actualizar_proceso_emprestito_completo(referencia_proceso: str) -> Dic
         doc_data = doc.to_dict()
         
         # 2. Obtener datos completos de SECOP
-        resultado_secop = await obtener_datos_secop_completos(referencia_proceso)
+        # Primero intentar con el NIT de Cali, luego sin restricción si no se encuentra
+        NIT_ENTIDAD_CALI = "890399011"
+        resultado_secop = await obtener_datos_secop_completos(referencia_proceso, nit_entidad=NIT_ENTIDAD_CALI)
         
         if not resultado_secop.get("success"):
             return {

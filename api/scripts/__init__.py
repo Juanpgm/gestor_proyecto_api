@@ -3,6 +3,8 @@ API Scripts Package
 Módulos con funciones para operaciones específicas de la API
 """
 
+from typing import Optional
+
 try:
     from .firebase_operations import (
         get_collections_info,
@@ -215,7 +217,7 @@ except ImportError as e:
     async def verificar_proceso_existente(referencia_proceso: str):
         return {"success": False, "error": "Emprestito operations not available"}
     
-    async def obtener_datos_secop(referencia_proceso: str):
+    async def obtener_datos_secop(referencia_proceso: str, nit_entidad: Optional[str] = None):
         return {"success": False, "error": "Emprestito operations not available"}
     
     async def obtener_datos_tvec(referencia_proceso: str):
@@ -284,7 +286,7 @@ except ImportError as e:
     async def get_procesos_emprestito_all():
         return {"success": False, "error": "Emprestito operations not available", "data": [], "count": 0}
     
-    async def obtener_datos_secop_completos(referencia_proceso: str):
+    async def obtener_datos_secop_completos(referencia_proceso: str, nit_entidad: Optional[str] = None):
         return {"success": False, "error": "Emprestito operations not available"}
     
     async def actualizar_proceso_emprestito_completo(referencia_proceso: str):

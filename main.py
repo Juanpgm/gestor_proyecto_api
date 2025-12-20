@@ -445,7 +445,11 @@ def optional_rate_limit(limit_string: str):
     """Decorador que aplica rate limiting solo si SlowAPI está disponible"""
     def decorator(func):
         if SLOWAPI_AVAILABLE and limiter is not None:
-            return limiter.limit(limit_string)(func)
+            try:
+                return limiter.limit(limit_string)(func)
+            except Exception as e:
+                print(f"⚠️ Warning: Could not apply rate limit to {func.__name__}: {e}")
+                return func
         return func
     return decorator
 
