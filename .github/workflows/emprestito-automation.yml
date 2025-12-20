@@ -1,9 +1,9 @@
 name: Workflow para la Actualización de datos empréstito
 
 on:
+  workflow_dispatch:
   schedule:
     - cron: "0 0,5,10,15,17,22 * * *"
-  workflow_dispatch:
 
 env:
   API_BASE_URL: ${{ secrets.API_BASE_URL }}
@@ -14,15 +14,15 @@ jobs:
   emprestito-pipeline:
     name: Actualización de datos empréstito
     runs-on: ubuntu-latest
-    
+
     permissions:
       contents: read
       id-token: write
-    
+
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v4
-      
+
       - name: 🔐 Authenticate with Google Cloud WIF
         id: auth
         uses: google-github-actions/auth@v2
@@ -31,16 +31,16 @@ jobs:
           service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
           project_id: ${{ env.PROJECT_ID }}
           token_format: "access_token"
-      
+
       - name: 🐍 Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: "3.12"
-      
+
       - name: 📦 Install Firebase Admin SDK
         run: |
           pip install firebase-admin google-auth
-      
+
       - name: 🔑 Generate Firebase Custom Token
         id: firebase_token
         run: |
@@ -49,7 +49,7 @@ jobs:
           from firebase_admin import credentials, auth
           import os
           import sys
-          
+
           try:
               cred = credentials.ApplicationDefault()
               firebase_admin.initialize_app(cred, {
@@ -70,12 +70,12 @@ jobs:
               print(f"❌ Error generando token: {e}")
               sys.exit(1)
           PYTHON_SCRIPT
-      
+
       - name: 📋 Inicializar Logs
         run: |
           echo "🚀 Iniciando pipeline de empréstito"
           echo "⏰ $(date)"
-          
+
           echo "==================================================" > execution_log.txt
           echo "WORKFLOW - Actualización de datos empréstito" >> execution_log.txt
           echo "==================================================" >> execution_log.txt
@@ -86,26 +86,26 @@ jobs:
           echo "Run ID - ${{ github.run_id }}" >> execution_log.txt
           echo "Run Number - ${{ github.run_number }}" >> execution_log.txt
           echo "" >> execution_log.txt
-      
+
       - name: 1️⃣ Crear Tabla de Proyecciones
         id: step1
         run: |
           echo "📊 Paso 1: Crear tabla de proyecciones"
           step1_start=$(date +%s)
-          
+
           response=$(curl -s -w "\n%{http_code}\n%{size_download}\n%{time_total}" \
             -X POST "$API_BASE_URL/emprestito/crear-tabla-proyecciones" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $FIREBASE_TOKEN")
-          
+
           http_code=$(echo "$response" | tail -n3 | head -n1)
           size_bytes=$(echo "$response" | tail -n2 | head -n1)
           time_seconds=$(echo "$response" | tail -n1)
           body=$(echo "$response" | head -n -3)
-          
+
           echo "📋 HTTP: $http_code | 📦 $size_bytes bytes | ⏱️  ${time_seconds}s"
           echo "$body" | jq '.' 2>/dev/null || echo "$body"
-          
+
           # Logs
           {
             echo "---------------------------------------------------"
@@ -121,30 +121,30 @@ jobs:
             echo "$body" | jq -r 'if type=="object" then 
               "Registros -
           } >> execution_log.txt
-          
+
           [ "$http_code" = "200" ] || exit 1
           echo "✅ Completado"
-      
+
       - name: 2️⃣ Obtener Procesos SECOP
         id: step2
         if: success()
         run: |
           echo "🔍 Paso 2: Obtener procesos SECOP"
           step2_start=$(date +%s)
-          
+
           response=$(curl -s -w "\n%{http_code}\n%{size_download}\n%{time_total}" \
             -X POST "$API_BASE_URL/emprestito/obtener-procesos-secop" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $FIREBASE_TOKEN")
-          
+
           http_code=$(echo "$response" | tail -n3 | head -n1)
           size_bytes=$(echo "$response" | tail -n2 | head -n1)
           time_seconds=$(echo "$response" | tail -n1)
           body=$(echo "$response" | head -n -3)
-          
+
           echo "📋 HTTP: $http_code | 📦 $size_bytes bytes | ⏱️  ${time_seconds}s"
           echo "$body" | jq '.' 2>/dev/null || echo "$body"
-          
+
           # Logs
           {
             echo "---------------------------------------------------"
@@ -160,30 +160,30 @@ jobs:
               else empty end' 2>/dev/null || echo ""
             echo ""
           } >> execution_log.txt
-          
+
           [ "$http_code" = "200" ] || exit 1
           echo "✅ Completado"
-      
+
       - name: 3️⃣ Obtener Contratos SECOP
         id: step3
         if: success()
         run: |
           echo "📄 Paso 3: Obtener contratos SECOP"
           step3_start=$(date +%s)
-          
+
           response=$(curl -s -w "\n%{http_code}\n%{size_download}\n%{time_total}" \
             -X POST "$API_BASE_URL/emprestito/obtener-contratos-secop" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $FIREBASE_TOKEN")
-          
+
           http_code=$(echo "$response" | tail -n3 | head -n1)
           size_bytes=$(echo "$response" | tail -n2 | head -n1)
           time_seconds=$(echo "$response" | tail -n1)
           body=$(echo "$response" | head -n -3)
-          
+
           echo "📋 HTTP: $http_code | 📦 $size_bytes bytes | ⏱️  ${time_seconds}s"
           echo "$body" | jq '.' 2>/dev/null || echo "$body"
-          
+
           # Logs
           {
             echo "---------------------------------------------------"
@@ -199,30 +199,30 @@ jobs:
               else empty end' 2>/dev/null || echo ""
             echo ""
           } >> execution_log.txt
-          
+
           [ "$http_code" = "200" ] || exit 1
           echo "✅ Completado"
-      
+
       - name: 4️⃣ Obtener Órdenes de Compra TVEC
         id: step4
         if: success()
         run: |
           echo "📦 Paso 4: Obtener órdenes de compra TVEC"
           step4_start=$(date +%s)
-          
+
           response=$(curl -s -w "\n%{http_code}\n%{size_download}\n%{time_total}" \
             -X POST "$API_BASE_URL/emprestito/obtener-ordenes-compra-TVEC" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $FIREBASE_TOKEN")
-          
+
           http_code=$(echo "$response" | tail -n3 | head -n1)
           size_bytes=$(echo "$response" | tail -n2 | head -n1)
           time_seconds=$(echo "$response" | tail -n1)
           body=$(echo "$response" | head -n -3)
-          
+
           echo "📋 HTTP: $http_code | 📦 $size_bytes bytes | ⏱️  ${time_seconds}s"
           echo "$body" | jq '.' 2>/dev/null || echo "$body"
-          
+
           # Logs
           {
             echo "---------------------------------------------------"
@@ -238,20 +238,20 @@ jobs:
               else empty end' 2>/dev/null || echo ""
             echo ""
           } >> execution_log.txt
-          
+
           [ "$http_code" = "200" ] || exit 1
           echo "✅ Completado"
-      
+
       - name: ✅ Finalizar Logs
         if: always()
         run: |
           end_time=$(date +%s)
           start_time=$(cat start_time.txt 2>/dev/null || echo $end_time)
           duration=$((end_time - start_time))
-          
+
           status="${{ job.status }}"
           [ "$status" = "success" ] && icon="✅" || icon="❌"
-          
+
           {
             echo "=================================================="
             echo "RESUMEN FINAL"
@@ -261,11 +261,11 @@ jobs:
             echo "Duración Total - ${duration}s ($(echo "scale=2; $duration/60" | bc 2>/dev/null || echo "N/A") min)"
             echo "=================================================="
           } >> execution_log.txt
-          
+
           echo ""
           echo "📊 RESUMEN DE EJECUCIÓN:"
           cat execution_log.txt
-      
+
       - name: 📤 Guardar Logs
         if: always()
         uses: actions/upload-artifact@v4
