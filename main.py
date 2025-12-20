@@ -6253,7 +6253,7 @@ async def cargar_pago_emprestito_endpoint(
     fecha_transaccion: str = Form(..., description="Fecha de la transacción (obligatorio)"),
     referencia_contrato: str = Form(..., description="Referencia del contrato (obligatorio)"),
     nombre_centro_gestor: str = Form(..., description="Centro gestor responsable (obligatorio)"),
-    documentos: List[UploadFile] = File(..., description="Documentos del pago (PDF, DOC, DOCX, XLS, XLSX, JPG, PNG) - OBLIGATORIO")
+    documentos: List[UploadFile] = File(None, description="Documentos del pago (PDF, DOC, DOCX, XLS, XLSX, JPG, PNG) - OPCIONAL")
 ):
     """
     ## 📝 POST | 📥 Carga de Datos | Cargar Pago de Empréstito
@@ -6263,7 +6263,7 @@ async def cargar_pago_emprestito_endpoint(
     
     ### ✅ Funcionalidades principales:
     - **Registro de pagos**: Guarda información de pagos realizados
-    - **Carga de documentos a S3**: Los documentos son OBLIGATORIOS y se suben a AWS S3
+    - **Carga de documentos a S3**: Los documentos son OPCIONALES y se suben a AWS S3 si se proporcionan
     - **Validación de tipos de archivo**: Valida formatos permitidos (PDF, DOC, DOCX, XLS, XLSX, JPG, PNG)
     - **Timestamp automático**: `fecha_registro` se genera automáticamente con la hora del sistema
     - **Validación de campos**: Verifica que todos los campos obligatorios estén presentes
@@ -6276,7 +6276,9 @@ async def cargar_pago_emprestito_endpoint(
     - `fecha_transaccion`: Fecha en que se realizó la transacción
     - `referencia_contrato`: Referencia del contrato asociado
     - `nombre_centro_gestor`: Centro gestor responsable del pago
-    - `documentos`: Archivos del pago (al menos 1 archivo requerido)
+    
+    ### ⚙️ Campos opcionales:
+    - `documentos`: Archivos del pago (PDF, DOC, DOCX, XLS, XLSX, JPG, PNG)
     
     ### 🤖 Campos automáticos:
     - `fecha_registro`: Timestamp automático del momento de registro (NO se envía por el usuario)
@@ -6344,39 +6346,27 @@ async def cargar_pago_emprestito_endpoint(
         check_emprestito_availability()
         
         logger.info(f"📥 Recibiendo pago para RPC: {numero_rpc}")
-        logger.info(f"📎 Documentos recibidos: {len(documentos)}")
+        logger.info(f"📎 Documentos recibidos: {len(documentos) if documentos else 0}")
         logger.info(f"💰 Valor del pago: {valor_pago}")
         
-        # Validar que se hayan proporcionado documentos
-        if not documentos or len(documentos) == 0:
-            return JSONResponse(
-                content={
-                    "success": False,
-                    "error": "Se requiere al menos un documento para registrar el pago",
-                    "message": "Debe proporcionar al menos un archivo PDF, DOC, DOCX, XLS, XLSX, JPG o PNG",
-                    "timestamp": datetime.now().isoformat()
-                },
-                status_code=400,
-                headers={"Content-Type": "application/json; charset=utf-8"}
-            )
-        
-        # Validar tipos de archivo permitidos
+        # Validar tipos de archivo permitidos solo si se proporcionaron documentos
         allowed_extensions = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.jpg', '.jpeg', '.png']
-        for doc in documentos:
-            filename_lower = doc.filename.lower()
-            if not any(filename_lower.endswith(ext) for ext in allowed_extensions):
-                return JSONResponse(
-                    content={
-                        "success": False,
-                        "error": f"Tipo de archivo no permitido: {doc.filename}",
-                        "message": "Solo se permiten archivos PDF, DOC, DOCX, XLS, XLSX, JPG y PNG",
-                        "allowed_types": allowed_extensions,
-                        "timestamp": datetime.now().isoformat()
-                    },
-                    status_code=400,
-                    headers={"Content-Type": "application/json; charset=utf-8"}
-                )
-            logger.info(f"   - {doc.filename} ({doc.content_type})")
+        if documentos:
+            for doc in documentos:
+                filename_lower = doc.filename.lower()
+                if not any(filename_lower.endswith(ext) for ext in allowed_extensions):
+                    return JSONResponse(
+                        content={
+                            "success": False,
+                            "error": f"Tipo de archivo no permitido: {doc.filename}",
+                            "message": "Solo se permiten archivos PDF, DOC, DOCX, XLS, XLSX, JPG y PNG",
+                            "allowed_types": allowed_extensions,
+                            "timestamp": datetime.now().isoformat()
+                        },
+                        status_code=400,
+                        headers={"Content-Type": "application/json; charset=utf-8"}
+                    )
+                logger.info(f"   - {doc.filename} ({doc.content_type})")
         
         # Procesar documentos si se proporcionan
         documentos_procesados = []
@@ -6473,6 +6463,7 @@ async def get_all_pagos_emprestito():
     ### ✅ Funcionalidades principales:
     - **Listado completo**: Retorna todos los pagos registrados
     - **Datos completos**: Incluye todos los campos de cada pago
+    - **Detección de documentos soporte**: Verifica si cada pago tiene documentos en S3
     - **Metadatos**: Incluye ID del documento, conteo total y timestamp
     - **Serialización JSON**: Fechas y objetos datetime convertidos correctamente
     - **Trazabilidad**: Información completa de cada transacción registrada
@@ -6480,6 +6471,7 @@ async def get_all_pagos_emprestito():
     ### 📊 Información incluida:
     - Todos los campos del pago
     - ID del documento para referencia
+    - Campo `tiene_documentos_soporte`: indica si el pago tiene documentos en S3 (true/false)
     - Conteo total de registros
     - Timestamp de la consulta
     - Datos serializados correctamente para JSON
@@ -6495,6 +6487,8 @@ async def get_all_pagos_emprestito():
     - **fecha_actualizacion**: Última actualización del registro
     - **estado**: Estado del pago (registrado, procesado, etc.)
     - **tipo**: Tipo de registro (pago_manual)
+    - **tiene_documentos_soporte**: Boolean que indica si el pago tiene documentos en S3
+    - **documentos_s3**: Array con información de documentos en S3 (si existen)
     
     ### 💡 Casos de uso:
     - Obtener historial completo de pagos de empréstito
@@ -6530,7 +6524,15 @@ async def get_all_pagos_emprestito():
                 "fecha_creacion": "2024-11-11T14:30:45.123456",
                 "fecha_actualizacion": "2024-11-11T14:30:45.123456",
                 "estado": "registrado",
-                "tipo": "pago_manual"
+                "tipo": "pago_manual",
+                "tiene_documentos_soporte": true,
+                "documentos_s3": [
+                    {
+                        "filename": "pago_001.pdf",
+                        "s3_url": "https://contratos-emprestito.s3.us-east-1.amazonaws.com/...",
+                        "upload_date": "2024-11-11T14:30:45.123456"
+                    }
+                ]
             },
             {
                 "id": "abc456",
@@ -6543,7 +6545,9 @@ async def get_all_pagos_emprestito():
                 "fecha_creacion": "2024-11-10T10:15:30.654321",
                 "fecha_actualizacion": "2024-11-10T10:15:30.654321",
                 "estado": "registrado",
-                "tipo": "pago_manual"
+                "tipo": "pago_manual",
+                "tiene_documentos_soporte": false,
+                "documentos_s3": []
             }
         ],
         "count": 15,

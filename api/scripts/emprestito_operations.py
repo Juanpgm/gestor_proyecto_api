@@ -1783,7 +1783,7 @@ def cargar_pago_emprestito(datos_pago: Dict[str, Any], documentos: Optional[List
     
     Args:
         datos_pago: Diccionario con los datos del pago
-        documentos: Lista OBLIGATORIA de documentos a subir (cada uno con 'content', 'filename', 'content_type')
+        documentos: Lista OPCIONAL de documentos a subir (cada uno con 'content', 'filename', 'content_type')
     """
     if not FIRESTORE_AVAILABLE:
         return {
@@ -1792,16 +1792,6 @@ def cargar_pago_emprestito(datos_pago: Dict[str, Any], documentos: Optional[List
         }
 
     try:
-        # Validar que se hayan proporcionado documentos
-        if not documentos or len(documentos) == 0:
-            return {
-                "success": False,
-                "error": "Se requiere al menos un documento para registrar el pago",
-                "message": "Debe proporcionar al menos un archivo PDF, DOC, DOCX, XLS, XLSX, JPG o PNG"
-            }
-        
-        logger.info(f"📥 Validando {len(documentos)} documentos para pago")
-        
         # Validar campos obligatorios
         campos_obligatorios = [
             "numero_rpc",
@@ -1839,75 +1829,80 @@ def cargar_pago_emprestito(datos_pago: Dict[str, Any], documentos: Optional[List
                 "error": "Error obteniendo cliente Firestore"
             }
 
-        # Procesar documentos (OBLIGATORIOS)
+        # Procesar documentos solo si se proporcionaron
         documentos_info = []
         numero_rpc = datos_pago.get("numero_rpc", "").strip()
         
-        if not S3_AVAILABLE:
-            return {
-                "success": False,
-                "error": "Servicio de almacenamiento S3 no disponible",
-                "message": "No es posible subir documentos en este momento"
-            }
-        
-        try:
-            s3_manager = S3DocumentManager()
+        if documentos and len(documentos) > 0:
+            logger.info(f"📥 Validando {len(documentos)} documentos para pago")
             
-            # Preparar archivos para subida
-            referencia_contrato = datos_pago.get('referencia_contrato', '').strip()
-            files_to_upload = []
-            for doc in documentos:
-                # Validar documento
-                is_valid, error_msg = validate_document_file(doc['filename'], doc['content'])
-                if not is_valid:
-                    logger.warning(f"Documento inválido: {error_msg}")
-                    return {
-                        "success": False,
-                        "error": f"Documento inválido: {error_msg}",
-                        "filename": doc['filename']
-                    }
-                
-                files_to_upload.append({
-                    'content': doc['content'],
-                    'filename': doc['filename'],
-                    'content_type': doc.get('content_type', 'application/pdf'),
-                    'numero_rpc': numero_rpc,
-                    'centro_gestor': datos_pago.get('nombre_centro_gestor', '')
-                })
-            
-            # Subir documentos a S3 (usa referencia_contrato/numero_rpc como carpeta)
-            if files_to_upload:
-                successful, failed = s3_manager.upload_multiple_documents(
-                    files=files_to_upload,
-                    referencia_contrato=referencia_contrato,
-                    document_type='pago',
-                    numero_rpc=numero_rpc,  # Nivel adicional para pagos
-                    use_timestamp=False  # Sin timestamp para permitir sobreescritura
-                )
-                
-                documentos_info = successful
-                
-                if failed:
-                    logger.error(f"Algunos documentos fallaron al subir: {len(failed)}")
-                    return {
-                        "success": False,
-                        "error": f"Error subiendo {len(failed)} documento(s)",
-                        "failed_files": [f.get('filename') for f in failed]
-                    }
-                
-                logger.info(f"✅ Subidos {len(successful)} documentos para pago de RPC {numero_rpc}")
-            else:
+            if not S3_AVAILABLE:
                 return {
                     "success": False,
-                    "error": "No se pudo validar ningún documento para subir"
+                    "error": "Servicio de almacenamiento S3 no disponible",
+                    "message": "No es posible subir documentos en este momento"
                 }
+            
+            try:
+                s3_manager = S3DocumentManager()
                 
-        except Exception as e:
-            logger.error(f"Error subiendo documentos a S3: {e}")
-            return {
-                "success": False,
-                "error": f"Error subiendo documentos a S3: {str(e)}"
-            }
+                # Preparar archivos para subida
+                referencia_contrato = datos_pago.get('referencia_contrato', '').strip()
+                files_to_upload = []
+                for doc in documentos:
+                    # Validar documento
+                    is_valid, error_msg = validate_document_file(doc['filename'], doc['content'])
+                    if not is_valid:
+                        logger.warning(f"Documento inválido: {error_msg}")
+                        return {
+                            "success": False,
+                            "error": f"Documento inválido: {error_msg}",
+                            "filename": doc['filename']
+                        }
+                    
+                    files_to_upload.append({
+                        'content': doc['content'],
+                        'filename': doc['filename'],
+                        'content_type': doc.get('content_type', 'application/pdf'),
+                        'numero_rpc': numero_rpc,
+                        'centro_gestor': datos_pago.get('nombre_centro_gestor', '')
+                    })
+                
+                # Subir documentos a S3 (usa referencia_contrato/numero_rpc como carpeta)
+                if files_to_upload:
+                    successful, failed = s3_manager.upload_multiple_documents(
+                        files=files_to_upload,
+                        referencia_contrato=referencia_contrato,
+                        document_type='pago',
+                        numero_rpc=numero_rpc,  # Nivel adicional para pagos
+                        use_timestamp=False  # Sin timestamp para permitir sobreescritura
+                    )
+                    
+                    documentos_info = successful
+                    
+                    if failed:
+                        logger.error(f"Algunos documentos fallaron al subir: {len(failed)}")
+                        return {
+                            "success": False,
+                            "error": f"Error subiendo {len(failed)} documento(s)",
+                            "failed_files": [f.get('filename') for f in failed]
+                        }
+                    
+                    logger.info(f"✅ Subidos {len(successful)} documentos para pago de RPC {numero_rpc}")
+                else:
+                    return {
+                        "success": False,
+                        "error": "No se pudo validar ningún documento para subir"
+                    }
+                    
+            except Exception as e:
+                logger.error(f"Error subiendo documentos a S3: {e}")
+                return {
+                    "success": False,
+                    "error": f"Error subiendo documentos a S3: {str(e)}"
+                }
+        else:
+            logger.info(f"📝 Registro de pago sin documentos para RPC {numero_rpc}")
 
         # Preparar datos para guardar
         # fecha_registro se genera automáticamente con la hora del sistema
@@ -1951,6 +1946,7 @@ def cargar_pago_emprestito(datos_pago: Dict[str, Any], documentos: Optional[List
 async def get_pagos_emprestito_all() -> Dict[str, Any]:
     """
     Obtener todos los pagos de empréstito desde la colección pagos_emprestito
+    e incluir información sobre si tienen documentos soporte en S3
     """
     if not FIRESTORE_AVAILABLE:
         return {
@@ -1979,6 +1975,21 @@ async def get_pagos_emprestito_all() -> Dict[str, Any]:
         for doc in docs:
             pago_data = doc.to_dict()
             pago_data['id'] = doc.id
+            
+            # Detectar si tiene documentos soporte revisando la variable documentos_s3
+            documentos_s3 = pago_data.get('documentos_s3', [])
+            tiene_documentos_soporte = False
+            
+            if documentos_s3 and isinstance(documentos_s3, list) and len(documentos_s3) > 0:
+                # Verificar que al menos un documento tenga URL válida
+                tiene_documentos_soporte = any(
+                    doc.get('s3_url') or doc.get('url') 
+                    for doc in documentos_s3 
+                    if isinstance(doc, dict)
+                )
+            
+            # Agregar campo tiene_documentos_soporte
+            pago_data['tiene_documentos_soporte'] = tiene_documentos_soporte
             
             # Serializar objetos datetime
             pago_data = serialize_datetime_objects(pago_data)
