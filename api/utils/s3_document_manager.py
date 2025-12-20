@@ -435,6 +435,74 @@ class S3DocumentManager:
         except Exception as e:
             logger.error(f"❌ Error inesperado verificando bucket: {e}")
             return False
+    
+    def generate_presigned_url(self, s3_key: str, expiration: int = 3600) -> Optional[str]:
+        """
+        Generar URL temporal (presigned URL) para acceso a un archivo en S3
+        
+        Args:
+            s3_key: Clave del archivo en S3
+            expiration: Tiempo de expiración en segundos (por defecto 1 hora = 3600s)
+        
+        Returns:
+            URL temporal para acceder al archivo o None si hay error
+        """
+        try:
+            url = self.s3_client.generate_presigned_url(
+                'get_object',
+                Params={
+                    'Bucket': self.bucket_name,
+                    'Key': s3_key
+                },
+                ExpiresIn=expiration
+            )
+            logger.info(f"✅ URL temporal generada para: {s3_key} (expira en {expiration}s)")
+            return url
+        except ClientError as e:
+            logger.error(f"❌ Error generando URL temporal: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"❌ Error inesperado generando URL temporal: {e}")
+            return None
+    
+    def list_documents_with_presigned_urls(
+        self, 
+        referencia_contrato: str, 
+        document_type: str, 
+        numero_rpc: str = None,
+        expiration: int = 3600
+    ) -> List[Dict[str, Any]]:
+        """
+        Listar documentos de un contrato con URLs temporales para descarga
+        
+        Args:
+            referencia_contrato: Referencia del contrato
+            document_type: Tipo de documento ('rpc' o 'pago')
+            numero_rpc: Número de RPC (opcional, para filtrar pagos específicos de un RPC)
+            expiration: Tiempo de expiración de las URLs en segundos (por defecto 1 hora)
+        
+        Returns:
+            Lista de documentos con sus URLs temporales
+        """
+        try:
+            # Obtener lista de documentos
+            documents = self.list_documents(referencia_contrato, document_type, numero_rpc)
+            
+            # Agregar presigned URL a cada documento
+            for doc in documents:
+                presigned_url = self.generate_presigned_url(doc['s3_key'], expiration)
+                doc['presigned_url'] = presigned_url
+                doc['url_expiration_seconds'] = expiration
+                # Calcular tiempo de expiración
+                expiration_time = datetime.now() + datetime.timedelta(seconds=expiration)
+                doc['url_expires_at'] = expiration_time.isoformat()
+            
+            logger.info(f"✅ Generadas {len(documents)} URLs temporales para {referencia_contrato}")
+            return documents
+            
+        except Exception as e:
+            logger.error(f"❌ Error listando documentos con URLs temporales: {e}")
+            return []
 
 
 def validate_document_file(filename: str, content: bytes, max_size_mb: int = 10) -> Tuple[bool, str]:

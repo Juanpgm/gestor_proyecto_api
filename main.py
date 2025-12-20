@@ -6754,6 +6754,241 @@ async def get_all_rpc_contratos_emprestito():
             }
         )
 
+@app.get("/rpc_documentos_temporales", tags=["Gestión de Empréstito"], summary="🔵 Obtener Enlaces Temporales de Documentos de RPC")
+async def get_rpc_documentos_temporales(numero_rpc: str, expiration: int = 3600):
+    """
+    ## 🔵 GET | 📄 Documentos | Obtener Enlaces Temporales de Documentos de RPC
+    
+    Endpoint para generar enlaces temporales (presigned URLs) para visualizar y descargar 
+    los documentos PDF asociados a un RPC específico almacenados en S3.
+    
+    ### ✅ Funcionalidades principales:
+    - **Enlaces bajo demanda**: Genera URLs solo cuando se solicitan
+    - **URLs temporales**: Enlaces seguros con tiempo de expiración configurable
+    - **Acceso directo**: URLs listas para visualizar o descargar en el frontend
+    - **Seguridad**: Enlaces con expiración automática (por defecto 1 hora)
+    
+    ### 📝 Parámetros:
+    - **numero_rpc** (requerido): Número del RPC para buscar sus documentos
+    - **expiration** (opcional): Tiempo de expiración en segundos (default: 3600 = 1 hora)
+    
+    ### 📊 Información retornada:
+    - Lista de documentos del RPC
+    - URL temporal para cada documento
+    - Información del archivo (nombre, tamaño, fecha)
+    - Tiempo de expiración de cada URL
+    
+    ### 💡 Casos de uso:
+    - Visualizar documentos de RPC en el frontend
+    - Descargar documentos de soporte
+    - Validar documentación de compromisos presupuestales
+    - Auditoría de documentos
+    
+    ### ✅ Respuesta exitosa (200):
+    ```json
+    {
+        "success": true,
+        "numero_rpc": "RPC-2024-001",
+        "referencia_contrato": "CONT-SALUD-003-2024",
+        "documentos": [
+            {
+                "filename": "documento_rpc.pdf",
+                "s3_key": "contratos-rpc-docs/CONT-SALUD-003-2024/documento_rpc.pdf",
+                "presigned_url": "https://contratos-emprestito.s3.amazonaws.com/...",
+                "size": 1048576,
+                "last_modified": "2024-12-20T10:30:00",
+                "url_expiration_seconds": 3600,
+                "url_expires_at": "2024-12-20T11:30:00"
+            }
+        ],
+        "count": 1,
+        "message": "Se generaron 1 enlace(s) temporal(es) exitosamente"
+    }
+    ```
+    
+    ### ❌ Respuesta de error (404):
+    ```json
+    {
+        "success": false,
+        "error": "No se encontró el RPC especificado",
+        "numero_rpc": "RPC-XXX"
+    }
+    ```
+    
+    ### ❌ Respuesta de error (500):
+    ```json
+    {
+        "success": false,
+        "error": "Error generando enlaces temporales: ..."
+    }
+    ```
+    
+    ### 🔗 Endpoints relacionados:
+    - `GET /rpc_all` - Para listar todos los RPCs
+    - `POST /emprestito/cargar-rpc` - Para crear nuevos RPCs con documentos
+    """
+    try:
+        check_emprestito_availability()
+        
+        # Importar S3DocumentManager
+        try:
+            from api.utils.s3_document_manager import S3DocumentManager
+        except ImportError:
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "success": False,
+                    "error": "Servicio de almacenamiento S3 no disponible",
+                    "message": "No es posible generar enlaces temporales en este momento"
+                }
+            )
+        
+        # Validar que se proporcionó numero_rpc
+        if not numero_rpc or not numero_rpc.strip():
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "success": False,
+                    "error": "El parámetro 'numero_rpc' es requerido"
+                }
+            )
+        
+        numero_rpc = numero_rpc.strip()
+        
+        # Buscar el RPC en Firebase para obtener la referencia_contrato
+        db_client = get_firestore_client()
+        if not db_client:
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "success": False,
+                    "error": "Error conectando con la base de datos"
+                }
+            )
+        
+        # Buscar RPC por numero_rpc
+        rpc_ref = db_client.collection('rpc_contratos_emprestito')
+        query = rpc_ref.where('numero_rpc', '==', numero_rpc).limit(1)
+        docs = list(query.stream())
+        
+        if not docs:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "success": False,
+                    "error": f"No se encontró el RPC con número: {numero_rpc}",
+                    "numero_rpc": numero_rpc
+                }
+            )
+        
+        rpc_data = docs[0].to_dict()
+        referencia_contrato = rpc_data.get('referencia_contrato', '')
+        
+        if not referencia_contrato:
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "success": False,
+                    "error": "El RPC no tiene referencia de contrato asociada",
+                    "numero_rpc": numero_rpc
+                }
+            )
+        
+        # Inicializar S3DocumentManager y generar URLs temporales
+        try:
+            s3_manager = S3DocumentManager()
+            
+            # Obtener documentos desde el campo documentos_s3 en Firebase
+            documentos_firebase = rpc_data.get('documentos_s3', [])
+            documentos_resultado = []
+            
+            if documentos_firebase and isinstance(documentos_firebase, list) and len(documentos_firebase) > 0:
+                logger.info(f"✅ Encontrados {len(documentos_firebase)} documentos en Firebase para RPC {numero_rpc}")
+                
+                # Generar presigned URLs para cada documento guardado en Firebase
+                from datetime import timedelta
+                
+                for doc in documentos_firebase:
+                    if isinstance(doc, dict):
+                        # Buscar s3_key en diferentes variantes posibles
+                        s3_key = doc.get('s3_key') or doc.get('key') or doc.get('s3_url', '').replace(f"https://{s3_manager.bucket_name}.s3.{s3_manager.region}.amazonaws.com/", '')
+                        
+                        if s3_key:
+                            # Generar presigned URL
+                            presigned_url = s3_manager.generate_presigned_url(
+                                s3_key,
+                                expiration=expiration
+                            )
+                            
+                            # Calcular tiempo de expiración
+                            expiration_time = datetime.now() + timedelta(seconds=expiration)
+                            
+                            documento_con_url = {
+                                'filename': doc.get('filename', s3_key.split('/')[-1]),
+                                's3_key': s3_key,
+                                's3_url': doc.get('s3_url', f"https://{s3_manager.bucket_name}.s3.{s3_manager.region}.amazonaws.com/{s3_key}"),
+                                'size': doc.get('size', 0),
+                                'content_type': doc.get('content_type', 'application/pdf'),
+                                'upload_date': doc.get('upload_date', ''),
+                                'presigned_url': presigned_url,
+                                'url_expiration_seconds': expiration,
+                                'url_expires_at': expiration_time.isoformat()
+                            }
+                            
+                            documentos_resultado.append(documento_con_url)
+                            logger.info(f"✅ URL temporal generada para: {documento_con_url['filename']}")
+                        else:
+                            logger.warning(f"⚠️  Documento sin s3_key válido: {doc}")
+                
+                if len(documentos_resultado) == 0:
+                    logger.warning(f"⚠️  Documentos encontrados en Firebase pero ninguno con s3_key válido")
+            else:
+                # Si no hay documentos en Firebase, buscar directamente en S3
+                logger.info(f"📋 No hay documentos en Firebase, buscando directamente en S3 para referencia: {referencia_contrato}")
+                documentos_resultado = s3_manager.list_documents_with_presigned_urls(
+                    referencia_contrato=referencia_contrato,
+                    document_type='rpc',
+                    numero_rpc=None,
+                    expiration=expiration
+                )
+            
+            return JSONResponse(
+                content={
+                    "success": True,
+                    "numero_rpc": numero_rpc,
+                    "referencia_contrato": referencia_contrato,
+                    "documentos": documentos_resultado,
+                    "count": len(documentos_resultado),
+                    "expiration_seconds": expiration,
+                    "message": f"Se generaron {len(documentos_resultado)} enlace(s) temporal(es) exitosamente"
+                },
+                status_code=200,
+                headers={"Content-Type": "application/json; charset=utf-8"}
+            )
+            
+        except Exception as e:
+            logger.error(f"Error generando URLs temporales: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "success": False,
+                    "error": f"Error generando enlaces temporales: {str(e)}"
+                }
+            )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en endpoint de documentos temporales: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "success": False,
+                "error": "Error interno del servidor",
+                "message": str(e)
+            }
+        )
+
 @app.get("/convenios_transferencias_all", tags=["Gestión de Empréstito"], summary="🔵 Obtener Todos los Convenios de Transferencia")
 async def get_all_convenios_transferencia_emprestito():
     """
