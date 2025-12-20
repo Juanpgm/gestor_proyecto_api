@@ -64,7 +64,7 @@ jobs:
 
       - name: 🚄 Deploy to Railway
         if: github.ref == 'refs/heads/master'
-        uses: bervProject/railway-deploy@v1.3.0
+        uses: bervproject/railway-deploy@main
         with:
           railway_token: ${{ secrets.RAILWAY_TOKEN }}
           service: ${{ secrets.RAILWAY_SERVICE_ID }}
