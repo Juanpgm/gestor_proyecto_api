@@ -1127,6 +1127,102 @@ async def actualizar_proceso_emprestito(*args, **kwargs):
     """Función stub - No implementada temporalmente"""
     return {"success": False, "error": "Función no implementada temporalmente"}
 
+async def actualizar_proceso_secop_por_referencia(referencia_proceso: str, campos_actualizar: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Actualizar un proceso SECOP existente en procesos_emprestito por referencia_proceso
+    Permite actualizar SOLO valor_publicacion
+    """
+    if not FIRESTORE_AVAILABLE:
+        return {
+            "success": False,
+            "error": "Firebase no disponible"
+        }
+
+    try:
+        db_client = get_firestore_client()
+        if not db_client:
+            return {
+                "success": False,
+                "error": "Error obteniendo cliente Firestore"
+            }
+
+        # Buscar proceso por referencia_proceso
+        procesos_ref = db_client.collection('procesos_emprestito')
+        query_resultado = procesos_ref.where('referencia_proceso', '==', referencia_proceso).get()
+
+        if len(query_resultado) == 0:
+            return {
+                "success": False,
+                "error": f"No se encontró ningún proceso SECOP con referencia_proceso: {referencia_proceso}",
+                "referencia_proceso": referencia_proceso
+            }
+
+        # Obtener el documento
+        doc = query_resultado[0]
+        doc_data = doc.to_dict()
+
+        # SOLO permitir actualizar valor_publicacion
+        campos_permitidos = ["valor_publicacion"]
+        
+        # Preparar datos para actualizar
+        datos_actualizacion = {}
+        campos_actualizados = []
+        valores_anteriores = {}
+        valores_nuevos = {}
+        
+        for campo, valor in campos_actualizar.items():
+            if campo not in campos_permitidos:
+                continue  # Ignorar campos no permitidos
+                
+            if valor is not None:
+                # Guardar valor anterior para el historial
+                valores_anteriores[campo] = doc_data.get(campo)
+                
+                # El campo valor_publicacion es numérico
+                datos_actualizacion[campo] = float(valor)
+                valores_nuevos[campo] = datos_actualizacion[campo]
+                campos_actualizados.append(campo)
+
+        # Si no hay campos para actualizar
+        if not datos_actualizacion:
+            return {
+                "success": False,
+                "error": "No se proporcionaron campos para actualizar",
+                "campos_disponibles": ["valor_publicacion"]
+            }
+
+        # Agregar timestamp de actualización
+        datos_actualizacion["fecha_actualizacion"] = datetime.now()
+
+        # Actualizar documento
+        doc.reference.update(datos_actualizacion)
+
+        # Obtener documento actualizado
+        doc_actualizado = doc.reference.get()
+        datos_completos = doc_actualizado.to_dict()
+
+        logger.info(f"Proceso SECOP actualizado exitosamente: {referencia_proceso}, campos: {campos_actualizados}")
+
+        return {
+            "success": True,
+            "message": "Proceso SECOP actualizado exitosamente",
+            "referencia_proceso": referencia_proceso,
+            "coleccion": "procesos_emprestito",
+            "documento_id": doc.id,
+            "campos_modificados": campos_actualizados,
+            "valores_anteriores": valores_anteriores,
+            "valores_nuevos": valores_nuevos,
+            "proceso_actualizado": serialize_datetime_objects(datos_completos),
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Error actualizando proceso SECOP: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
 async def obtener_codigos_contratos(*args, **kwargs):
     """Función stub - No implementada temporalmente"""
     return {"success": False, "error": "Función no implementada temporalmente"}
@@ -2220,11 +2316,27 @@ async def obtener_datos_secop_completos(referencia_proceso: str, nit_entidad: Op
 
         # Mapear campos completos según especificaciones
         # Mantener nombres de variables en Firebase sin cambiar, pero mapear desde SECOP
+        
+        # Determinar estado del proceso de manera inteligente
+        # Prioridad: estado_resumen > adjudicado > estado_del_procedimiento
+        adjudicado_raw = proceso_raw.get("adjudicado", "")
+        estado_resumen_raw = proceso_raw.get("estado_resumen", "")
+        estado_procedimiento_raw = proceso_raw.get("estado_del_procedimiento", "")
+        
+        # Lógica para determinar el estado correcto
+        estado_proceso_final = estado_procedimiento_raw  # Default
+        if estado_resumen_raw and estado_resumen_raw.strip():
+            # Si hay estado_resumen, usarlo como estado principal
+            estado_proceso_final = estado_resumen_raw
+        elif adjudicado_raw and adjudicado_raw.lower() in ["sí", "si", "yes", "true"]:
+            # Si está marcado como adjudicado, el estado debe ser Adjudicado
+            estado_proceso_final = "Adjudicado"
+        
         proceso_datos_completos = {
             # Campos básicos existentes
-            "adjudicado": proceso_raw.get("adjudicado", ""),
+            "adjudicado": adjudicado_raw,
             "fase": proceso_raw.get("fase", ""),
-            "estado_proceso": proceso_raw.get("estado_del_procedimiento", ""),
+            "estado_proceso": estado_proceso_final,  # Estado determinado inteligentemente
             
             # Campos adicionales solicitados con mapeo exacto
             "fecha_publicacion_fase": proceso_raw.get("fecha_de_publicacion_del", ""),
@@ -3643,5 +3755,294 @@ async def actualizar_proyeccion_emprestito(referencia_proceso: str, datos_actual
         return {
             "success": False,
             "error": f"Error actualizando proyección: {str(e)}"
+        }
+
+
+async def actualizar_orden_compra_por_numero(numero_orden: str, campos_actualizar: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Actualizar una orden de compra existente en ordenes_compra_emprestito por numero_orden
+    Permite actualizar SOLO valor_orden y valor_proyectado (opcional si existe)
+    """
+    if not FIRESTORE_AVAILABLE:
+        return {
+            "success": False,
+            "error": "Firebase no disponible"
+        }
+
+    try:
+        db_client = get_firestore_client()
+        if not db_client:
+            return {
+                "success": False,
+                "error": "Error obteniendo cliente Firestore"
+            }
+
+        # Buscar orden de compra por numero_orden
+        ordenes_ref = db_client.collection('ordenes_compra_emprestito')
+        query_resultado = ordenes_ref.where('numero_orden', '==', numero_orden).get()
+
+        if len(query_resultado) == 0:
+            return {
+                "success": False,
+                "error": f"No se encontró ninguna orden de compra con numero_orden: {numero_orden}",
+                "numero_orden": numero_orden
+            }
+
+        # Obtener el documento
+        doc = query_resultado[0]
+        doc_data = doc.to_dict()
+
+        # SOLO permitir actualizar campos de valores
+        campos_permitidos = ["valor_orden", "valor_proyectado"]
+        
+        # Preparar datos para actualizar
+        datos_actualizacion = {}
+        campos_actualizados = []
+        valores_anteriores = {}
+        valores_nuevos = {}
+        
+        for campo, valor in campos_actualizar.items():
+            if campo not in campos_permitidos:
+                continue  # Ignorar campos no permitidos
+                
+            if valor is not None:
+                # Guardar valor anterior para el historial
+                valores_anteriores[campo] = doc_data.get(campo)
+                
+                # Los campos de valores son numéricos
+                datos_actualizacion[campo] = float(valor)
+                valores_nuevos[campo] = datos_actualizacion[campo]
+                campos_actualizados.append(campo)
+
+        # Si no hay campos para actualizar
+        if not datos_actualizacion:
+            return {
+                "success": False,
+                "error": "No se proporcionaron campos para actualizar",
+                "campos_disponibles": ["valor_orden", "valor_proyectado"]
+            }
+
+        # Agregar timestamp de actualización
+        datos_actualizacion["fecha_actualizacion"] = datetime.now()
+
+        # Actualizar documento
+        doc.reference.update(datos_actualizacion)
+
+        # Obtener documento actualizado
+        doc_actualizado = doc.reference.get()
+        datos_completos = doc_actualizado.to_dict()
+
+        logger.info(f"Orden de compra actualizada exitosamente: {numero_orden}, campos: {campos_actualizados}")
+
+        return {
+            "success": True,
+            "message": "Orden de compra actualizada exitosamente",
+            "numero_orden": numero_orden,
+            "coleccion": "ordenes_compra_emprestito",
+            "documento_id": doc.id,
+            "campos_modificados": campos_actualizados,
+            "valores_anteriores": valores_anteriores,
+            "valores_nuevos": valores_nuevos,
+            "orden_actualizada": serialize_datetime_objects(datos_completos),
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Error actualizando orden de compra: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+async def actualizar_convenio_por_referencia(referencia_contrato: str, campos_actualizar: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Actualizar un convenio de transferencia existente en convenios_transferencias_emprestito por referencia_contrato
+    Permite actualizar SOLO valor_contrato
+    """
+    if not FIRESTORE_AVAILABLE:
+        return {
+            "success": False,
+            "error": "Firebase no disponible"
+        }
+
+    try:
+        db_client = get_firestore_client()
+        if not db_client:
+            return {
+                "success": False,
+                "error": "Error obteniendo cliente Firestore"
+            }
+
+        # Buscar convenio por referencia_contrato
+        convenios_ref = db_client.collection('convenios_transferencias_emprestito')
+        query_resultado = convenios_ref.where('referencia_contrato', '==', referencia_contrato).get()
+
+        if len(query_resultado) == 0:
+            return {
+                "success": False,
+                "error": f"No se encontró ningún convenio de transferencia con referencia_contrato: {referencia_contrato}",
+                "referencia_contrato": referencia_contrato
+            }
+
+        # Obtener el documento
+        doc = query_resultado[0]
+        doc_data = doc.to_dict()
+
+        # SOLO permitir actualizar valor_contrato
+        campos_permitidos = ["valor_contrato"]
+        
+        # Preparar datos para actualizar
+        datos_actualizacion = {}
+        campos_actualizados = []
+        valores_anteriores = {}
+        valores_nuevos = {}
+        
+        for campo, valor in campos_actualizar.items():
+            if campo not in campos_permitidos:
+                continue  # Ignorar campos no permitidos
+                
+            if valor is not None:
+                # Guardar valor anterior para el historial
+                valores_anteriores[campo] = doc_data.get(campo)
+                
+                # El campo valor_contrato es numérico
+                datos_actualizacion[campo] = float(valor)
+                valores_nuevos[campo] = datos_actualizacion[campo]
+                campos_actualizados.append(campo)
+
+        # Si no hay campos para actualizar
+        if not datos_actualizacion:
+            return {
+                "success": False,
+                "error": "No se proporcionaron campos para actualizar",
+                "campos_disponibles": ["valor_contrato"]
+            }
+
+        # Agregar timestamp de actualización
+        datos_actualizacion["fecha_actualizacion"] = datetime.now()
+
+        # Actualizar documento
+        doc.reference.update(datos_actualizacion)
+
+        # Obtener documento actualizado
+        doc_actualizado = doc.reference.get()
+        datos_completos = doc_actualizado.to_dict()
+
+        logger.info(f"Convenio de transferencia actualizado exitosamente: {referencia_contrato}, campos: {campos_actualizados}")
+
+        return {
+            "success": True,
+            "message": "Convenio de transferencia actualizado exitosamente",
+            "referencia_contrato": referencia_contrato,
+            "coleccion": "convenios_transferencias_emprestito",
+            "documento_id": doc.id,
+            "campos_modificados": campos_actualizados,
+            "valores_anteriores": valores_anteriores,
+            "valores_nuevos": valores_nuevos,
+            "convenio_actualizado": serialize_datetime_objects(datos_completos),
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Error actualizando convenio de transferencia: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+async def actualizar_contrato_secop_por_referencia(referencia_contrato: str, campos_actualizar: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Actualizar un contrato SECOP existente en contratos_emprestito por referencia_contrato
+    Permite actualizar SOLO valor_contrato
+    """
+    if not FIRESTORE_AVAILABLE:
+        return {
+            "success": False,
+            "error": "Firebase no disponible"
+        }
+
+    try:
+        db_client = get_firestore_client()
+        if not db_client:
+            return {
+                "success": False,
+                "error": "Error obteniendo cliente Firestore"
+            }
+
+        # Buscar contrato por referencia_contrato
+        contratos_ref = db_client.collection('contratos_emprestito')
+        query_resultado = contratos_ref.where('referencia_contrato', '==', referencia_contrato).get()
+
+        if len(query_resultado) == 0:
+            return {
+                "success": False,
+                "error": f"No se encontró ningún contrato SECOP con referencia_contrato: {referencia_contrato}",
+                "referencia_contrato": referencia_contrato
+            }
+
+        # Obtener el documento
+        doc = query_resultado[0]
+        doc_data = doc.to_dict()
+
+        # SOLO permitir actualizar valor_contrato
+        campos_permitidos = ["valor_contrato"]
+        
+        # Preparar datos para actualizar
+        datos_actualizacion = {}
+        campos_actualizados = []
+        valores_anteriores = {}
+        valores_nuevos = {}
+        
+        for campo, valor in campos_actualizar.items():
+            if campo not in campos_permitidos:
+                continue  # Ignorar campos no permitidos
+                
+            if valor is not None:
+                # Guardar valor anterior para el historial
+                valores_anteriores[campo] = doc_data.get(campo)
+                
+                # El campo valor_contrato es numérico
+                datos_actualizacion[campo] = float(valor)
+                valores_nuevos[campo] = datos_actualizacion[campo]
+                campos_actualizados.append(campo)
+
+        # Si no hay campos para actualizar
+        if not datos_actualizacion:
+            return {
+                "success": False,
+                "error": "No se proporcionaron campos para actualizar",
+                "campos_disponibles": ["valor_contrato"]
+            }
+
+        # Agregar timestamp de actualización
+        datos_actualizacion["fecha_actualizacion"] = datetime.now()
+
+        # Actualizar documento
+        doc.reference.update(datos_actualizacion)
+
+        # Obtener documento actualizado
+        doc_actualizado = doc.reference.get()
+        datos_completos = doc_actualizado.to_dict()
+
+        logger.info(f"Contrato SECOP actualizado exitosamente: {referencia_contrato}, campos: {campos_actualizados}")
+
+        return {
+            "success": True,
+            "message": "Contrato SECOP actualizado exitosamente",
+            "referencia_contrato": referencia_contrato,
+            "coleccion": "contratos_emprestito",
+            "documento_id": doc.id,
+            "campos_modificados": campos_actualizados,
+            "valores_anteriores": valores_anteriores,
+            "valores_nuevos": valores_nuevos,
+            "contrato_actualizado": serialize_datetime_objects(datos_completos),
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Error actualizando contrato SECOP: {e}")
+        return {
+            "success": False,
+            "error": str(e)
         }
 

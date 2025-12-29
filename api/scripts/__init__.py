@@ -156,8 +156,30 @@ try:
         leer_proyecciones_no_guardadas,
         get_proyecciones_sin_proceso,
         actualizar_proyeccion_emprestito,
+        # Nuevas funciones para actualizar valores en colecciones de empréstito
+        actualizar_orden_compra_por_numero,
+        actualizar_convenio_por_referencia,
+        actualizar_contrato_secop_por_referencia,
+        actualizar_proceso_secop_por_referencia,
         EMPRESTITO_OPERATIONS_AVAILABLE
     )
+    
+    # Importar control de cambios para auditoría
+    try:
+        from .control_cambios_emprestito import (
+            registrar_cambio_valor,
+            obtener_historial_cambios
+        )
+        CONTROL_CAMBIOS_AVAILABLE = True
+    except ImportError as e:
+        print(f"Warning: Control de cambios not available: {e}")
+        CONTROL_CAMBIOS_AVAILABLE = False
+        
+        async def registrar_cambio_valor(*args, **kwargs):
+            return {"success": False, "error": "Control de cambios not available"}
+        
+        async def obtener_historial_cambios(*args, **kwargs):
+            return {"success": False, "error": "Control de cambios not available"}
     print(f"✅ Emprestito operations imported successfully - AVAILABLE: {EMPRESTITO_OPERATIONS_AVAILABLE}")
     
     # Importar funciones optimizadas si están disponibles

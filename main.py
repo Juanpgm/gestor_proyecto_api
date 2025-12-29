@@ -155,6 +155,9 @@ try:
         leer_proyecciones_no_guardadas,
         get_proyecciones_sin_proceso,
         actualizar_proyeccion_emprestito,
+        # Control de cambios para auditoría
+        registrar_cambio_valor,
+        obtener_historial_cambios,
         # Reportes contratos operations
         create_reporte_contrato,
         get_reportes_contratos,
@@ -5159,6 +5162,10 @@ try:
         cargar_orden_compra_directa,
         cargar_convenio_transferencia,
         modificar_convenio_transferencia,
+        actualizar_orden_compra_por_numero,
+        actualizar_convenio_por_referencia,
+        actualizar_contrato_secop_por_referencia,
+        actualizar_proceso_secop_por_referencia,
         cargar_rpc_emprestito,
         cargar_pago_emprestito,
         get_pagos_emprestito_all,
@@ -5170,6 +5177,9 @@ try:
         get_ordenes_compra_emprestito_all,
         get_ordenes_compra_emprestito_by_referencia,
         get_ordenes_compra_emprestito_by_centro_gestor,
+        # Control de cambios para auditoría
+        registrar_cambio_valor,
+        obtener_historial_cambios,
         EMPRESTITO_OPERATIONS_AVAILABLE,
         TVEC_ENRICH_OPERATIONS_AVAILABLE,
         ORDENES_COMPRA_OPERATIONS_AVAILABLE
@@ -7441,39 +7451,34 @@ async def eliminar_proceso_emprestito_endpoint(referencia_proceso: str):
         )
 
 
-@app.put("/emprestito/proceso/{referencia_proceso}", tags=["Gestión de Empréstito"], summary="🟡 Actualizar Proceso")
-async def actualizar_proceso_emprestito_endpoint(
+@app.put("/emprestito/modificar-valores/proceso/{referencia_proceso}", tags=["Gestión de Empréstito"], summary="🟡 Modificar Valor de Proceso SECOP")
+async def actualizar_valor_proceso_secop_endpoint(
     referencia_proceso: str,
-    bp: Optional[str] = Form(None, description="Código BP (opcional)"),
-    nombre_resumido_proceso: Optional[str] = Form(None, description="Nombre resumido del proceso (opcional)"),
-    id_paa: Optional[str] = Form(None, description="ID PAA (opcional)"),
-    valor_proyectado: Optional[float] = Form(None, description="Valor proyectado (opcional)")
+    valor_publicacion: Optional[float] = Form(None, description="Valor de publicación del proceso SECOP (opcional, debe ser numérico)"),
+    change_motivo: str = Form(..., description="Justificación del cambio (obligatorio)"),
+    change_support_file: UploadFile = File(..., description="Documento soporte (obligatorio, PDF, XLSX, DOCX, etc.)")
 ):
     """
-    ## 🟡 PUT | ✏️ Actualización | Actualizar Proceso de Empréstito
+    ## 🟡 PUT | ✏️ Actualización | Modificar Valor de Publicación de Proceso SECOP
     
-    Actualiza campos específicos de un proceso de empréstito existente sin crear registros nuevos.
-    Solo se actualizan los campos proporcionados, manteniendo los demás valores sin cambios.
+    Actualiza únicamente el campo `valor_publicacion` de un proceso SECOP existente 
+    identificado por `referencia_proceso`.
     
     ### ✅ Funcionalidades principales:
-    - **Búsqueda automática**: Localiza el proceso en ambas colecciones
-    - **Actualización selectiva**: Solo modifica los campos proporcionados
-    - **Preservación de datos**: Mantiene los campos no especificados
-    - **Historial de cambios**: Muestra valores anteriores y nuevos
+    - **Búsqueda por referencia_proceso**: Localiza el proceso en `procesos_emprestito`
+    - **Actualización exclusiva de valor**: Solo modifica `valor_publicacion`
+    - **Historial de cambios**: Muestra valor anterior y nuevo
+    - **Persistencia garantizada**: Los cambios persisten incluso después de ejecutar endpoints POST
     
-    ### 🔍 Colecciones de búsqueda:
+    ### 🔍 Colección de búsqueda:
     - **procesos_emprestito** (SECOP)
-    - **ordenes_compra_emprestito** (TVEC)
     
-    ### 📝 Campos actualizables:
-    - `bp`: Código BP
-    - `nombre_resumido_proceso`: Nombre resumido del proceso
-    - `id_paa`: ID PAA
-    - `valor_proyectado`: Valor proyectado (numérico)
+    ### 📝 Campo actualizable:
+    - `valor_publicacion`: Valor de publicación del proceso (numérico) **[Único campo modificable]**
     
     ### ⚙️ Comportamiento:
-    - **Campos vacíos**: Se ignoran (no se actualizan)
-    - **Campos con valor**: Se actualizan en la base de datos
+    - **Campo vacío**: Error - debe proporcionar un valor
+    - **Campo con valor**: Se actualiza en la base de datos
     - **Timestamp**: Se actualiza automáticamente `fecha_actualizacion`
     - **Validación previa**: Verifica que el proceso existe
     
@@ -7481,21 +7486,19 @@ async def actualizar_proceso_emprestito_endpoint(
     ```json
     {
         "success": true,
-        "message": "Proceso actualizado exitosamente",
+        "message": "Proceso SECOP actualizado exitosamente",
         "referencia_proceso": "SCMGSU-CM-003-2024",
         "coleccion": "procesos_emprestito",
         "documento_id": "xyz123",
-        "campos_modificados": ["bp", "valor_proyectado"],
+        "campos_modificados": ["valor_publicacion"],
         "valores_anteriores": {
-            "bp": "BP-OLD-001",
-            "valor_proyectado": 1000000.0
+            "valor_publicacion": 1000000.0
         },
         "valores_nuevos": {
-            "bp": "BP-NEW-001",
-            "valor_proyectado": 1500000.0
+            "valor_publicacion": 1500000.0
         },
         "proceso_actualizado": { ... },
-        "timestamp": "2025-10-06T..."
+        "timestamp": "2025-12-28T..."
     }
     ```
     
@@ -7503,18 +7506,8 @@ async def actualizar_proceso_emprestito_endpoint(
     ```json
     {
         "success": false,
-        "error": "No se encontró ningún proceso con referencia_proceso: REFERENCIA",
-        "referencia_proceso": "REFERENCIA",
-        "colecciones_buscadas": ["procesos_emprestito", "ordenes_compra_emprestito"]
-    }
-    ```
-    
-    ### 📋 Respuesta sin campos:
-    ```json
-    {
-        "success": false,
-        "error": "No se proporcionaron campos para actualizar",
-        "campos_disponibles": ["bp", "nombre_resumido_proceso", "id_paa", "valor_proyectado"]
+        "error": "No se encontró ningún proceso SECOP con referencia_proceso: SCMGSU-CM-003-2024",
+        "referencia_proceso": "SCMGSU-CM-003-2024"
     }
     ```
     """
@@ -7532,13 +7525,26 @@ async def actualizar_proceso_emprestito_endpoint(
                 }
             )
         
+        # Validar que se proporcione al menos un valor para actualizar
+        if valor_publicacion is None:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "success": False,
+                    "error": "No se proporcionaron campos para actualizar",
+                    "message": "Debe proporcionar al menos valor_publicacion para actualizar"
+                }
+            )
+        
+        # Preparar campos para actualizar
+        campos_actualizar = {
+            "valor_publicacion": float(valor_publicacion)
+        }
+        
         # Actualizar proceso
-        resultado = await actualizar_proceso_emprestito(
+        resultado = await actualizar_proceso_secop_por_referencia(
             referencia_proceso=referencia_proceso.strip(),
-            bp=bp,
-            nombre_resumido_proceso=nombre_resumido_proceso,
-            id_paa=id_paa,
-            valor_proyectado=valor_proyectado
+            campos_actualizar=campos_actualizar
         )
         
         # Manejar respuesta según el resultado
@@ -7562,6 +7568,37 @@ async def actualizar_proceso_emprestito_endpoint(
                     detail=resultado
                 )
         
+        # ✅ Actualización exitosa - registrar en auditoría
+        try:
+            logger.info(f"🔍 Iniciando registro de auditoría para proceso: {referencia_proceso}")
+            auditoria_resultado = await registrar_cambio_valor(
+                tipo_coleccion="procesos",
+                identificador=referencia_proceso.strip(),
+                campo_modificado="valor_publicacion",
+                valor_anterior=resultado.get("valores_anteriores", {}).get("valor_publicacion"),
+                valor_nuevo=resultado.get("valores_nuevos", {}).get("valor_publicacion"),
+                motivo=change_motivo,
+                archivo_soporte=change_support_file,
+                usuario=None,  # Puede integrarse con autenticación
+                endpoint_usado="/emprestito/modificar-valores/proceso"
+            )
+            
+            logger.info(f"📋 Resultado de auditoría: {auditoria_resultado}")
+            
+            # Agregar información de auditoría a la respuesta
+            resultado["auditoria"] = auditoria_resultado
+            
+            if not auditoria_resultado.get("success"):
+                logger.warning(f"⚠️ Auditoría no registrada: {auditoria_resultado.get('error')}")
+                resultado["auditoria_warning"] = "Cambio realizado pero no se pudo registrar en auditoría"
+            else:
+                logger.info(f"✅ Auditoría registrada exitosamente: {auditoria_resultado.get('change_id')}")
+                
+        except Exception as e_audit:
+            logger.error(f"Error registrando auditoría: {e_audit}")
+            resultado["auditoria"] = {"success": False, "error": str(e_audit)}
+            resultado["auditoria_warning"] = "Cambio realizado pero auditoría falló"
+        
         # Respuesta exitosa
         return JSONResponse(
             content=resultado,
@@ -7572,14 +7609,594 @@ async def actualizar_proceso_emprestito_endpoint(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error en endpoint actualizar proceso: {e}")
+        logger.error(f"Error en endpoint actualizar valor proceso SECOP: {e}")
         raise HTTPException(
             status_code=500,
             detail={
                 "success": False,
                 "error": "Error interno del servidor",
-                "message": "Error actualizando proceso de empréstito",
+                "message": "Error actualizando valor de proceso SECOP",
                 "referencia_proceso": referencia_proceso
+            }
+        )
+
+
+@app.put("/emprestito/modificar-valores/orden-compra/{numero_orden}", tags=["Gestión de Empréstito"], summary="🟡 Modificar Valor de Orden de Compra")
+async def actualizar_orden_compra_endpoint(
+    numero_orden: str,
+    valor_orden: Optional[float] = Form(None, description="Valor de la orden (opcional, debe ser numérico)"),
+    valor_proyectado: Optional[float] = Form(None, description="Valor proyectado (opcional, debe ser numérico)"),
+    change_motivo: str = Form(..., description="Justificación del cambio (obligatorio)"),
+    change_support_file: UploadFile = File(..., description="Documento soporte (obligatorio, PDF, XLSX, DOCX, etc.)")
+):
+    """
+    ## 🟡 PUT | ✏️ Actualización | Actualizar Orden de Compra de Empréstito por Número de Orden
+    
+    Actualiza campos específicos de una orden de compra existente identificada por `numero_orden`.
+    Solo se actualizan los campos proporcionados, manteniendo los demás valores sin cambios.
+    
+    ### ✅ Funcionalidades principales:
+    - **Búsqueda por numero_orden**: Localiza la orden de compra en `ordenes_compra_emprestito`
+    - **Actualización selectiva**: Solo modifica los campos proporcionados
+    - **Preservación de datos**: Mantiene los campos no especificados
+    - **Historial de cambios**: Muestra valores anteriores y nuevos
+    - **Persistencia garantizada**: Los cambios persisten incluso después de ejecutar endpoints POST
+    
+    ### 🔍 Colección de búsqueda:
+    - **ordenes_compra_emprestito** (TVEC)
+    
+    ### 📝 Campos actualizables:
+    - `valor_orden`: Valor de la orden de compra (numérico) **[Campo principal]**
+    - `valor_proyectado`: Valor proyectado (numérico) **[Opcional si existe]**
+    
+    ### ⚙️ Comportamiento:
+    - **Campos vacíos**: Se ignoran (no se actualizan)
+    - **Campos con valor**: Se actualizan en la base de datos
+    - **Timestamp**: Se actualiza automáticamente `fecha_actualizacion`
+    - **Validación previa**: Verifica que la orden existe
+    - **Solo valores**: Ningún otro campo puede ser modificado por este endpoint
+    
+    ### 📋 Respuesta exitosa:
+    ```json
+    {
+        "success": true,
+        "message": "Orden de compra actualizada exitosamente",
+        "numero_orden": "OC-2024-001",
+        "coleccion": "ordenes_compra_emprestito",
+        "documento_id": "xyz123",
+        "campos_modificados": ["valor_orden"],
+        "valores_anteriores": {
+            "valor_orden": 1000000.0
+        },
+        "valores_nuevos": {
+            "valor_orden": 1500000.0
+        },
+        "orden_actualizada": { ... },
+        "timestamp": "2025-12-28T..."
+    }
+    ```
+    """
+    try:
+        check_emprestito_availability()
+        
+        # Validar parámetro
+        if not numero_orden or not numero_orden.strip():
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "success": False,
+                    "error": "numero_orden es requerido",
+                    "message": "Debe proporcionar un numero_orden válido"
+                }
+            )
+        
+        # Validar que se proporcione al menos un valor para actualizar
+        if valor_orden is None and valor_proyectado is None:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "success": False,
+                    "error": "No se proporcionaron campos para actualizar",
+                    "message": "Debe proporcionar al menos uno de: valor_orden, valor_proyectado"
+                }
+            )
+        
+        # Preparar campos para actualizar (solo valores numéricos proporcionados)
+        campos_actualizar = {}
+        if valor_orden is not None:
+            campos_actualizar["valor_orden"] = float(valor_orden)
+        if valor_proyectado is not None:
+            campos_actualizar["valor_proyectado"] = float(valor_proyectado)
+        
+        # Actualizar orden de compra
+        resultado = await actualizar_orden_compra_por_numero(
+            numero_orden=numero_orden.strip(),
+            campos_actualizar=campos_actualizar
+        )
+        
+        # Manejar respuesta según el resultado
+        if not resultado.get("success"):
+            if "No se encontró" in resultado.get("error", ""):
+                raise HTTPException(
+                    status_code=404,
+                    detail=resultado
+                )
+            elif "No se proporcionaron campos" in resultado.get("error", ""):
+                raise HTTPException(
+                    status_code=400,
+                    detail=resultado
+                )
+            else:
+                raise HTTPException(
+                    status_code=500,
+                    detail=resultado
+                )
+        
+        # ✅ Actualización exitosa - registrar en auditoría
+        try:
+            logger.info(f"🔍 Iniciando registro de auditoría para orden: {numero_orden}")
+            # Determinar campo(s) modificado(s)
+            campos_modificados = list(campos_actualizar.keys())
+            campo_modificado = ", ".join(campos_modificados)
+            
+            auditoria_resultado = await registrar_cambio_valor(
+                tipo_coleccion="ordenes",
+                identificador=numero_orden.strip(),
+                campo_modificado=campo_modificado,
+                valor_anterior=resultado.get("valores_anteriores", {}).get("valor_orden"),
+                valor_nuevo=resultado.get("valores_nuevos", {}).get("valor_orden"),
+                motivo=change_motivo,
+                archivo_soporte=change_support_file,
+                usuario=None,
+                endpoint_usado="/emprestito/modificar-valores/orden-compra"
+            )
+            
+            logger.info(f"📋 Resultado de auditoría: {auditoria_resultado}")
+            
+            # Agregar información de auditoría a la respuesta
+            resultado["auditoria"] = auditoria_resultado
+            
+            if not auditoria_resultado.get("success"):
+                logger.warning(f"⚠️ Auditoría no registrada: {auditoria_resultado.get('error')}")
+                resultado["auditoria_warning"] = "Cambio realizado pero no se pudo registrar en auditoría"
+            else:
+                logger.info(f"✅ Auditoría registrada exitosamente: {auditoria_resultado.get('change_id')}")
+                
+        except Exception as e_audit:
+            logger.error(f"Error registrando auditoría: {e_audit}")
+            resultado["auditoria"] = {"success": False, "error": str(e_audit)}
+            resultado["auditoria_warning"] = "Cambio realizado pero auditoría falló"
+        
+        # Respuesta exitosa
+        return JSONResponse(
+            content=resultado,
+            status_code=200,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en endpoint actualizar valores orden de compra: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "success": False,
+                "error": "Error interno del servidor",
+                "message": "Error actualizando valores de orden de compra",
+                "numero_orden": numero_orden
+            }
+        )
+
+
+@app.put("/emprestito/modificar-valores/convenio/{referencia_contrato}", tags=["Gestión de Empréstito"], summary="🟡 Modificar Valor de Convenio")
+async def actualizar_valor_convenio_endpoint(
+    referencia_contrato: str,
+    valor_contrato: Optional[float] = Form(None, description="Valor del contrato (opcional, debe ser numérico)"),
+    change_motivo: str = Form(..., description="Justificación del cambio (obligatorio)"),
+    change_support_file: UploadFile = File(..., description="Documento soporte (obligatorio, PDF, XLSX, DOCX, etc.)")
+):
+    """
+    ## 🟡 PUT | ✏️ Actualización | Modificar Valor de Convenio de Transferencia
+    
+    Actualiza únicamente el campo `valor_contrato` de un convenio de transferencia existente 
+    identificado por `referencia_contrato`.
+    
+    ### ✅ Funcionalidades principales:
+    - **Búsqueda por referencia_contrato**: Localiza el convenio en `convenios_transferencias_emprestito`
+    - **Actualización exclusiva de valor**: Solo modifica `valor_contrato`
+    - **Historial de cambios**: Muestra valor anterior y nuevo
+    - **Persistencia garantizada**: Los cambios persisten incluso después de ejecutar endpoints POST
+    
+    ### 🔍 Colección de búsqueda:
+    - **convenios_transferencias_emprestito**
+    
+    ### 📝 Campo actualizable:
+    - `valor_contrato`: Valor del contrato (numérico) **[Único campo modificable]**
+    
+    ### ⚙️ Comportamiento:
+    - **Campo vacío**: Error - debe proporcionar un valor
+    - **Campo con valor**: Se actualiza en la base de datos
+    - **Timestamp**: Se actualiza automáticamente `fecha_actualizacion`
+    - **Validación previa**: Verifica que el convenio existe
+    
+    ### 📋 Respuesta exitosa:
+    ```json
+    {
+        "success": true,
+        "message": "Convenio de transferencia actualizado exitosamente",
+        "referencia_contrato": "CONT-2024-001",
+        "coleccion": "convenios_transferencias_emprestito",
+        "documento_id": "xyz123",
+        "campos_modificados": ["valor_contrato"],
+        "valores_anteriores": {
+            "valor_contrato": 1000000.0
+        },
+        "valores_nuevos": {
+            "valor_contrato": 1500000.0
+        },
+        "convenio_actualizado": { ... },
+        "timestamp": "2025-12-28T..."
+    }
+    ```
+    """
+    try:
+        check_emprestito_availability()
+        
+        # Validar parámetro
+        if not referencia_contrato or not referencia_contrato.strip():
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "success": False,
+                    "error": "referencia_contrato es requerida",
+                    "message": "Debe proporcionar una referencia_contrato válida"
+                }
+            )
+        
+        # Validar que se proporcione al menos un valor para actualizar
+        if valor_contrato is None:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "success": False,
+                    "error": "No se proporcionaron campos para actualizar",
+                    "message": "Debe proporcionar al menos valor_contrato para actualizar"
+                }
+            )
+        
+        # Preparar campos para actualizar
+        campos_actualizar = {
+            "valor_contrato": float(valor_contrato)
+        }
+        
+        # Actualizar convenio
+        resultado = await actualizar_convenio_por_referencia(
+            referencia_contrato=referencia_contrato.strip(),
+            campos_actualizar=campos_actualizar
+        )
+        
+        # Manejar respuesta según el resultado
+        if not resultado.get("success"):
+            if "No se encontró" in resultado.get("error", ""):
+                raise HTTPException(
+                    status_code=404,
+                    detail=resultado
+                )
+            elif "No se proporcionaron campos" in resultado.get("error", ""):
+                raise HTTPException(
+                    status_code=400,
+                    detail=resultado
+                )
+            else:
+                raise HTTPException(
+                    status_code=500,
+                    detail=resultado
+                )
+        
+        # ✅ Actualización exitosa - registrar en auditoría
+        try:
+            logger.info(f"🔍 Iniciando registro de auditoría para convenio: {referencia_contrato}")
+            auditoria_resultado = await registrar_cambio_valor(
+                tipo_coleccion="convenios",
+                identificador=referencia_contrato.strip(),
+                campo_modificado="valor_contrato",
+                valor_anterior=resultado.get("valores_anteriores", {}).get("valor_contrato"),
+                valor_nuevo=resultado.get("valores_nuevos", {}).get("valor_contrato"),
+                motivo=change_motivo,
+                archivo_soporte=change_support_file,
+                usuario=None,
+                endpoint_usado="/emprestito/modificar-valores/convenio"
+            )
+            
+            logger.info(f"📋 Resultado de auditoría: {auditoria_resultado}")
+            
+            # Agregar información de auditoría a la respuesta
+            resultado["auditoria"] = auditoria_resultado
+            
+            if not auditoria_resultado.get("success"):
+                logger.warning(f"⚠️ Auditoría no registrada: {auditoria_resultado.get('error')}")
+                resultado["auditoria_warning"] = "Cambio realizado pero no se pudo registrar en auditoría"
+            else:
+                logger.info(f"✅ Auditoría registrada exitosamente: {auditoria_resultado.get('change_id')}")
+                
+        except Exception as e_audit:
+            logger.error(f"Error registrando auditoría: {e_audit}")
+            resultado["auditoria"] = {"success": False, "error": str(e_audit)}
+            resultado["auditoria_warning"] = "Cambio realizado pero auditoría falló"
+        
+        # Respuesta exitosa
+        return JSONResponse(
+            content=resultado,
+            status_code=200,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en endpoint actualizar valor convenio: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "success": False,
+                "error": "Error interno del servidor",
+                "message": "Error actualizando valor de convenio de transferencia",
+                "referencia_contrato": referencia_contrato
+            }
+        )
+
+
+@app.put("/emprestito/modificar-valores/contrato-secop/{referencia_contrato}", tags=["Gestión de Empréstito"], summary="🟡 Actualizar Valor Contrato SECOP")
+async def actualizar_contrato_secop_endpoint(
+    referencia_contrato: str,
+    valor_contrato: Optional[float] = Form(None, description="Valor del contrato (opcional, debe ser numérico)"),
+    change_motivo: str = Form(..., description="Justificación del cambio (obligatorio)"),
+    change_support_file: UploadFile = File(..., description="Documento soporte (obligatorio, PDF, XLSX, DOCX, etc.)")
+):
+    """
+    ## 🟡 PUT | ✏️ Actualización | Actualizar Valor de Contrato SECOP
+    
+    Actualiza únicamente el campo `valor_contrato` de un contrato SECOP existente identificado por `referencia_contrato`.
+    Este endpoint está diseñado específicamente para modificar el valor del contrato, sin alterar ningún otro campo.
+    
+    ### ✅ Funcionalidades principales:
+    - **Búsqueda por referencia_contrato**: Localiza el contrato en `contratos_emprestito`
+    - **Actualización del valor**: Modifica solo el campo `valor_contrato`
+    - **Persistencia garantizada**: Los cambios persisten incluso después de ejecutar endpoints POST
+    - **Historial de cambios**: Muestra el valor anterior y el nuevo valor
+    
+    ### 🔍 Colección de búsqueda:
+    - **contratos_emprestito** (SECOP)
+    
+    ### 📝 Campo actualizable:
+    - `valor_contrato`: Valor del contrato (numérico, requerido)
+    
+    ### ⚙️ Comportamiento:
+    - **Campo requerido**: Debe proporcionar `valor_contrato`
+    - **Timestamp**: Se actualiza automáticamente `fecha_actualizacion`
+    - **Validación previa**: Verifica que el contrato existe
+    
+    ### 📋 Respuesta exitosa:
+    ```json
+    {
+        "success": true,
+        "message": "Contrato SECOP actualizado exitosamente",
+        "referencia_contrato": "CONT-SECOP-2024-001",
+        "coleccion": "contratos_emprestito",
+        "documento_id": "xyz123",
+        "campos_modificados": ["valor_contrato"],
+        "valores_anteriores": {
+            "valor_contrato": 1000000.0
+        },
+        "valores_nuevos": {
+            "valor_contrato": 1500000.0
+        },
+        "contrato_actualizado": { ... },
+        "timestamp": "2025-12-28T..."
+    }
+    ```
+    """
+    try:
+        check_emprestito_availability()
+        
+        # Validar parámetro
+        if not referencia_contrato or not referencia_contrato.strip():
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "success": False,
+                    "error": "referencia_contrato es requerida",
+                    "message": "Debe proporcionar una referencia_contrato válida"
+                }
+            )
+        
+        # Validar que se proporcione al menos un valor para actualizar
+        if valor_contrato is None:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "success": False,
+                    "error": "No se proporcionaron campos para actualizar",
+                    "message": "Debe proporcionar al menos valor_contrato para actualizar"
+                }
+            )
+        
+        # Preparar campos para actualizar (solo valor_contrato)
+        campos_actualizar = {
+            "valor_contrato": float(valor_contrato)
+        }
+        
+        # Actualizar contrato
+        resultado = await actualizar_contrato_secop_por_referencia(
+            referencia_contrato=referencia_contrato.strip(),
+            campos_actualizar=campos_actualizar
+        )
+        
+        # Manejar respuesta según el resultado
+        if not resultado.get("success"):
+            if "No se encontró" in resultado.get("error", ""):
+                raise HTTPException(
+                    status_code=404,
+                    detail=resultado
+                )
+            elif "No se proporcionaron campos" in resultado.get("error", ""):
+                raise HTTPException(
+                    status_code=400,
+                    detail=resultado
+                )
+            else:
+                raise HTTPException(
+                    status_code=500,
+                    detail=resultado
+                )
+        
+        # ✅ Actualización exitosa - registrar en auditoría
+        try:
+            logger.info(f"🔍 Iniciando registro de auditoría para contrato: {referencia_contrato}")
+            auditoria_resultado = await registrar_cambio_valor(
+                tipo_coleccion="contratos",
+                identificador=referencia_contrato.strip(),
+                campo_modificado="valor_contrato",
+                valor_anterior=resultado.get("valores_anteriores", {}).get("valor_contrato"),
+                valor_nuevo=resultado.get("valores_nuevos", {}).get("valor_contrato"),
+                motivo=change_motivo,
+                archivo_soporte=change_support_file,
+                usuario=None,
+                endpoint_usado="/emprestito/modificar-valores/contrato-secop"
+            )
+            
+            logger.info(f"📋 Resultado de auditoría: {auditoria_resultado}")
+            
+            # Agregar información de auditoría a la respuesta
+            resultado["auditoria"] = auditoria_resultado
+            
+            if not auditoria_resultado.get("success"):
+                logger.warning(f"⚠️ Auditoría no registrada: {auditoria_resultado.get('error')}")
+                resultado["auditoria_warning"] = "Cambio realizado pero no se pudo registrar en auditoría"
+            else:
+                logger.info(f"✅ Auditoría registrada exitosamente: {auditoria_resultado.get('change_id')}")
+                
+        except Exception as e_audit:
+            logger.error(f"Error registrando auditoría: {e_audit}")
+            resultado["auditoria"] = {"success": False, "error": str(e_audit)}
+            resultado["auditoria_warning"] = "Cambio realizado pero auditoría falló"
+        
+        # Respuesta exitosa
+        return JSONResponse(
+            content=resultado,
+            status_code=200,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en endpoint actualizar valor contrato SECOP: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "success": False,
+                "error": "Error interno del servidor",
+                "message": "Error actualizando valor de contrato SECOP",
+                "referencia_contrato": referencia_contrato
+            }
+        )
+
+
+@app.get("/emprestito/historial-cambios", tags=["Gestión de Empréstito"], summary="📋 Obtener Historial de Cambios")
+async def obtener_historial_cambios_endpoint(
+    tipo_coleccion: Optional[str] = Query(None, description="Filtrar por tipo de colección (procesos, ordenes, convenios, contratos)"),
+    identificador: Optional[str] = Query(None, description="Filtrar por identificador específico"),
+    limite: int = Query(50, ge=1, le=200, description="Número máximo de registros (1-200)")
+):
+    """
+    ## 📋 GET | Consulta | Obtener Historial de Cambios en Valores de Empréstito
+    
+    Consulta el historial completo de cambios realizados en los valores de las colecciones de empréstito.
+    Cada cambio incluye información de auditoría completa: motivo, documento soporte, valores anteriores y nuevos.
+    
+    ### ✅ Funcionalidades principales:
+    - **Historial completo**: Accede a todos los cambios registrados
+    - **Filtros opcionales**: Por tipo de colección o identificador específico
+    - **Información detallada**: Incluye motivo, documento soporte, timestamp, valores modificados
+    - **Trazabilidad**: ID único para cada cambio
+    
+    ### 🔍 Filtros disponibles:
+    - **tipo_coleccion**: procesos, ordenes, convenios, contratos (opcional)
+    - **identificador**: referencia_proceso, numero_orden, referencia_contrato (opcional)
+    - **limite**: Número máximo de registros a retornar (1-200, default: 50)
+    
+    ### 📝 Información por cambio:
+    - `change_id`: ID único del cambio
+    - `change_timestamp`: Fecha y hora del cambio
+    - `change_motivo`: Justificación del cambio
+    - `change_support_file`: URL del documento soporte en S3 (si existe)
+    - `tipo_coleccion`: Tipo de colección modificada
+    - `identificador`: Identificador del documento modificado
+    - `campo_modificado`: Campo que se modificó
+    - `valor_anterior`: Valor antes del cambio
+    - `valor_nuevo`: Valor después del cambio
+    - `diferencia`: Diferencia numérica (valor_nuevo - valor_anterior)
+    - `usuario`: Usuario que realizó el cambio
+    - `endpoint_usado`: Endpoint utilizado
+    
+    ### 📋 Respuesta exitosa:
+    ```json
+    {
+        "success": true,
+        "total_cambios": 15,
+        "cambios": [
+            {
+                "change_id": "uuid-123",
+                "change_timestamp": "2025-12-28T10:30:00",
+                "change_motivo": "Ajuste por modificación contractual",
+                "change_support_file": "https://s3.../documento.pdf",
+                "tipo_coleccion": "contratos",
+                "identificador": "CONT-2024-001",
+                "campo_modificado": "valor_contrato",
+                "valor_anterior": 1000000.0,
+                "valor_nuevo": 1500000.0,
+                "diferencia": 500000.0,
+                "usuario": "Sistema",
+                "endpoint_usado": "/emprestito/modificar-valores/contrato-secop"
+            }
+        ]
+    }
+    ```
+    """
+    try:
+        check_emprestito_availability()
+        
+        # Obtener historial
+        resultado = await obtener_historial_cambios(
+            tipo_coleccion=tipo_coleccion,
+            identificador=identificador,
+            limite=limite
+        )
+        
+        if not resultado.get("success"):
+            raise HTTPException(
+                status_code=500,
+                detail=resultado
+            )
+        
+        return JSONResponse(
+            content=resultado,
+            status_code=200,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error obteniendo historial de cambios: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "success": False,
+                "error": "Error interno del servidor",
+                "message": "Error consultando historial de cambios"
             }
         )
 
