@@ -999,7 +999,7 @@ async def get_unidades_proyecto_attributes(
                 if field not in geometry_fields:
                     # Aplicar conversiones de tipos específicas
                     if field == 'presupuesto_base':
-                        attributes_record[field] = _convert_to_int(value)
+                        attributes_record[field] = _convert_to_float(value)
                     elif field == 'avance_obra':
                         attributes_record[field] = _convert_to_float(value)
                     elif field == 'bpin':
@@ -1013,7 +1013,7 @@ async def get_unidades_proyecto_attributes(
                     if field not in geometry_fields and field not in attributes_record:
                         # Aplicar conversiones de tipos específicas
                         if field == 'presupuesto_base':
-                            attributes_record[field] = _convert_to_int(value)
+                            attributes_record[field] = _convert_to_float(value)
                         elif field == 'avance_obra':
                             attributes_record[field] = _convert_to_float(value)
                         elif field == 'bpin':
