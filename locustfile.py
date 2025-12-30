@@ -186,12 +186,6 @@ class DashboardUser(HttpUser):
             name="/unidades-proyecto/download-geojson [limited]"
         )
     
-    @task(1)
-    @tag("dashboard", "bancos")
-    def get_bancos(self):
-        """Obtener bancos empréstito"""
-        self.client.get("/bancos_emprestito_all")
-
 
 class MobileApiUser(HttpUser):
     """
