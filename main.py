@@ -217,6 +217,8 @@ try:
         ProyeccionEmprestitoUpdateResponse,
         ProyeccionEmprestitoRegistroRequest,
         ProyeccionEmprestitoRegistroResponse,
+        RPCUpdateRequest,
+        RPCUpdateResponse,
         USER_MODELS_AVAILABLE,
         # Reportes contratos models
         ReporteContratoRequest,
@@ -5168,6 +5170,7 @@ try:
         cargar_pago_emprestito,
         get_pagos_emprestito_all,
         get_rpc_contratos_emprestito_all,
+        actualizar_rpc_contrato_emprestito,
         get_asignaciones_emprestito_banco_centro_gestor_all,
         get_convenios_transferencia_emprestito_all,
         obtener_ordenes_compra_tvec_enriquecidas,
@@ -7275,6 +7278,187 @@ async def get_all_rpc_contratos_emprestito():
                 "success": False,
                 "error": "Error interno del servidor",
                 "message": "Error al obtener RPCs de empréstito",
+                "code": "INTERNAL_SERVER_ERROR"
+            }
+        )
+
+@app.put("/emprestito/modificar-rpc", tags=["Gestión de Empréstito"], summary="🟡 Modificar RPC de Empréstito")
+async def actualizar_rpc_endpoint(
+    numero_rpc: str = Form(..., description="Número del RPC a modificar (obligatorio)"),
+    datos_actualizacion: str = Form(..., description="JSON con los campos a actualizar")
+):
+    """
+    ## 🟡 PUT | ✏️ Actualización | Modificar RPC (Registro Presupuestal de Compromiso)
+    
+    **Propósito**: Actualiza cualquier campo de un RPC existente en la colección "rpc_contratos_emprestito" 
+    según su "numero_rpc". Solo se modifican los campos proporcionados, los demás permanecen sin cambios.
+    
+    ### ✅ Casos de uso:
+    - Actualizar valores específicos de un RPC existente
+    - Corregir información incorrecta en RPCs
+    - Modificar beneficiarios, valores, o fechas
+    - Actualizar CDPs asociados o programación PAC
+    - Cambiar estado de liberación o referencias
+    
+    ### 🎯 Funcionamiento:
+    1. **Busca** el RPC por `numero_rpc` (parámetro de formulario)
+    2. **Actualiza** solo los campos proporcionados en `datos_actualizacion`
+    3. **Mantiene** los campos no especificados sin cambios
+    4. **Registra** timestamp de última actualización automáticamente
+    5. **Retorna** datos previos y actualizados para auditoría
+    
+    ### 📋 Campos actualizables:
+    - `beneficiario_id`: ID del beneficiario
+    - `beneficiario_nombre`: Nombre del beneficiario
+    - `descripcion_rpc`: Descripción del RPC
+    - `fecha_contabilizacion`: Fecha de contabilización
+    - `fecha_impresion`: Fecha de impresión
+    - `estado_liberacion`: Estado de liberación
+    - `bp`: Código BP
+    - `valor_rpc`: Valor del RPC (numérico, >= 0)
+    - `cdp_asociados`: Lista de CDPs (array o string separado por comas)
+    - `programacion_pac`: Objeto con programación PAC
+    - `nombre_centro_gestor`: Centro gestor responsable
+    - `referencia_contrato`: Referencia del contrato
+    - `estado`: Estado del RPC (activo, inactivo, etc.)
+    
+    ### 🔒 Campos protegidos (NO modificables):
+    - `numero_rpc`: Identificador único (se usa para búsqueda)
+    - `fecha_creacion`: Fecha de creación original
+    - `tipo`: Tipo de RPC (manual, automático, etc.)
+    
+    ### 🔒 Validaciones:
+    - **numero_rpc**: Debe existir en la colección
+    - **valor_rpc**: Debe ser >= 0 si se proporciona
+    - **strings**: Se limpian automáticamente de espacios
+    - **cdp_asociados**: Acepta lista o string separado por comas
+    - **programacion_pac**: Debe ser un objeto JSON válido
+    - **campos opcionales**: Solo se actualizan los proporcionados
+    
+    ### 📝 Ejemplo de uso con fetch:
+    ```javascript
+    const formData = new FormData();
+    formData.append('numero_rpc', 'RPC-2024-001');
+    formData.append('datos_actualizacion', JSON.stringify({
+        valor_rpc: 500000000,
+        estado_liberacion: "Liberado",
+        beneficiario_nombre: "Nuevo Beneficiario S.A.S",
+        cdp_asociados: ["CDP-001", "CDP-002"]
+    }));
+    
+    const response = await fetch('/emprestito/modificar-rpc', {
+        method: 'PUT',
+        body: formData
+    });
+    ```
+    
+    ### ✅ Respuesta exitosa (200):
+    ```json
+    {
+        "success": true,
+        "message": "RPC RPC-2024-001 actualizado exitosamente",
+        "numero_rpc": "RPC-2024-001",
+        "doc_id": "abc123xyz",
+        "coleccion": "rpc_contratos_emprestito",
+        "datos_previos": { ... },
+        "datos_actualizados": { ... },
+        "campos_modificados": ["valor_rpc", "estado_liberacion", "beneficiario_nombre"],
+        "timestamp": "2025-01-06T..."
+    }
+    ```
+    
+    ### ❌ Errores posibles:
+    - **404**: RPC no encontrado con el numero_rpc especificado
+    - **400**: Datos inválidos o formato JSON incorrecto
+    - **400**: No hay campos válidos para actualizar
+    - **500**: Error en la actualización de Firestore
+    
+    ### 💡 Características:
+    - **Actualización parcial**: Solo modifica campos especificados
+    - **Auditoría completa**: Guarda datos previos y nuevos
+    - **Búsqueda exacta**: Por numero_rpc únicamente
+    - **UTF-8**: Soporte completo para caracteres especiales
+    - **Timestamp automático**: Registra fecha_actualizacion
+    - **Validación robusta**: Verifica existencia y tipos de datos
+    - **Protección de campos**: No permite modificar campos del sistema
+    """
+    try:
+        check_emprestito_availability()
+        
+        # Validar numero_rpc
+        if not numero_rpc or not numero_rpc.strip():
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "success": False,
+                    "error": "numero_rpc es requerido",
+                    "message": "Debe proporcionar un numero_rpc válido"
+                }
+            )
+        
+        # Parsear datos_actualizacion JSON
+        try:
+            import json
+            datos_dict = json.loads(datos_actualizacion)
+        except json.JSONDecodeError as e:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "success": False,
+                    "error": "JSON inválido en datos_actualizacion",
+                    "message": f"Error parseando JSON: {str(e)}"
+                }
+            )
+        
+        # Verificar que se proporcionen datos para actualizar
+        if not datos_dict or not isinstance(datos_dict, dict):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "success": False,
+                    "error": "datos_actualizacion debe ser un objeto JSON válido",
+                    "message": "Debe proporcionar al menos un campo para actualizar"
+                }
+            )
+        
+        # Llamar a la función de actualización
+        result = await actualizar_rpc_contrato_emprestito(
+            numero_rpc=numero_rpc.strip(),
+            datos_actualizacion=datos_dict
+        )
+        
+        if not result["success"]:
+            # Determinar código de estado según el error
+            if "No se encontró" in result.get("error", ""):
+                status_code = 404
+            else:
+                status_code = 400
+                
+            raise HTTPException(
+                status_code=status_code,
+                detail={
+                    "success": False,
+                    "error": result.get("error", "Error desconocido"),
+                    "numero_rpc": numero_rpc
+                }
+            )
+        
+        return JSONResponse(
+            content=result,
+            status_code=200,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en endpoint de actualización de RPC: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "success": False,
+                "error": "Error interno del servidor",
+                "message": str(e),
                 "code": "INTERNAL_SERVER_ERROR"
             }
         )

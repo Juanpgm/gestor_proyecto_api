@@ -25,6 +25,8 @@ try:
         ProyeccionEmprestitoRegistroResponse,
         PagoEmprestitoRequest,
         PagoEmprestitoResponse,
+        RPCUpdateRequest,
+        RPCUpdateResponse,
         # Response models
         UserResponse,
         AuthMethodsResponse,

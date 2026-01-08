@@ -2201,6 +2201,153 @@ async def get_rpc_contratos_emprestito_all() -> Dict[str, Any]:
             "count": 0
         }
 
+
+async def actualizar_rpc_contrato_emprestito(numero_rpc: str, datos_actualizacion: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Actualiza un RPC existente en la colección rpc_contratos_emprestito por numero_rpc
+    Solo actualiza los campos proporcionados, manteniendo los demás sin cambios
+    
+    Args:
+        numero_rpc (str): Número del RPC a actualizar
+        datos_actualizacion (dict): Datos a actualizar (solo los campos proporcionados serán modificados)
+    
+    Returns:
+        Dict con el resultado de la operación
+    """
+    if not FIRESTORE_AVAILABLE:
+        return {
+            "success": False,
+            "error": "Firebase no disponible"
+        }
+
+    try:
+        db_client = get_firestore_client()
+        if not db_client:
+            return {
+                "success": False,
+                "error": "Error obteniendo cliente Firestore"
+            }
+
+        # Validar que numero_rpc sea válido
+        if not numero_rpc or not numero_rpc.strip():
+            return {
+                "success": False,
+                "error": "El numero_rpc es requerido"
+            }
+
+        # Buscar RPC por numero_rpc
+        rpc_ref = db_client.collection('rpc_contratos_emprestito')
+        query_resultado = rpc_ref.where('numero_rpc', '==', numero_rpc.strip()).get()
+
+        if len(query_resultado) == 0:
+            return {
+                "success": False,
+                "error": f"No se encontró ningún RPC con numero_rpc: {numero_rpc}",
+                "numero_rpc": numero_rpc
+            }
+
+        # Obtener el documento
+        doc = query_resultado[0]
+        doc_data = doc.to_dict()
+        doc_ref = rpc_ref.document(doc.id)
+
+        # Campos que pueden actualizarse (excluir campos de sistema)
+        campos_protegidos = ["fecha_creacion", "tipo"]
+        
+        # Preparar datos para actualizar
+        datos_finales = {}
+        campos_actualizados = []
+
+        for campo, valor in datos_actualizacion.items():
+            # No actualizar campos protegidos
+            if campo in campos_protegidos:
+                logger.warning(f"Campo protegido '{campo}' no será actualizado")
+                continue
+                
+            # Procesar según el tipo de campo
+            if campo == "valor_rpc":
+                # Asegurar que sea numérico y mayor o igual a 0
+                try:
+                    valor_numerico = float(valor)
+                    if valor_numerico < 0:
+                        logger.warning(f"Valor negativo no permitido para valor_rpc: {valor}")
+                        continue
+                    datos_finales[campo] = valor_numerico
+                    campos_actualizados.append(campo)
+                except (ValueError, TypeError):
+                    logger.warning(f"Valor inválido para valor_rpc: {valor}")
+                    continue
+                    
+            elif campo == "cdp_asociados":
+                # Procesar lista de CDPs
+                if isinstance(valor, list):
+                    datos_finales[campo] = [str(cdp).strip() for cdp in valor if cdp]
+                elif isinstance(valor, str):
+                    datos_finales[campo] = [cdp.strip() for cdp in valor.split(",") if cdp.strip()]
+                else:
+                    datos_finales[campo] = []
+                campos_actualizados.append(campo)
+                
+            elif campo == "programacion_pac":
+                # Validar que sea diccionario
+                if isinstance(valor, dict):
+                    datos_finales[campo] = valor
+                    campos_actualizados.append(campo)
+                else:
+                    logger.warning(f"programacion_pac debe ser un diccionario")
+                    continue
+                    
+            elif isinstance(valor, str):
+                # Limpiar strings
+                valor_limpio = valor.strip()
+                if valor_limpio:  # Solo actualizar si no está vacío
+                    datos_finales[campo] = valor_limpio
+                    campos_actualizados.append(campo)
+            else:
+                # Otros tipos de datos
+                datos_finales[campo] = valor
+                campos_actualizados.append(campo)
+
+        # Verificar que haya al menos un campo para actualizar
+        if not datos_finales:
+            return {
+                "success": False,
+                "error": "No hay campos válidos para actualizar"
+            }
+
+        # Agregar fecha de actualización
+        datos_finales["fecha_actualizacion"] = datetime.now()
+
+        # Actualizar el documento
+        doc_ref.update(datos_finales)
+
+        logger.info(f"✅ RPC actualizado: {numero_rpc} - Campos modificados: {campos_actualizados}")
+
+        # Obtener datos actualizados
+        doc_actualizado = doc_ref.get()
+        datos_actualizados_completos = serialize_datetime_objects(doc_actualizado.to_dict())
+        datos_actualizados_completos['id'] = doc_actualizado.id
+
+        return {
+            "success": True,
+            "message": f"RPC {numero_rpc} actualizado exitosamente",
+            "numero_rpc": numero_rpc,
+            "doc_id": doc.id,
+            "coleccion": "rpc_contratos_emprestito",
+            "datos_previos": serialize_datetime_objects(doc_data),
+            "datos_actualizados": datos_actualizados_completos,
+            "campos_modificados": campos_actualizados,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Error actualizando RPC: {str(e)}")
+        return {
+            "success": False,
+            "error": f"Error actualizando RPC: {str(e)}"
+        }
+
+
 async def get_asignaciones_emprestito_banco_centro_gestor_all() -> Dict[str, Any]:
     """
     Obtener todas las asignaciones de empréstito banco-centro gestor

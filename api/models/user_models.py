@@ -4,7 +4,7 @@ Modelos de datos para validación de requests y responses
 """
 
 from pydantic import BaseModel, EmailStr, Field, field_validator, ConfigDict
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Union
 from datetime import datetime
 import re
 
@@ -210,6 +210,51 @@ class PagoEmprestitoResponse(BaseModel):
     doc_id: Optional[str] = None
     data: Optional[Dict[str, Any]] = None
     coleccion: Optional[str] = None
+    timestamp: Optional[str] = None
+    error: Optional[str] = None
+
+class RPCUpdateRequest(BaseModel):
+    """Modelo para actualización de RPC (Registro Presupuestal de Compromiso)"""
+    beneficiario_id: Optional[str] = Field(None, description="ID del beneficiario")
+    beneficiario_nombre: Optional[str] = Field(None, description="Nombre del beneficiario")
+    descripcion_rpc: Optional[str] = Field(None, description="Descripción del RPC")
+    fecha_contabilizacion: Optional[str] = Field(None, description="Fecha de contabilización")
+    fecha_impresion: Optional[str] = Field(None, description="Fecha de impresión")
+    estado_liberacion: Optional[str] = Field(None, description="Estado de liberación")
+    bp: Optional[str] = Field(None, description="Código BP")
+    valor_rpc: Optional[float] = Field(None, ge=0, description="Valor del RPC")
+    cdp_asociados: Optional[Union[List[str], str]] = Field(None, description="CDPs asociados (lista o string separado por comas)")
+    programacion_pac: Optional[Dict[str, Any]] = Field(None, description="Programación PAC")
+    nombre_centro_gestor: Optional[str] = Field(None, description="Nombre del centro gestor")
+    referencia_contrato: Optional[str] = Field(None, description="Referencia del contrato")
+    estado: Optional[str] = Field(None, description="Estado del RPC")
+    
+    @field_validator('valor_rpc')
+    @classmethod
+    def validate_valor_rpc(cls, v):
+        """Validar que el valor del RPC sea positivo si se proporciona"""
+        if v is not None and v < 0:
+            raise ValueError('El valor del RPC debe ser mayor o igual a 0')
+        return v
+    
+    @field_validator('*', mode='before')
+    @classmethod
+    def strip_strings(cls, v):
+        """Limpiar strings de espacios en blanco si se proporcionan"""
+        if isinstance(v, str):
+            return v.strip() if v.strip() else None
+        return v
+
+class RPCUpdateResponse(BaseModel):
+    """Respuesta para actualización de RPC"""
+    success: bool
+    message: Optional[str] = None
+    numero_rpc: Optional[str] = None
+    doc_id: Optional[str] = None
+    coleccion: Optional[str] = None
+    datos_previos: Optional[Dict[str, Any]] = None
+    datos_actualizados: Optional[Dict[str, Any]] = None
+    campos_modificados: Optional[List[str]] = None
     timestamp: Optional[str] = None
     error: Optional[str] = None
 

@@ -144,6 +144,7 @@ try:
         cargar_pago_emprestito,
         get_pagos_emprestito_all,
         get_rpc_contratos_emprestito_all,
+        actualizar_rpc_contrato_emprestito,
         get_asignaciones_emprestito_banco_centro_gestor_all,
         get_convenios_transferencia_emprestito_all,
         obtener_datos_secop_completos,
@@ -285,6 +286,9 @@ except ImportError as e:
     
     async def get_rpc_contratos_emprestito_all():
         return {"success": False, "error": "Emprestito operations not available", "data": [], "count": 0}
+    
+    async def actualizar_rpc_contrato_emprestito(numero_rpc: str, datos_actualizacion: dict):
+        return {"success": False, "error": "Emprestito operations not available"}
     
     async def get_asignaciones_emprestito_banco_centro_gestor_all():
         return {"success": False, "error": "Emprestito operations not available", "data": [], "count": 0}
