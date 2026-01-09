@@ -392,6 +392,17 @@ async def get_nombre_resumido_proceso_by_referencia(db, referencia_proceso: str)
 
 def extract_orden_compra_fields_all(orden_data: dict) -> dict:
     """Extrae y mapea campos de orden de compra usando programación funcional para contratos_emprestito_all"""
+    
+    # Función auxiliar para convertir valor a entero sin decimales
+    def safe_get_int_value(data: dict, key: str, default=0) -> int:
+        """Obtener valor entero sin decimales de manera segura"""
+        value = data.get(key, default)
+        try:
+            # Convertir a float primero para manejar strings como "1234.56", luego a int
+            return int(float(value)) if value else default
+        except (ValueError, TypeError):
+            return default
+    
     field_mapping = {
         'bpin': lambda x: x.get('bpin', ''),
         'bp': lambda x: x.get('bp', ''),  # AGREGADO: incluir campo bp
@@ -406,7 +417,7 @@ def extract_orden_compra_fields_all(orden_data: dict) -> dict:
         'fecha_fin_contrato': lambda x: x.get('fecha_vencimiento_orden', ''),
         'tipo_contrato': lambda x: "Orden de Compra - TVEC",
         'nombre_contratista': lambda x: x.get('nombre_proveedor', ''),
-        'valor_contrato': lambda x: x.get('valor_orden', ''),
+        'valor_contrato': lambda x: safe_get_int_value(x, 'valor_orden'),  # CORREGIDO: convertir a entero sin decimales
         'ordenador_gasto': lambda x: x.get('ordenador_gasto', ''),
         'nombre_resumido_proceso': lambda x: x.get('nombre_resumido_proceso', '')
     }
