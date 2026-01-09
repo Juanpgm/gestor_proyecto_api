@@ -394,6 +394,7 @@ def extract_orden_compra_fields_all(orden_data: dict) -> dict:
     """Extrae y mapea campos de orden de compra usando programación funcional para contratos_emprestito_all"""
     field_mapping = {
         'bpin': lambda x: x.get('bpin', ''),
+        'bp': lambda x: x.get('bp', ''),  # AGREGADO: incluir campo bp
         'banco': lambda x: x.get('nombre_banco', ''),  # Mapear nombre_banco a banco
         'nombre_centro_gestor': lambda x: x.get('nombre_centro_gestor', ''),
         'estado_contrato': lambda x: x.get('estado_orden', ''),
