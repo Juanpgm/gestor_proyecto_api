@@ -765,16 +765,10 @@ async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = Non
                         'barrio_vereda_2': doc_data.get('barrio_vereda_2'),
                         'comuna_corregimiento': doc_data.get('comuna_corregimiento'),
                         'comuna_corregimiento_2': doc_data.get('comuna_corregimiento_2'),
-                        'departamento': doc_data.get('departamento'),
-                        'municipio': doc_data.get('municipio'),
                         'tipo_equipamiento': doc_data.get('tipo_equipamiento'),
                         'clase_up': doc_data.get('clase_up') or doc_data.get('clase_obra'),
                         'nombre_centro_gestor': doc_data.get('nombre_centro_gestor'),
                         'identificador': doc_data.get('identificador'),
-                        'geometry_type': doc_data.get('geometry_type'),
-                        'has_geometry': doc_data.get('has_geometry', False),
-                        'has_valid_geometry': geometry_found,
-                        'centros_gravedad': doc_data.get('centros_gravedad', False),
                         'n_intervenciones': doc_data.get('n_intervenciones', len(intervenciones_parsed)),
                         'intervenciones': intervenciones_parsed
                     }
