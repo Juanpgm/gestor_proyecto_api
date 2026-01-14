@@ -548,6 +548,159 @@ async def get_all_unidades_proyecto_simple(limit: Optional[int] = None) -> Dict[
         }
 
 
+def extraer_geometria_exhaustiva(doc_data: Dict[str, Any], upid: str, debug: bool = False) -> tuple:
+    """
+    Extracción exhaustiva de geometría desde múltiples ubicaciones posibles
+    
+    Args:
+        doc_data: Documento de Firestore
+        upid: UPID del documento (para logging)
+        debug: Si True, imprime información de debugging
+        
+    Returns:
+        tuple: (geometry_obj, geometry_found, geometry_source)
+            - geometry_obj: Objeto GeoJSON válido o None
+            - geometry_found: bool indicando si se encontró geometría válida
+            - geometry_source: string indicando dónde se encontró la geometría
+    """
+    import json
+    
+    if debug:
+        print(f"\n🔍 Extrayendo geometría para {upid}")
+    
+    # 1. Buscar en diferentes campos de geometría (nivel superior)
+    geo_sources_top = [
+        ('geometry', doc_data.get('geometry')),
+        ('coordinates', doc_data.get('coordinates')),
+        ('coordenadas', doc_data.get('coordenadas')),
+        ('location', doc_data.get('location')),
+        ('geom', doc_data.get('geom')),
+    ]
+    
+    # 2. Buscar en properties
+    props = doc_data.get('properties', {})
+    geo_sources_props = [
+        ('properties.geometry', props.get('geometry')),
+        ('properties.coordinates', props.get('coordinates')),
+        ('properties.coordenadas', props.get('coordenadas')),
+        ('properties.location', props.get('location')),
+        ('properties.geom', props.get('geom')),
+    ]
+    
+    all_geo_sources = geo_sources_top + geo_sources_props
+    
+    # 3. Intentar construir geometría desde cada fuente
+    for geo_name, geo_value in all_geo_sources:
+        if not geo_value or str(geo_value).strip() in ['null', 'None', '', '[]', '{}']:
+            continue
+            
+        try:
+            # Si es string, intentar parsear como JSON
+            if isinstance(geo_value, str):
+                geo_value = json.loads(geo_value)
+            
+            # Validar que sea una geometría GeoJSON válida
+            if isinstance(geo_value, dict) and 'type' in geo_value:
+                geom_type = geo_value.get('type')
+                
+                # Tipos de geometría soportados
+                valid_types = [
+                    'Point', 'MultiPoint', 
+                    'LineString', 'MultiLineString',
+                    'Polygon', 'MultiPolygon',
+                    'GeometryCollection'
+                ]
+                
+                if geom_type in valid_types:
+                    # Para GeometryCollection, validar que tenga geometries
+                    if geom_type == 'GeometryCollection':
+                        if 'geometries' in geo_value and len(geo_value['geometries']) > 0:
+                            if debug:
+                                print(f"   ✅ Geometría encontrada en: {geo_name} (GeometryCollection)")
+                            return geo_value, True, geo_name
+                    # Para otros tipos, validar que tenga coordinates
+                    elif 'coordinates' in geo_value:
+                        coords = geo_value['coordinates']
+                        # Validar que las coordenadas no sean nulas o vacías
+                        if coords and coords != [0, 0] and coords != [None, None]:
+                            if debug:
+                                print(f"   ✅ Geometría encontrada en: {geo_name} ({geom_type})")
+                            return geo_value, True, geo_name
+                        elif debug:
+                            print(f"   ⚠️ {geo_name} tiene coordenadas nulas: {coords}")
+        except Exception as e:
+            if debug:
+                print(f"   ⚠️ Error parseando {geo_name}: {e}")
+            continue
+    
+    # 4. Buscar lat/lng por separado (nivel superior y properties)
+    lat_sources = [
+        ('lat', doc_data.get('lat')),
+        ('latitude', doc_data.get('latitude')),
+        ('properties.lat', props.get('lat')),
+        ('properties.latitude', props.get('latitude')),
+    ]
+    
+    lng_sources = [
+        ('lng', doc_data.get('lng')),
+        ('lon', doc_data.get('lon')),
+        ('longitude', doc_data.get('longitude')),
+        ('properties.lng', props.get('lng')),
+        ('properties.lon', props.get('lon')),
+        ('properties.longitude', props.get('longitude')),
+    ]
+    
+    # Intentar extraer lat y lng
+    lat = None
+    lat_source = None
+    for src_name, src_value in lat_sources:
+        if src_value and src_value not in [None, '', 'null', 'None']:
+            try:
+                lat = float(src_value)
+                lat_source = src_name
+                break
+            except (ValueError, TypeError):
+                continue
+    
+    lng = None
+    lng_source = None
+    for src_name, src_value in lng_sources:
+        if src_value and src_value not in [None, '', 'null', 'None']:
+            try:
+                lng = float(src_value)
+                lng_source = src_name
+                break
+            except (ValueError, TypeError):
+                continue
+    
+    # 5. Si tenemos lat/lng válidos, crear Point
+    if lat is not None and lng is not None:
+        if -90 <= lat <= 90 and -180 <= lng <= 180:
+            geometry_obj = {
+                "type": "Point",
+                "coordinates": [lng, lat]
+            }
+            source = f"{lng_source}+{lat_source}"
+            if debug:
+                print(f"   ✅ Geometría construida desde lat/lng: {source}")
+            return geometry_obj, True, source
+        elif debug:
+            print(f"   ⚠️ Lat/lng fuera de rango: lat={lat}, lng={lng}")
+    elif debug:
+        if lat is None and lng is None:
+            print(f"   ❌ No se encontró lat ni lng")
+        elif lat is None:
+            print(f"   ❌ No se encontró lat (lng={lng})")
+        else:
+            print(f"   ❌ No se encontró lng (lat={lat})")
+    
+    # 6. No se encontró geometría válida
+    if debug:
+        print(f"   ❌ No se encontró geometría válida para {upid}")
+    
+    return None, False, 'not_found'
+
+
 async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Obtener datos de unidades-proyecto para visualización geoespacial
@@ -627,97 +780,30 @@ async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = Non
                 elif field in doc_data.get('properties', {}):
                     record[field] = doc_data['properties'][field]
             
-            # ARREGLO INTELIGENTE: Buscar geometría en más ubicaciones posibles
+            # ARREGLO INTELIGENTE: Buscar geometría usando función exhaustiva
             upid_value = record.get('upid') or doc_data.get('upid') or doc_data.get('properties', {}).get('upid')
             
             if upid_value:
-                # Buscar geometría en múltiples ubicaciones posibles
-                geometry_found = False
-                geometry_data_obj = {}
+                # Usar función exhaustiva de extracción de geometría
+                # Activar debug solo para los primeros 3 documentos
+                debug_mode = (total_docs_processed <= 3)
+                geometry_data_obj, geometry_found, geometry_source = extraer_geometria_exhaustiva(
+                    doc_data, 
+                    upid_value, 
+                    debug=debug_mode
+                )
                 
-                # 1. Buscar en diferentes campos de geometría
-                geo_sources = [
-                    ('geometry', doc_data.get('geometry')),
-                    ('coordinates', doc_data.get('coordinates')),
-                    ('coordenadas', doc_data.get('coordenadas')),
-                    ('location', doc_data.get('location')),
-                    ('geom', doc_data.get('geom')),
-                    # También en properties
-                    ('geometry_props', doc_data.get('properties', {}).get('geometry')),
-                    ('coordinates_props', doc_data.get('properties', {}).get('coordinates')),
-                    ('coordenadas_props', doc_data.get('properties', {}).get('coordenadas')),
-                ]
-                
-                # 2. Verificar lat/lng por separado
-                lat = (doc_data.get('lat') or doc_data.get('latitude') or 
-                      doc_data.get('properties', {}).get('lat') or 
-                      doc_data.get('properties', {}).get('latitude'))
-                lng = (doc_data.get('lng') or doc_data.get('lon') or doc_data.get('longitude') or
-                      doc_data.get('properties', {}).get('lng') or 
-                      doc_data.get('properties', {}).get('lon') or
-                      doc_data.get('properties', {}).get('longitude'))
-                
-                # 3. Construir objeto de geometría válido
-                for geo_name, geo_value in geo_sources:
-                    if geo_value and str(geo_value).strip() not in ['null', 'None', '', '[]', '{}']:
-                        try:
-                            # Si es string, intentar parsear como JSON
-                            if isinstance(geo_value, str):
-                                import json
-                                geo_value = json.loads(geo_value)
-                            
-                            # Validar que sea una geometría GeoJSON válida
-                            if isinstance(geo_value, dict) and 'type' in geo_value:
-                                geom_type = geo_value.get('type')
-                                
-                                # Validar tipos de geometría soportados
-                                valid_types = [
-                                    'Point', 'MultiPoint', 
-                                    'LineString', 'MultiLineString',
-                                    'Polygon', 'MultiPolygon',
-                                    'GeometryCollection'
-                                ]
-                                
-                                if geom_type in valid_types:
-                                    # Para GeometryCollection, validar que tenga geometries
-                                    if geom_type == 'GeometryCollection':
-                                        if 'geometries' in geo_value and len(geo_value['geometries']) > 0:
-                                            geometry_data_obj = geo_value
-                                            geometry_found = True
-                                            break
-                                    # Para otros tipos, validar que tenga coordinates
-                                    elif 'coordinates' in geo_value:
-                                        geometry_data_obj = geo_value
-                                        geometry_found = True
-                                        break
-                        except Exception as e:
-                            # Debug: mostrar error solo para primeros documentos
-                            if total_docs_processed <= 3:
-                                print(f"   ⚠️ Error parseando geometría {geo_name}: {e}")
-                            continue
-                
-                # 4. Si no hay geometría compleja, crear desde lat/lng
-                if not geometry_found and lat and lng:
-                    try:
-                        lat_num = float(lat)
-                        lng_num = float(lng)
-                        if -90 <= lat_num <= 90 and -180 <= lng_num <= 180:
-                            geometry_data_obj = {
-                                "type": "Point",
-                                "coordinates": [lng_num, lat_num]
-                            }
-                            geometry_found = True
-                    except (ValueError, TypeError):
-                        pass
-                
-                # 5. SOLUCIÓN ÚNICA: Incluir TODOS los registros, tengan o no geometría
-                # Crear geometría por defecto si no existe (punto nulo o coordenadas sintéticas)
+                # Si no se encontró geometría, crear placeholder
                 if not geometry_found or not geometry_data_obj:
-                    # Si no tiene geometría, crear un punto nulo para mantener estructura GeoJSON
                     geometry_data_obj = {
                         "type": "Point",
-                        "coordinates": [0, 0]  # Coordenadas nulas, el frontend puede decidir cómo manejarlas
+                        "coordinates": [0, 0]  # Coordenadas nulas
                     }
+                    geometry_source = 'placeholder'
+                    if debug_mode:
+                        print(f"   ⚠️ Usando coordenadas placeholder [0,0] para {upid_value}")
+                elif debug_mode:
+                    print(f"   ✅ Geometría válida obtenida de: {geometry_source}")
                 
                 # Función auxiliar para extraer valor de múltiples ubicaciones
                 def get_field_value(field_name):
@@ -769,6 +855,8 @@ async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = Non
                         'clase_up': doc_data.get('clase_up') or doc_data.get('clase_obra'),
                         'nombre_centro_gestor': doc_data.get('nombre_centro_gestor'),
                         'identificador': doc_data.get('identificador'),
+                        'has_valid_geometry': geometry_found,
+                        'geometry_source': geometry_source,  # 🆕 NUEVO: Indica de dónde se obtuvo la geometría
                         'n_intervenciones': doc_data.get('n_intervenciones', len(intervenciones_parsed)),
                         'intervenciones': intervenciones_parsed
                     }
@@ -776,6 +864,7 @@ async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = Non
                     # Estructura antigua - transformar
                     unidad_properties = transformar_documento_a_unidad_con_intervenciones(doc_data)
                     unidad_properties["has_valid_geometry"] = geometry_found
+                    unidad_properties["geometry_source"] = geometry_source  # 🆕 NUEVO
                 
                 # Crear registro completo con estructura GeoJSON (con array intervenciones)
                 feature = {

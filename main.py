@@ -686,7 +686,8 @@ if AUTH_SYSTEM_AVAILABLE and AuthorizationMiddleware is not None:
         "/auth/google",
         "/auth/config",
         "/auth/validate-session",
-        "/auth/workload-identity/status"
+        "/auth/workload-identity/status",
+        "/unidades-proyecto/captura-estado-360"
     ]
     
     app.add_middleware(
@@ -2406,6 +2407,17 @@ async def get_filters_endpoint(
             detail=f"Error procesando filtros: {str(e)}"
         )
 
+# ============================================================================
+# INCLUIR ROUTERS ESPECÍFICOS ANTES DE RUTAS DINÁMICAS
+# ============================================================================
+
+# Incluir router de Artefacto de Captura #360 ANTES de rutas dinámicas
+try:
+    from api.routers.captura_360_router import router as captura_360_router
+    app.include_router(captura_360_router)
+    print("✅ Captura 360 router included successfully (before dynamic routes)")
+except Exception as e:
+    print(f"⚠️ Warning: Could not include captura 360 router: {e}")
 
 # ============================================================================
 # NUEVOS ENDPOINTS PARA ESTRUCTURA CON INTERVENCIONES
@@ -2663,6 +2675,102 @@ async def get_frentes_activos_endpoint():
         raise HTTPException(
             status_code=500,
             detail=f"Error obteniendo frentes activos: {str(e)}"
+        )
+
+
+@app.get("/frentes-activos/diagnostico", tags=["Unidades de Proyecto"], summary="🔍 Diagnóstico de Geometrías")
+@optional_rate_limit("10/minute")
+async def diagnostico_frentes_activos():
+    """
+    ## 🔍 Diagnóstico de Geometrías en Frentes Activos
+    
+    **Propósito**: Diagnosticar la calidad de las geometrías en los frentes activos,
+    identificando registros sin geometría válida y proporcionando información detallada
+    sobre el origen de las geometrías.
+    
+    ### Información Retornada
+    
+    - Total de frentes activos
+    - Conteo de registros con/sin geometría válida
+    - Lista de registros sin geometría con detalles completos
+    - Estadísticas de fuentes de geometría
+    
+    ### Aplicaciones
+    
+    - Debugging de problemas de geometría
+    - Identificar registros que necesitan geocodificación
+    - Auditoría de calidad de datos geoespaciales
+    """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase not available")
+    
+    try:
+        from api.scripts.unidades_proyecto import get_frentes_activos
+        
+        result = await get_frentes_activos()
+        
+        if result.get("type") != "FeatureCollection":
+            raise HTTPException(status_code=500, detail="Respuesta inválida del servicio")
+        
+        features = result.get("features", [])
+        
+        # Análisis de geometrías
+        total = len(features)
+        con_geometria = []
+        sin_geometria = []
+        fuentes_geometria = {}
+        
+        for feature in features:
+            props = feature.get("properties", {})
+            geometry = feature.get("geometry", {})
+            has_valid = props.get("has_valid_geometry", True)
+            source = props.get("geometry_source", "unknown")
+            
+            # Contar fuentes
+            if source not in fuentes_geometria:
+                fuentes_geometria[source] = 0
+            fuentes_geometria[source] += 1
+            
+            if has_valid and geometry.get("coordinates") != [0, 0]:
+                con_geometria.append({
+                    "upid": props.get("upid"),
+                    "nombre_up": props.get("nombre_up"),
+                    "geometry_source": source
+                })
+            else:
+                sin_geometria.append({
+                    "upid": props.get("upid"),
+                    "nombre_up": props.get("nombre_up"),
+                    "direccion": props.get("direccion"),
+                    "barrio_vereda": props.get("barrio_vereda"),
+                    "comuna_corregimiento": props.get("comuna_corregimiento"),
+                    "nombre_centro_gestor": props.get("nombre_centro_gestor"),
+                    "geometry": geometry,
+                    "n_intervenciones": len(props.get("intervenciones", []))
+                })
+        
+        diagnostico = {
+            "success": True,
+            "timestamp": datetime.now().isoformat(),
+            "resumen": {
+                "total_frentes_activos": total,
+                "con_geometria_valida": len(con_geometria),
+                "sin_geometria_valida": len(sin_geometria),
+                "porcentaje_con_geometria": round((len(con_geometria) / total * 100), 2) if total > 0 else 0
+            },
+            "fuentes_geometria": fuentes_geometria,
+            "registros_sin_geometria": sin_geometria,
+            "muestra_registros_con_geometria": con_geometria[:10]  # Primeros 10 como muestra
+        }
+        
+        return create_utf8_response(diagnostico)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error en diagnóstico: {str(e)}"
         )
 
 
@@ -10343,13 +10451,7 @@ try:
 except Exception as e:
     print(f"⚠️ Warning: Could not include quality control router: {e}")
 
-# Incluir router de Artefacto de Captura #360
-try:
-    from api.routers.captura_360_router import router as captura_360_router
-    app.include_router(captura_360_router)
-    print("✅ Captura 360 router included successfully")
-except Exception as e:
-    print(f"⚠️ Warning: Could not include captura 360 router: {e}")
+# NOTA: Router de Captura 360 ya fue incluido antes de las rutas dinámicas (ver línea ~2410)
 
 # ============================================================================
 
