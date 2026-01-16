@@ -1797,8 +1797,17 @@ async def get_frentes_activos() -> Dict[str, Any]:
                 for feature in result["features"]
             )
             
+            # Contar registros por tipo de intervención
+            intervenciones_count = {}
+            for feature in result["features"]:
+                intervenciones = feature["properties"].get("intervenciones", [])
+                for intervencion in intervenciones:
+                    tipo = intervencion.get("tipo_intervencion", "Sin tipo")
+                    intervenciones_count[tipo] = intervenciones_count.get(tipo, 0) + 1
+            
             result["properties"]["total_frentes_activos"] = total_frentes
             result["properties"]["total_unidades_con_frentes"] = len(result["features"])
+            result["properties"]["total_por_intervencion"] = intervenciones_count
         
         return result
         

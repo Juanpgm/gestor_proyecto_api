@@ -2635,6 +2635,7 @@ async def get_frentes_activos_endpoint():
     - **features**: Unidades con frentes activos
     - **properties.total_frentes_activos**: Conteo total de intervenciones con frente activo
     - **properties.total_unidades_con_frentes**: Número de unidades que tienen frentes activos
+    - **properties.total_por_intervencion**: Diccionario con el conteo de registros por tipo de intervención
     
     ### Ejemplo de Uso
     
@@ -2644,6 +2645,7 @@ async def get_frentes_activos_endpoint():
     
     console.log(data.properties.total_frentes_activos); // Total de frentes activos
     console.log(data.properties.total_unidades_con_frentes); // Unidades con frentes
+    console.log(data.properties.total_por_intervencion); // {"Tipo 1": 5, "Tipo 2": 10, ...}
     
     // Renderizar en mapa con icono especial
     data.features.forEach(feature => {
@@ -2660,6 +2662,7 @@ async def get_frentes_activos_endpoint():
     - Dashboard de seguimiento de obras activas
     - Alertas y notificaciones sobre frentes activos
     - Reportes de avance de obra
+    - Estadísticas por tipo de intervención
     """
     if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
         raise HTTPException(status_code=503, detail="Firebase not available")
