@@ -35,7 +35,7 @@ if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
 if hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8')
-from fastapi import FastAPI, HTTPException, Query, Request, status, Form, UploadFile, File, Path
+from fastapi import FastAPI, HTTPException, Query, Request, status, Form, UploadFile, File, Path, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from typing import Dict, Any, Optional, Union, List
@@ -10424,6 +10424,799 @@ async def registrar_proyeccion_emprestito_endpoint(
         raise HTTPException(
             status_code=500,
             detail=f"Error registrando proyección: {str(e)}"
+        )
+
+
+# ============================================================================
+# ENDPOINTS PUT - MODIFICAR DATOS EN FIREBASE
+# ============================================================================
+
+@app.put("/emprestito/modificar-orden-compra", tags=["Gestión de Empréstito"], summary="🟡 Modificar Orden de Compra")
+async def modificar_orden_compra(
+    numero_orden: str = Query(..., description="Número de orden a modificar (REQUERIDO)"),
+    ano_orden: Optional[int] = Query(None, description="[Opcional] Año de la orden"),
+    bp: Optional[str] = Query(None, description="[Opcional] BP"),
+    bpin: Optional[str] = Query(None, description="[Opcional] BPIN"),
+    estado: Optional[str] = Query(None, description="[Opcional] Estado de la orden"),
+    estado_orden: Optional[str] = Query(None, description="[Opcional] Estado de la orden (alternativo)"),
+    fecha_actualizacion: Optional[str] = Query(None, description="[Opcional] Fecha de actualización"),
+    fecha_creacion: Optional[str] = Query(None, description="[Opcional] Fecha de creación"),
+    fecha_enriquecimiento_tvec: Optional[str] = Query(None, description="[Opcional] Fecha de enriquecimiento TVEC"),
+    fecha_guardado: Optional[str] = Query(None, description="[Opcional] Fecha de guardado"),
+    fecha_publicacion_orden: Optional[str] = Query(None, description="[Opcional] Fecha de publicación de la orden"),
+    fecha_vencimiento_orden: Optional[str] = Query(None, description="[Opcional] Fecha de vencimiento de la orden"),
+    fuente_datos: Optional[str] = Query(None, description="[Opcional] Fuente de datos"),
+    items: Optional[str] = Query(None, description="[Opcional] Items (JSON array)"),
+    modalidad_contratacion: Optional[str] = Query(None, description="[Opcional] Modalidad de contratación"),
+    nit_entidad: Optional[str] = Query(None, description="[Opcional] NIT de la entidad"),
+    nit_proveedor: Optional[str] = Query(None, description="[Opcional] NIT del proveedor"),
+    nombre_banco: Optional[str] = Query(None, description="[Opcional] Nombre del banco"),
+    nombre_centro_gestor: Optional[str] = Query(None, description="[Opcional] Nombre del centro gestor"),
+    nombre_proveedor: Optional[str] = Query(None, description="[Opcional] Nombre del proveedor"),
+    nombre_resumido_proceso: Optional[str] = Query(None, description="[Opcional] Nombre resumido del proceso"),
+    objeto_orden: Optional[str] = Query(None, description="[Opcional] Objeto de la orden"),
+    observaciones: Optional[str] = Query(None, description="[Opcional] Observaciones sobre la orden"),
+    ordenador_gasto: Optional[str] = Query(None, description="[Opcional] Ordenador de gasto"),
+    plataforma_origen: Optional[str] = Query(None, description="[Opcional] Plataforma de origen"),
+    rama_entidad: Optional[str] = Query(None, description="[Opcional] Rama de la entidad"),
+    sector: Optional[str] = Query(None, description="[Opcional] Sector"),
+    solicitante: Optional[str] = Query(None, description="[Opcional] Solicitante"),
+    solicitud_id: Optional[str] = Query(None, description="[Opcional] ID de solicitud"),
+    tipo: Optional[str] = Query(None, description="[Opcional] Tipo"),
+    tipo_documento: Optional[str] = Query(None, description="[Opcional] Tipo de documento"),
+    valor_orden: Optional[float] = Query(None, description="[Opcional] Valor de la orden"),
+    valor_proyectado: Optional[float] = Query(None, description="[Opcional] Valor proyectado"),
+    datos_json: Optional[str] = Query(None, description="[Opcional] JSON con campos adicionales a actualizar"),
+):
+    """
+    ## 🟡 PUT | ✏️ Modificar | Modificar Orden de Compra en Firebase
+    
+    Endpoint para modificar un registro en la colección `ordenes_compra_emprestito` 
+    usando el campo `numero_orden` como identificador único.
+    
+    ### ✅ Funcionalidades principales:
+    - **Actualización selectiva**: Solo se modifican los campos especificados
+    - **Preservación de datos**: Los campos no incluidos mantienen sus valores originales
+    - **Búsqueda por numero_orden**: Identifica el documento automáticamente
+    - **Validación**: Verifica que el registro exista antes de actualizar
+    - **Múltiples formas de entrada**: Query parameters para facilitar pruebas en Swagger
+    - **Respuesta clara**: Informa el estado de la operación
+    
+    ### ⚙️ Parámetros disponibles (todos opcionales excepto numero_orden):
+    - `numero_orden` (string, **REQUERIDO**): El número de orden a modificar
+    - `ano_orden` (int, opcional): Año de la orden
+    - `bp` (string, opcional): BP
+    - `bpin` (string, opcional): BPIN
+    - `estado` (string, opcional): Estado de la orden
+    - `estado_orden` (string, opcional): Estado de la orden (alternativo)
+    - `fecha_actualizacion` (string, opcional): Fecha de actualización
+    - `fecha_creacion` (string, opcional): Fecha de creación
+    - `fecha_enriquecimiento_tvec` (string, opcional): Fecha de enriquecimiento TVEC
+    - `fecha_guardado` (string, opcional): Fecha de guardado
+    - `fecha_publicacion_orden` (string, opcional): Fecha de publicación de la orden
+    - `fecha_vencimiento_orden` (string, opcional): Fecha de vencimiento de la orden
+    - `fuente_datos` (string, opcional): Fuente de datos
+    - `items` (string, opcional): Items (JSON array como string)
+    - `modalidad_contratacion` (string, opcional): Modalidad de contratación
+    - `nit_entidad` (string, opcional): NIT de la entidad
+    - `nit_proveedor` (string, opcional): NIT del proveedor
+    - `nombre_banco` (string, opcional): Nombre del banco
+    - `nombre_centro_gestor` (string, opcional): Nombre del centro gestor
+    - `nombre_proveedor` (string, opcional): Nombre del proveedor
+    - `nombre_resumido_proceso` (string, opcional): Nombre resumido del proceso
+    - `objeto_orden` (string, opcional): Objeto de la orden
+    - `observaciones` (string, opcional): Observaciones sobre la orden
+    - `ordenador_gasto` (string, opcional): Ordenador de gasto
+    - `plataforma_origen` (string, opcional): Plataforma de origen
+    - `rama_entidad` (string, opcional): Rama de la entidad
+    - `sector` (string, opcional): Sector
+    - `solicitante` (string, opcional): Solicitante
+    - `solicitud_id` (string, opcional): ID de solicitud
+    - `tipo` (string, opcional): Tipo
+    - `tipo_documento` (string, opcional): Tipo de documento
+    - `valor_orden` (float, opcional): Valor de la orden
+    - `valor_proyectado` (float, opcional): Valor proyectado
+    - `datos_json` (string, opcional): JSON con campos adicionales a actualizar
+    
+    ### 📝 Ejemplos de uso en Swagger:
+    ```
+    numero_orden: OC-2024-001
+    estado: pagado
+    valor_total: 5000000
+    observaciones: Orden procesada
+    ```
+    
+    O incluir campos adicionales en:
+    ```
+    datos_json: {"campo_adicional": "valor", "otro_campo": 123}
+    ```
+    
+    ### ✅ Respuesta exitosa (200):
+    ```json
+    {
+        "success": true,
+        "message": "Orden de compra actualizada correctamente",
+        "numero_orden": "OC-2024-001",
+        "campos_actualizados": ["estado", "valor_total", "observaciones"],
+        "timestamp": "2024-11-12T10:30:45.123456"
+    }
+    ```
+    
+    ### ❌ Respuesta de error (404):
+    ```json
+    {
+        "success": false,
+        "error": "Orden de compra no encontrada",
+        "numero_orden": "OC-2024-001",
+        "timestamp": "2024-11-12T10:30:45.123456"
+    }
+    ```
+    
+    ### 💡 Notas importantes:
+    - El `numero_orden` es el identificador único
+    - Los campos no especificados NO se modifican
+    - La actualización es parcial (solo lo que envíes se modifica)
+    - Se requiere Firebase disponible
+    - Perfectamente integrado con Swagger UI para pruebas interactivas
+    """
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase no está disponible")
+
+    try:
+        # Construir diccionario de datos a actualizar
+        datos_actualizados = {}
+        
+        if ano_orden is not None:
+            datos_actualizados["ano_orden"] = ano_orden
+        if bp is not None:
+            datos_actualizados["bp"] = bp
+        if bpin is not None:
+            datos_actualizados["bpin"] = bpin
+        if estado is not None:
+            datos_actualizados["estado"] = estado
+        if estado_orden is not None:
+            datos_actualizados["estado_orden"] = estado_orden
+        if fecha_actualizacion is not None:
+            datos_actualizados["fecha_actualizacion"] = fecha_actualizacion
+        if fecha_creacion is not None:
+            datos_actualizados["fecha_creacion"] = fecha_creacion
+        if fecha_enriquecimiento_tvec is not None:
+            datos_actualizados["fecha_enriquecimiento_tvec"] = fecha_enriquecimiento_tvec
+        if fecha_guardado is not None:
+            datos_actualizados["fecha_guardado"] = fecha_guardado
+        if fecha_publicacion_orden is not None:
+            datos_actualizados["fecha_publicacion_orden"] = fecha_publicacion_orden
+        if fecha_vencimiento_orden is not None:
+            datos_actualizados["fecha_vencimiento_orden"] = fecha_vencimiento_orden
+        if fuente_datos is not None:
+            datos_actualizados["fuente_datos"] = fuente_datos
+        if items is not None:
+            try:
+                datos_actualizados["items"] = json.loads(items) if isinstance(items, str) else items
+            except:
+                datos_actualizados["items"] = items
+        if modalidad_contratacion is not None:
+            datos_actualizados["modalidad_contratacion"] = modalidad_contratacion
+        if nit_entidad is not None:
+            datos_actualizados["nit_entidad"] = nit_entidad
+        if nit_proveedor is not None:
+            datos_actualizados["nit_proveedor"] = nit_proveedor
+        if nombre_banco is not None:
+            datos_actualizados["nombre_banco"] = nombre_banco
+        if nombre_centro_gestor is not None:
+            datos_actualizados["nombre_centro_gestor"] = nombre_centro_gestor
+        if nombre_proveedor is not None:
+            datos_actualizados["nombre_proveedor"] = nombre_proveedor
+        if nombre_resumido_proceso is not None:
+            datos_actualizados["nombre_resumido_proceso"] = nombre_resumido_proceso
+        if objeto_orden is not None:
+            datos_actualizados["objeto_orden"] = objeto_orden
+        if observaciones is not None:
+            datos_actualizados["observaciones"] = observaciones
+        if ordenador_gasto is not None:
+            datos_actualizados["ordenador_gasto"] = ordenador_gasto
+        if plataforma_origen is not None:
+            datos_actualizados["plataforma_origen"] = plataforma_origen
+        if rama_entidad is not None:
+            datos_actualizados["rama_entidad"] = rama_entidad
+        if sector is not None:
+            datos_actualizados["sector"] = sector
+        if solicitante is not None:
+            datos_actualizados["solicitante"] = solicitante
+        if solicitud_id is not None:
+            datos_actualizados["solicitud_id"] = solicitud_id
+        if tipo is not None:
+            datos_actualizados["tipo"] = tipo
+        if tipo_documento is not None:
+            datos_actualizados["tipo_documento"] = tipo_documento
+        if valor_orden is not None:
+            datos_actualizados["valor_orden"] = valor_orden
+        if valor_proyectado is not None:
+            datos_actualizados["valor_proyectado"] = valor_proyectado
+        
+        # Parsear JSON adicional si se proporciona
+        if datos_json:
+            try:
+                datos_json_dict = json.loads(datos_json)
+                datos_actualizados.update(datos_json_dict)
+            except json.JSONDecodeError:
+                raise HTTPException(
+                    status_code=400,
+                    detail="El parámetro 'datos_json' debe ser un JSON válido"
+                )
+        
+        # Validar que se proporcionaron datos para actualizar
+        if not datos_actualizados:
+            raise HTTPException(
+                status_code=400,
+                detail="Debes proporcionar al menos un campo para actualizar o un JSON válido en datos_json"
+            )
+        
+        db = get_firestore_client()
+        if not db:
+            raise HTTPException(status_code=503, detail="No se pudo obtener cliente de Firebase")
+        
+        # Buscar el documento por numero_orden
+        coleccion = db.collection("ordenes_compra_emprestito")
+        query = coleccion.where("numero_orden", "==", numero_orden)
+        docs = list(query.stream())
+        
+        if not docs:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Orden de compra con número '{numero_orden}' no encontrada"
+            )
+        
+        # Obtener el ID del documento
+        doc_id = docs[0].id
+        
+        # Actualizar solo los campos proporcionados
+        campos_actualizados = list(datos_actualizados.keys())
+        coleccion.document(doc_id).update(datos_actualizados)
+        
+        return create_utf8_response({
+            "success": True,
+            "message": "Orden de compra actualizada correctamente",
+            "numero_orden": numero_orden,
+            "campos_actualizados": campos_actualizados,
+            "timestamp": datetime.now().isoformat()
+        })
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al modificar orden de compra: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error al actualizar la orden de compra: {str(e)}"
+        )
+
+
+@app.put("/emprestito/modificar-proceso", tags=["Gestión de Empréstito"], summary="🟡 Modificar Proceso de Empréstito")
+async def modificar_proceso(
+    referencia_proceso: str = Query(..., description="Referencia del proceso a modificar (REQUERIDO)"),
+    adjudicado: Optional[str] = Query(None, description="[Opcional] Adjudicado"),
+    bp: Optional[str] = Query(None, description="[Opcional] BP"),
+    conteo_respuestas_ofertas: Optional[int] = Query(None, description="[Opcional] Conteo de respuestas de ofertas"),
+    descripcion_proceso: Optional[str] = Query(None, description="[Opcional] Descripción del proceso"),
+    duracion: Optional[int] = Query(None, description="[Opcional] Duración"),
+    estado_proceso: Optional[str] = Query(None, description="[Opcional] Estado del proceso"),
+    estado_resumen: Optional[str] = Query(None, description="[Opcional] Estado resumen"),
+    fase: Optional[str] = Query(None, description="[Opcional] Fase"),
+    fecha_actualizacion: Optional[str] = Query(None, description="[Opcional] Fecha de actualización"),
+    fecha_actualizacion_completa: Optional[str] = Query(None, description="[Opcional] Fecha de actualización completa"),
+    fecha_creacion: Optional[str] = Query(None, description="[Opcional] Fecha de creación"),
+    fecha_publicacion: Optional[str] = Query(None, description="[Opcional] Fecha de publicación"),
+    fecha_publicacion_fase: Optional[str] = Query(None, description="[Opcional] Fecha de publicación fase"),
+    fecha_publicacion_fase_3: Optional[str] = Query(None, description="[Opcional] Fecha de publicación fase 3"),
+    id_paa: Optional[str] = Query(None, description="[Opcional] ID PAA"),
+    modalidad_contratacion: Optional[str] = Query(None, description="[Opcional] Modalidad de contratación"),
+    nombre_banco: Optional[str] = Query(None, description="[Opcional] Nombre del banco"),
+    nombre_centro_gestor: Optional[str] = Query(None, description="[Opcional] Nombre del centro gestor"),
+    nombre_proceso: Optional[str] = Query(None, description="[Opcional] Nombre del proceso"),
+    nombre_resumido_proceso: Optional[str] = Query(None, description="[Opcional] Nombre resumido del proceso"),
+    nombre_unidad: Optional[str] = Query(None, description="[Opcional] Nombre de unidad"),
+    numero_lotes: Optional[int] = Query(None, description="[Opcional] Número de lotes"),
+    observaciones_test: Optional[str] = Query(None, description="[Opcional] Observaciones test"),
+    plataforma: Optional[str] = Query(None, description="[Opcional] Plataforma"),
+    proceso_contractual: Optional[str] = Query(None, description="[Opcional] Proceso contractual"),
+    proveedores_con_invitacion: Optional[str] = Query(None, description="[Opcional] Proveedores con invitación"),
+    proveedores_invitados: Optional[str] = Query(None, description="[Opcional] Proveedores invitados"),
+    proveedores_que_manifestaron: Optional[str] = Query(None, description="[Opcional] Proveedores que manifestaron"),
+    respuestas_externas: Optional[str] = Query(None, description="[Opcional] Respuestas externas"),
+    respuestas_procedimiento: Optional[str] = Query(None, description="[Opcional] Respuestas procedimiento"),
+    tipo_contrato: Optional[str] = Query(None, description="[Opcional] Tipo de contrato"),
+    unidad_duracion: Optional[str] = Query(None, description="[Opcional] Unidad de duración"),
+    urlproceso: Optional[str] = Query(None, description="[Opcional] URL del proceso"),
+    valor_proyectado: Optional[float] = Query(None, description="[Opcional] Valor proyectado"),
+    valor_publicacion: Optional[float] = Query(None, description="[Opcional] Valor de publicación"),
+    visualizaciones_proceso: Optional[int] = Query(None, description="[Opcional] Visualizaciones del proceso"),
+    datos_json: Optional[str] = Query(None, description="[Opcional] JSON con campos adicionales a actualizar"),
+):
+    """
+    ## 🟡 PUT | ✏️ Modificar | Modificar Proceso de Empréstito en Firebase
+    
+    Endpoint para modificar un registro en la colección `procesos_emprestito` 
+    usando el campo `referencia_proceso` como identificador único.
+    
+    ### ✅ Funcionalidades principales:
+    - **Actualización selectiva**: Solo se modifican los campos especificados
+    - **Preservación de datos**: Los campos no incluidos mantienen sus valores originales
+    - **Búsqueda por referencia_proceso**: Identifica el documento automáticamente
+    - **Validación**: Verifica que el registro exista antes de actualizar
+    - **Múltiples formas de entrada**: Query parameters para facilitar pruebas en Swagger
+    - **Respuesta clara**: Informa el estado de la operación
+    
+    ### ⚙️ Parámetros disponibles (todos opcionales excepto referencia_proceso):
+    - `referencia_proceso` (string, **REQUERIDO**): La referencia del proceso a modificar
+    - `adjudicado` (string, opcional): Adjudicado
+    - `bp` (string, opcional): BP
+    - `conteo_respuestas_ofertas` (int, opcional): Conteo de respuestas de ofertas
+    - `descripcion_proceso` (string, opcional): Descripción del proceso
+    - `duracion` (int, opcional): Duración
+    - `estado_proceso` (string, opcional): Estado del proceso
+    - `estado_resumen` (string, opcional): Estado resumen
+    - `fase` (string, opcional): Fase
+    - `fecha_actualizacion` (string, opcional): Fecha de actualización
+    - `fecha_actualizacion_completa` (string, opcional): Fecha de actualización completa
+    - `fecha_creacion` (string, opcional): Fecha de creación
+    - `fecha_publicacion` (string, opcional): Fecha de publicación
+    - `fecha_publicacion_fase` (string, opcional): Fecha de publicación fase
+    - `fecha_publicacion_fase_3` (string, opcional): Fecha de publicación fase 3
+    - `id_paa` (string, opcional): ID PAA
+    - `modalidad_contratacion` (string, opcional): Modalidad de contratación
+    - `nombre_banco` (string, opcional): Nombre del banco
+    - `nombre_centro_gestor` (string, opcional): Nombre del centro gestor
+    - `nombre_proceso` (string, opcional): Nombre del proceso
+    - `nombre_resumido_proceso` (string, opcional): Nombre resumido del proceso
+    - `nombre_unidad` (string, opcional): Nombre de unidad
+    - `numero_lotes` (int, opcional): Número de lotes
+    - `observaciones_test` (string, opcional): Observaciones test
+    - `plataforma` (string, opcional): Plataforma
+    - `proceso_contractual` (string, opcional): Proceso contractual
+    - `proveedores_con_invitacion` (string, opcional): Proveedores con invitación
+    - `proveedores_invitados` (string, opcional): Proveedores invitados
+    - `proveedores_que_manifestaron` (string, opcional): Proveedores que manifestaron
+    - `respuestas_externas` (string, opcional): Respuestas externas
+    - `respuestas_procedimiento` (string, opcional): Respuestas procedimiento
+    - `tipo_contrato` (string, opcional): Tipo de contrato
+    - `unidad_duracion` (string, opcional): Unidad de duración
+    - `urlproceso` (string, opcional): URL del proceso
+    - `valor_proyectado` (float, opcional): Valor proyectado
+    - `valor_publicacion` (float, opcional): Valor de publicación
+    - `visualizaciones_proceso` (int, opcional): Visualizaciones del proceso
+    - `datos_json` (string, opcional): JSON con campos adicionales a actualizar
+    
+    ### 📝 Ejemplos de uso en Swagger:
+    ```
+    referencia_proceso: PROC-SALUD-2024-001
+    estado_proceso: ejecutado
+    valor_total: 25000000
+    fecha_cierre: 2024-11-12
+    observaciones: Proceso completado exitosamente
+    ```
+    
+    ### ✅ Respuesta exitosa (200):
+    ```json
+    {
+        "success": true,
+        "message": "Proceso de empréstito actualizado correctamente",
+        "referencia_proceso": "PROC-SALUD-2024-001",
+        "campos_actualizados": ["estado_proceso", "valor_total", "fecha_cierre", "observaciones"],
+        "timestamp": "2024-11-12T10:35:22.654321"
+    }
+    ```
+    
+    ### ❌ Respuesta de error (404):
+    ```json
+    {
+        "success": false,
+        "error": "Proceso de empréstito no encontrado",
+        "referencia_proceso": "PROC-SALUD-2024-001",
+        "timestamp": "2024-11-12T10:35:22.654321"
+    }
+    ```
+    
+    ### 💡 Notas importantes:
+    - La `referencia_proceso` es el identificador único
+    - Los campos no especificados NO se modifican
+    - La actualización es parcial (solo lo que envíes se modifica)
+    - Se requiere Firebase disponible
+    - Perfectamente integrado con Swagger UI para pruebas interactivas
+    """
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase no está disponible")
+
+    try:
+        # Construir diccionario de datos a actualizar
+        datos_actualizados = {}
+        
+        if adjudicado is not None:
+            datos_actualizados["adjudicado"] = adjudicado
+        if bp is not None:
+            datos_actualizados["bp"] = bp
+        if conteo_respuestas_ofertas is not None:
+            datos_actualizados["conteo_respuestas_ofertas"] = conteo_respuestas_ofertas
+        if descripcion_proceso is not None:
+            datos_actualizados["descripcion_proceso"] = descripcion_proceso
+        if duracion is not None:
+            datos_actualizados["duracion"] = duracion
+        if estado_proceso is not None:
+            datos_actualizados["estado_proceso"] = estado_proceso
+        if estado_resumen is not None:
+            datos_actualizados["estado_resumen"] = estado_resumen
+        if fase is not None:
+            datos_actualizados["fase"] = fase
+        if fecha_actualizacion is not None:
+            datos_actualizados["fecha_actualizacion"] = fecha_actualizacion
+        if fecha_actualizacion_completa is not None:
+            datos_actualizados["fecha_actualizacion_completa"] = fecha_actualizacion_completa
+        if fecha_creacion is not None:
+            datos_actualizados["fecha_creacion"] = fecha_creacion
+        if fecha_publicacion is not None:
+            datos_actualizados["fecha_publicacion"] = fecha_publicacion
+        if fecha_publicacion_fase is not None:
+            datos_actualizados["fecha_publicacion_fase"] = fecha_publicacion_fase
+        if fecha_publicacion_fase_3 is not None:
+            datos_actualizados["fecha_publicacion_fase_3"] = fecha_publicacion_fase_3
+        if id_paa is not None:
+            datos_actualizados["id_paa"] = id_paa
+        if modalidad_contratacion is not None:
+            datos_actualizados["modalidad_contratacion"] = modalidad_contratacion
+        if nombre_banco is not None:
+            datos_actualizados["nombre_banco"] = nombre_banco
+        if nombre_centro_gestor is not None:
+            datos_actualizados["nombre_centro_gestor"] = nombre_centro_gestor
+        if nombre_proceso is not None:
+            datos_actualizados["nombre_proceso"] = nombre_proceso
+        if nombre_resumido_proceso is not None:
+            datos_actualizados["nombre_resumido_proceso"] = nombre_resumido_proceso
+        if nombre_unidad is not None:
+            datos_actualizados["nombre_unidad"] = nombre_unidad
+        if numero_lotes is not None:
+            datos_actualizados["numero_lotes"] = numero_lotes
+        if observaciones_test is not None:
+            datos_actualizados["observaciones_test"] = observaciones_test
+        if plataforma is not None:
+            datos_actualizados["plataforma"] = plataforma
+        if proceso_contractual is not None:
+            datos_actualizados["proceso_contractual"] = proceso_contractual
+        if proveedores_con_invitacion is not None:
+            datos_actualizados["proveedores_con_invitacion"] = proveedores_con_invitacion
+        if proveedores_invitados is not None:
+            datos_actualizados["proveedores_invitados"] = proveedores_invitados
+        if proveedores_que_manifestaron is not None:
+            datos_actualizados["proveedores_que_manifestaron"] = proveedores_que_manifestaron
+        if respuestas_externas is not None:
+            datos_actualizados["respuestas_externas"] = respuestas_externas
+        if respuestas_procedimiento is not None:
+            datos_actualizados["respuestas_procedimiento"] = respuestas_procedimiento
+        if tipo_contrato is not None:
+            datos_actualizados["tipo_contrato"] = tipo_contrato
+        if unidad_duracion is not None:
+            datos_actualizados["unidad_duracion"] = unidad_duracion
+        if urlproceso is not None:
+            datos_actualizados["urlproceso"] = urlproceso
+        if valor_proyectado is not None:
+            datos_actualizados["valor_proyectado"] = valor_proyectado
+        if valor_publicacion is not None:
+            datos_actualizados["valor_publicacion"] = valor_publicacion
+        if visualizaciones_proceso is not None:
+            datos_actualizados["visualizaciones_proceso"] = visualizaciones_proceso
+        
+        # Parsear JSON adicional si se proporciona
+        if datos_json:
+            try:
+                datos_json_dict = json.loads(datos_json)
+                datos_actualizados.update(datos_json_dict)
+            except json.JSONDecodeError:
+                raise HTTPException(
+                    status_code=400,
+                    detail="El parámetro 'datos_json' debe ser un JSON válido"
+                )
+        
+        # Validar que se proporcionaron datos para actualizar
+        if not datos_actualizados:
+            raise HTTPException(
+                status_code=400,
+                detail="Debes proporcionar al menos un campo para actualizar o un JSON válido en datos_json"
+            )
+        
+        db = get_firestore_client()
+        if not db:
+            raise HTTPException(status_code=503, detail="No se pudo obtener cliente de Firebase")
+        
+        # Buscar el documento por referencia_proceso
+        coleccion = db.collection("procesos_emprestito")
+        query = coleccion.where("referencia_proceso", "==", referencia_proceso)
+        docs = list(query.stream())
+        
+        if not docs:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Proceso de empréstito con referencia '{referencia_proceso}' no encontrado"
+            )
+        
+        # Obtener el ID del documento
+        doc_id = docs[0].id
+        
+        # Actualizar solo los campos proporcionados
+        campos_actualizados = list(datos_actualizados.keys())
+        coleccion.document(doc_id).update(datos_actualizados)
+        
+        return create_utf8_response({
+            "success": True,
+            "message": "Proceso de empréstito actualizado correctamente",
+            "referencia_proceso": referencia_proceso,
+            "campos_actualizados": campos_actualizados,
+            "timestamp": datetime.now().isoformat()
+        })
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al modificar proceso de empréstito: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error al actualizar el proceso de empréstito: {str(e)}"
+        )
+
+
+@app.put("/emprestito/modificar-contrato", tags=["Gestión de Empréstito"], summary="🟡 Modificar Contrato de Empréstito")
+async def modificar_contrato(
+    referencia_contrato: str = Query(..., description="Referencia del contrato a modificar (REQUERIDO)"),
+    _dataset_source: Optional[str] = Query(None, description="[Opcional] Fuente del dataset"),
+    banco: Optional[str] = Query(None, description="[Opcional] Banco"),
+    bp: Optional[str] = Query(None, description="[Opcional] BP"),
+    bpin: Optional[str] = Query(None, description="[Opcional] BPIN"),
+    descripcion_proceso: Optional[str] = Query(None, description="[Opcional] Descripción del proceso"),
+    entidad_contratante: Optional[str] = Query(None, description="[Opcional] Entidad contratante"),
+    estado_contrato: Optional[str] = Query(None, description="[Opcional] Estado del contrato"),
+    fecha_actualizacion: Optional[str] = Query(None, description="[Opcional] Fecha de actualización"),
+    fecha_fin_contrato: Optional[str] = Query(None, description="[Opcional] Fecha de fin del contrato"),
+    fecha_firma_contrato: Optional[str] = Query(None, description="[Opcional] Fecha de firma del contrato"),
+    fecha_guardado: Optional[str] = Query(None, description="[Opcional] Fecha de guardado"),
+    fecha_inicio_contrato: Optional[str] = Query(None, description="[Opcional] Fecha de inicio del contrato"),
+    fuente_datos: Optional[str] = Query(None, description="[Opcional] Fuente de datos"),
+    id_contrato: Optional[str] = Query(None, description="[Opcional] ID del contrato"),
+    modalidad_contratacion: Optional[str] = Query(None, description="[Opcional] Modalidad de contratación"),
+    nit_contratista: Optional[str] = Query(None, description="[Opcional] NIT del contratista"),
+    nit_entidad: Optional[str] = Query(None, description="[Opcional] NIT de la entidad"),
+    nombre_centro_gestor: Optional[str] = Query(None, description="[Opcional] Nombre del centro gestor"),
+    nombre_contratista: Optional[str] = Query(None, description="[Opcional] Nombre del contratista"),
+    nombre_procedimiento: Optional[str] = Query(None, description="[Opcional] Nombre del procedimiento"),
+    objeto_contrato: Optional[str] = Query(None, description="[Opcional] Objeto del contrato"),
+    observaciones_test: Optional[str] = Query(None, description="[Opcional] Observaciones test"),
+    ordenador_gasto: Optional[str] = Query(None, description="[Opcional] Ordenador de gasto"),
+    proceso_contractual: Optional[str] = Query(None, description="[Opcional] Proceso contractual"),
+    referencia_proceso: Optional[str] = Query(None, description="[Opcional] Referencia del proceso"),
+    representante_legal: Optional[str] = Query(None, description="[Opcional] Representante legal"),
+    sector: Optional[str] = Query(None, description="[Opcional] Sector"),
+    supervisor: Optional[str] = Query(None, description="[Opcional] Supervisor"),
+    tipo_contrato: Optional[str] = Query(None, description="[Opcional] Tipo de contrato"),
+    urlproceso: Optional[str] = Query(None, description="[Opcional] URL del proceso"),
+    valor_contrato: Optional[float] = Query(None, description="[Opcional] Valor del contrato"),
+    valor_pagado: Optional[float] = Query(None, description="[Opcional] Valor pagado"),
+    version_esquema: Optional[str] = Query(None, description="[Opcional] Versión del esquema"),
+    datos_json: Optional[str] = Query(None, description="[Opcional] JSON con campos adicionales a actualizar"),
+):
+    """
+    ## 🟡 PUT | ✏️ Modificar | Modificar Contrato de Empréstito en Firebase
+    
+    Endpoint para modificar un registro en la colección `contratos_emprestito` 
+    usando el campo `referencia_contrato` como identificador único.
+    
+    ### ✅ Funcionalidades principales:
+    - **Actualización selectiva**: Solo se modifican los campos especificados
+    - **Preservación de datos**: Los campos no incluidos mantienen sus valores originales
+    - **Búsqueda por referencia_contrato**: Identifica el documento automáticamente
+    - **Validación**: Verifica que el registro exista antes de actualizar
+    - **Múltiples formas de entrada**: Query parameters para facilitar pruebas en Swagger
+    - **Respuesta clara**: Informa el estado de la operación
+    
+    ### ⚙️ Parámetros disponibles (todos opcionales excepto referencia_contrato):
+    - `referencia_contrato` (string, **REQUERIDO**): La referencia del contrato a modificar
+    - `_dataset_source` (string, opcional): Fuente del dataset
+    - `banco` (string, opcional): Banco
+    - `bp` (string, opcional): BP
+    - `bpin` (string, opcional): BPIN
+    - `descripcion_proceso` (string, opcional): Descripción del proceso
+    - `entidad_contratante` (string, opcional): Entidad contratante
+    - `estado_contrato` (string, opcional): Estado del contrato
+    - `fecha_actualizacion` (string, opcional): Fecha de actualización
+    - `fecha_fin_contrato` (string, opcional): Fecha de fin del contrato
+    - `fecha_firma_contrato` (string, opcional): Fecha de firma del contrato
+    - `fecha_guardado` (string, opcional): Fecha de guardado
+    - `fecha_inicio_contrato` (string, opcional): Fecha de inicio del contrato
+    - `fuente_datos` (string, opcional): Fuente de datos
+    - `id_contrato` (string, opcional): ID del contrato
+    - `modalidad_contratacion` (string, opcional): Modalidad de contratación
+    - `nit_contratista` (string, opcional): NIT del contratista
+    - `nit_entidad` (string, opcional): NIT de la entidad
+    - `nombre_centro_gestor` (string, opcional): Nombre del centro gestor
+    - `nombre_contratista` (string, opcional): Nombre del contratista
+    - `nombre_procedimiento` (string, opcional): Nombre del procedimiento
+    - `objeto_contrato` (string, opcional): Objeto del contrato
+    - `observaciones_test` (string, opcional): Observaciones test
+    - `ordenador_gasto` (string, opcional): Ordenador de gasto
+    - `proceso_contractual` (string, opcional): Proceso contractual
+    - `referencia_proceso` (string, opcional): Referencia del proceso
+    - `representante_legal` (string, opcional): Representante legal
+    - `sector` (string, opcional): Sector
+    - `supervisor` (string, opcional): Supervisor
+    - `tipo_contrato` (string, opcional): Tipo de contrato
+    - `urlproceso` (string, opcional): URL del proceso
+    - `valor_contrato` (float, opcional): Valor del contrato
+    - `valor_pagado` (float, opcional): Valor pagado
+    - `version_esquema` (string, opcional): Versión del esquema
+    - `datos_json` (string, opcional): JSON con campos adicionales a actualizar
+    
+    ### 📝 Ejemplos de uso en Swagger:
+    ```
+    referencia_contrato: CONT-SALUD-003-2024
+    estado_contrato: ejecutado
+    valor_contrato: 50000000
+    fecha_cierre: 2024-11-12
+    observaciones: Contrato completado
+    ```
+    
+    ### ✅ Respuesta exitosa (200):
+    ```json
+    {
+        "success": true,
+        "message": "Contrato de empréstito actualizado correctamente",
+        "referencia_contrato": "CONT-SALUD-003-2024",
+        "campos_actualizados": ["estado_contrato", "valor_contrato", "fecha_cierre", "observaciones"],
+        "timestamp": "2024-11-12T11:45:30.987654"
+    }
+    ```
+    
+    ### ❌ Respuesta de error (404):
+    ```json
+    {
+        "success": false,
+        "error": "Contrato de empréstito no encontrado",
+        "referencia_contrato": "CONT-SALUD-003-2024",
+        "timestamp": "2024-11-12T11:45:30.987654"
+    }
+    ```
+    
+    ### 💡 Notas importantes:
+    - La `referencia_contrato` es el identificador único
+    - Los campos no especificados NO se modifican
+    - La actualización es parcial (solo lo que envíes se modifica)
+    - Se requiere Firebase disponible
+    - Perfectamente integrado con Swagger UI para pruebas interactivas
+    """
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase no está disponible")
+
+    try:
+        # Construir diccionario de datos a actualizar
+        datos_actualizados = {}
+        
+        if _dataset_source is not None:
+            datos_actualizados["_dataset_source"] = _dataset_source
+        if banco is not None:
+            datos_actualizados["banco"] = banco
+        if bp is not None:
+            datos_actualizados["bp"] = bp
+        if bpin is not None:
+            datos_actualizados["bpin"] = bpin
+        if descripcion_proceso is not None:
+            datos_actualizados["descripcion_proceso"] = descripcion_proceso
+        if entidad_contratante is not None:
+            datos_actualizados["entidad_contratante"] = entidad_contratante
+        if estado_contrato is not None:
+            datos_actualizados["estado_contrato"] = estado_contrato
+        if fecha_actualizacion is not None:
+            datos_actualizados["fecha_actualizacion"] = fecha_actualizacion
+        if fecha_fin_contrato is not None:
+            datos_actualizados["fecha_fin_contrato"] = fecha_fin_contrato
+        if fecha_firma_contrato is not None:
+            datos_actualizados["fecha_firma_contrato"] = fecha_firma_contrato
+        if fecha_guardado is not None:
+            datos_actualizados["fecha_guardado"] = fecha_guardado
+        if fecha_inicio_contrato is not None:
+            datos_actualizados["fecha_inicio_contrato"] = fecha_inicio_contrato
+        if fuente_datos is not None:
+            datos_actualizados["fuente_datos"] = fuente_datos
+        if id_contrato is not None:
+            datos_actualizados["id_contrato"] = id_contrato
+        if modalidad_contratacion is not None:
+            datos_actualizados["modalidad_contratacion"] = modalidad_contratacion
+        if nit_contratista is not None:
+            datos_actualizados["nit_contratista"] = nit_contratista
+        if nit_entidad is not None:
+            datos_actualizados["nit_entidad"] = nit_entidad
+        if nombre_centro_gestor is not None:
+            datos_actualizados["nombre_centro_gestor"] = nombre_centro_gestor
+        if nombre_contratista is not None:
+            datos_actualizados["nombre_contratista"] = nombre_contratista
+        if nombre_procedimiento is not None:
+            datos_actualizados["nombre_procedimiento"] = nombre_procedimiento
+        if objeto_contrato is not None:
+            datos_actualizados["objeto_contrato"] = objeto_contrato
+        if observaciones_test is not None:
+            datos_actualizados["observaciones_test"] = observaciones_test
+        if ordenador_gasto is not None:
+            datos_actualizados["ordenador_gasto"] = ordenador_gasto
+        if proceso_contractual is not None:
+            datos_actualizados["proceso_contractual"] = proceso_contractual
+        if referencia_proceso is not None:
+            datos_actualizados["referencia_proceso"] = referencia_proceso
+        if representante_legal is not None:
+            datos_actualizados["representante_legal"] = representante_legal
+        if sector is not None:
+            datos_actualizados["sector"] = sector
+        if supervisor is not None:
+            datos_actualizados["supervisor"] = supervisor
+        if tipo_contrato is not None:
+            datos_actualizados["tipo_contrato"] = tipo_contrato
+        if urlproceso is not None:
+            datos_actualizados["urlproceso"] = urlproceso
+        if valor_contrato is not None:
+            datos_actualizados["valor_contrato"] = valor_contrato
+        if valor_pagado is not None:
+            datos_actualizados["valor_pagado"] = valor_pagado
+        if version_esquema is not None:
+            datos_actualizados["version_esquema"] = version_esquema
+        
+        # Parsear JSON adicional si se proporciona
+        if datos_json:
+            try:
+                datos_json_dict = json.loads(datos_json)
+                datos_actualizados.update(datos_json_dict)
+            except json.JSONDecodeError:
+                raise HTTPException(
+                    status_code=400,
+                    detail="El parámetro 'datos_json' debe ser un JSON válido"
+                )
+        
+        # Validar que se proporcionaron datos para actualizar
+        if not datos_actualizados:
+            raise HTTPException(
+                status_code=400,
+                detail="Debes proporcionar al menos un campo para actualizar o un JSON válido en datos_json"
+            )
+        
+        db = get_firestore_client()
+        if not db:
+            raise HTTPException(status_code=503, detail="No se pudo obtener cliente de Firebase")
+        
+        # Buscar el documento por referencia_contrato
+        coleccion = db.collection("contratos_emprestito")
+        query = coleccion.where("referencia_contrato", "==", referencia_contrato)
+        docs = list(query.stream())
+        
+        if not docs:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Contrato de empréstito con referencia '{referencia_contrato}' no encontrado"
+            )
+        
+        # Obtener el ID del documento
+        doc_id = docs[0].id
+        
+        # Actualizar solo los campos proporcionados
+        campos_actualizados = list(datos_actualizados.keys())
+        coleccion.document(doc_id).update(datos_actualizados)
+        
+        return create_utf8_response({
+            "success": True,
+            "message": "Contrato de empréstito actualizado correctamente",
+            "referencia_contrato": referencia_contrato,
+            "campos_actualizados": campos_actualizados,
+            "timestamp": datetime.now().isoformat()
+        })
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al modificar contrato de empréstito: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error al actualizar el contrato de empréstito: {str(e)}"
         )
 
 
