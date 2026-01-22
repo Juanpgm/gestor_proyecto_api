@@ -801,10 +801,7 @@ async def timeout_middleware(request: Request, call_next):
             # 5 minutos para procesamiento masivo de SECOP
             timeout_seconds = 300.0
         elif request.url.path == "/emprestito/obtener-contratos-secop":
-            # 10 minutos para procesamiento masivo de contratos
-            timeout_seconds = 600.0
-        elif request.url.path == "/emprestito/obtener-contratos-secop-completo":
-            # 20 minutos para procesamiento COMPLETO de todos los contratos sin límite
+            # 20 minutos para procesamiento completo de TODOS los contratos sin límite
             timeout_seconds = 1200.0
         else:
             # Timeout de 30 segundos para todas las otras requests
@@ -5272,6 +5269,7 @@ try:
         obtener_codigos_contratos,
         buscar_y_poblar_contratos_secop,
         obtener_contratos_desde_proceso_contractual,
+        obtener_contratos_desde_proceso_contractual_completo,
         get_emprestito_operations_status,
         cargar_orden_compra_directa,
         cargar_convenio_transferencia,
@@ -8496,8 +8494,8 @@ async def obtener_historial_cambios_endpoint(
         )
 
 
-@app.post("/emprestito/obtener-contratos-secop", tags=["Gestión de Empréstito"], summary="🟢 Obtener Contratos SECOP")
-async def obtener_contratos_secop_endpoint(offset: int = 0, limit: int = 10):
+@app.post("/emprestito/obtener-contratos-secop", tags=["Gestión de Empréstito"], summary="🟢 Obtener Contratos SECOP - SIN LIMITACIONES")
+async def obtener_contratos_secop_endpoint(offset: int = 0, limit: int = None):
     """
     ## � POST | 🔄 Procesamiento por Lotes | Obtener Contratos de SECOP desde Procesos
     
@@ -8632,16 +8630,19 @@ async def obtener_contratos_secop_endpoint(offset: int = 0, limit: int = 10):
     try:
         check_emprestito_availability()
         
-        # Validar límites
-        if limit > 50:
-            limit = 50
-        if limit < 1:
-            limit = 10
-        if offset < 0:
-            offset = 0
-        
-        # Ejecutar procesamiento por lotes
-        resultado = await obtener_contratos_desde_proceso_contractual(offset=offset, limit=limit)
+        # Si limit es None, procesar TODO sin límite
+        if limit is None:
+            # Procesar todos los procesos sin limitación
+            resultado = await obtener_contratos_desde_proceso_contractual_completo()
+        else:
+            # Si se especifica limit, mantener comportamiento por lotes
+            if limit > 50:
+                limit = 50
+            if limit < 1:
+                limit = 10
+            if offset < 0:
+                offset = 0
+            resultado = await obtener_contratos_desde_proceso_contractual(offset=offset, limit=limit)
         
         # Retornar resultado
         return JSONResponse(
@@ -8660,125 +8661,6 @@ async def obtener_contratos_secop_endpoint(offset: int = 0, limit: int = 10):
                 "success": False,
                 "error": "Error interno del servidor",
                 "message": "Error obteniendo contratos de SECOP",
-                "detalles": str(e)
-            }
-        )
-
-@app.post("/emprestito/obtener-contratos-secop-completo", tags=["Gestión de Empréstito"], summary="🟢 Obtener TODOS los Contratos SECOP (Sin Límite)")
-async def obtener_contratos_secop_completo_endpoint():
-    """
-    ## 🟢 POST | 🔄 Procesamiento Completo | Obtener TODOS los Contratos de SECOP sin Límite
-    
-    Procesa TODOS los registros de la colección 'procesos_emprestito' de manera iterativa,
-    sin limitaciones de 50 registros. Itera automáticamente sobre todos los procesos.
-    
-    ### 📝 Parámetros:
-    **Sin parámetros** - Procesa todos los registros automáticamente
-    
-    ### 📤 Envío:
-    ```http
-    POST /emprestito/obtener-contratos-secop-completo
-    ```
-    
-    ### 🔄 Proceso:
-    1. Obtiene TODOS los registros de 'procesos_emprestito' sin límite
-    2. Itera sobre ellos en lotes internos de 50 para eficiencia
-    3. Para cada proceso, extrae referencia_proceso y proceso_contractual
-    4. Conecta con la API de SECOP (www.datos.gov.co) para cada proceso
-    5. Busca contratos que contengan el proceso_contractual y NIT = 890399011
-    6. Transforma los datos al esquema de la colección 'contratos_emprestito'
-    7. Verifica duplicados y actualiza/crea registros en Firebase
-    8. Retorna resumen completo al finalizar
-    
-    ### ✅ Respuesta exitosa:
-    ```json
-    {
-        "success": true,
-        "message": "✅ PROCESAMIENTO COMPLETO: 74/74 procesos. Contratos: 53 total (45 nuevos, 8 actualizados)",
-        "resumen_procesamiento": {
-            "total_procesos_coleccion": 74,
-            "procesos_procesados_exitosamente": 74,
-            "procesos_sin_contratos_en_secop": 6,
-            "procesos_con_errores_tecnicos": 0,
-            "tasa_exito": "100.0%",
-            "lotes_procesados": 2,
-            "tamaño_lote": 50
-        },
-        "criterios_busqueda": {
-            "coleccion_origen": "procesos_emprestito",
-            "filtro_secop": "nit_entidad = '890399011'",
-            "procesamiento": "completo_iterativo_sin_limite"
-        },
-        "resultados_secop": {
-            "total_contratos_encontrados": 53,
-            "total_contratos_procesados": 53
-        },
-        "firebase_operacion": {
-            "coleccion_destino": "contratos_emprestito",
-            "documentos_nuevos": 45,
-            "documentos_actualizados": 8,
-            "duplicados_ignorados": 0
-        },
-        "contratos_guardados": [
-            {
-                "referencia_proceso": "4151.010.32.1.0575-2025",
-                "proceso_contractual": "CO1.REQ.8485621",
-                "sector": "Educación",
-                "referencia_contrato": "CONT-001-2025",
-                ...
-            }
-        ],
-        "procesos_sin_contratos_en_secop": [...],
-        "procesos_con_errores_tecnicos": [],
-        "tiempo_total": 245.32,
-        "timestamp": "2026-01-22T22:28:21.063720"
-    }
-    ```
-    
-    ### ⏱️ Nota sobre Tiempo de Ejecución:
-    - Este endpoint procesa TODOS los procesos sin límite
-    - Puede tomar varios minutos dependiendo de la cantidad de registros
-    - Se recomienda usar en operaciones programadas/batch
-    - NO recomendado para solicitudes HTTP síncronas con timeout corto
-    
-    ### 📊 Ventajas respecto a /emprestito/obtener-contratos-secop:
-    - ✅ Procesa TODOS los datos sin necesidad de múltiples llamadas
-    - ✅ Iteración automática - no requiere offset/limit manual
-    - ✅ Resumen completo del procesamiento global
-    - ✅ Ideal para sincronización inicial o batch processing
-    
-    ### 🔗 Integración SECOP:
-    - **API**: www.datos.gov.co
-    - **Dataset**: jbjy-vk9h (Contratos)
-    - **Filtros**: proceso_de_compra LIKE '%{proceso_contractual}%' AND nit_entidad = '890399011'
-    - **Mapeo**: proceso_de_compra → proceso_contractual
-    - **Nuevos campos**: sector desde SECOP
-    - **Límite**: 2000 registros por consulta SECOP
-    """
-    try:
-        check_emprestito_availability()
-        
-        # Ejecutar procesamiento completo sin límites
-        from api.scripts.emprestito_operations import obtener_contratos_desde_proceso_contractual_completo
-        resultado = await obtener_contratos_desde_proceso_contractual_completo()
-        
-        # Retornar resultado
-        return JSONResponse(
-            content=resultado,
-            status_code=200 if resultado.get("success") else 404,
-            headers={"Content-Type": "application/json; charset=utf-8"}
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error en endpoint obtener contratos SECOP completo: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "success": False,
-                "error": "Error interno del servidor",
-                "message": "Error obteniendo todos los contratos de SECOP",
                 "detalles": str(e)
             }
         )
