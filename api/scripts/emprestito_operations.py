@@ -1453,6 +1453,214 @@ async def obtener_contratos_desde_proceso_contractual(offset: int = 0, limit: in
         }
 
 
+async def obtener_contratos_desde_proceso_contractual_completo() -> Dict[str, Any]:
+    """
+    Obtener y procesar TODOS los registros de procesos_emprestito de manera iterativa,
+    sin límite de 50 registros. Itera sobre todos los datos automáticamente.
+
+    OPTIMIZADO para procesamiento completo:
+    - Itera automáticamente sobre todos los procesos sin límite
+    - Procesa en lotes internos con paralelización (hasta 3 procesos simultáneamente)
+    - Retorna resumen completo al finalizar
+    - Hereda campos: nombre_centro_gestor, banco (desde nombre_banco), bp
+    - Mapea bpin desde c_digo_bpin de SECOP
+    """
+    if not FIRESTORE_AVAILABLE:
+        return {
+            "success": False,
+            "error": "Firebase no disponible"
+        }
+
+    inicio_tiempo = datetime.now()
+    logger.info(f"🚀 Iniciando obtención COMPLETA de contratos desde SECOP (sin límite de registros)...")
+
+    try:
+        db_client = get_firestore_client()
+        if not db_client:
+            return {
+                "success": False,
+                "error": "Error obteniendo cliente Firestore"
+            }
+
+        # 1. Obtener todos los registros de la colección procesos_emprestito
+        procesos_ref = db_client.collection('procesos_emprestito')
+        todos_procesos_docs = list(procesos_ref.stream())
+        
+        total_procesos_coleccion = len(todos_procesos_docs)
+
+        if not todos_procesos_docs:
+            return {
+                "success": False,
+                "error": "No se encontraron procesos en la colección procesos_emprestito",
+                "timestamp": datetime.now().isoformat()
+            }
+        
+        logger.info(f"📊 Total de procesos a procesar: {total_procesos_coleccion}")
+
+        # Variables de control - acumuladores globales
+        total_contratos_encontrados = 0
+        total_documentos_nuevos = 0
+        total_documentos_actualizados = 0
+        todos_contratos_guardados = []
+        procesos_con_errores_tecnicos = []
+        procesos_sin_contratos = []
+        procesados_exitosos = 0
+        total_lotes = 0
+
+        # Crear la colección si no existe
+        contratos_ref = db_client.collection('contratos_emprestito')
+        logger.info("📁 Referencia a colección 'contratos_emprestito' establecida")
+
+        # 2. Procesar todos los procesos con paralelización
+        TAMAÑO_LOTE_INTERNO = 10  # Reducido para mejor responsividad
+        MAX_PARALELO = 3  # Máximo 3 procesos en paralelo para no saturar SECOP
+        
+        for lote_num in range(0, total_procesos_coleccion, TAMAÑO_LOTE_INTERNO):
+            total_lotes += 1
+            fin_lote = min(lote_num + TAMAÑO_LOTE_INTERNO, total_procesos_coleccion)
+            procesos_en_lote_actual = fin_lote - lote_num
+            
+            logger.info(f"\n{'='*60}")
+            logger.info(f"🔄 LOTE #{total_lotes}: Registros {lote_num + 1} a {fin_lote} de {total_procesos_coleccion}")
+            logger.info(f"{'='*60}")
+
+            # Obtener procesos para este lote
+            procesos_lote = todos_procesos_docs[lote_num:fin_lote]
+
+            # Preparar tareas asincrónicas para paralelización
+            tareas = []
+            indices = []
+            
+            for i, proceso_doc in enumerate(procesos_lote, 1):
+                try:
+                    proceso_data = proceso_doc.to_dict()
+                    referencia_proceso = proceso_data.get('referencia_proceso', '')
+                    proceso_contractual = proceso_data.get('proceso_contractual', '')
+
+                    if not referencia_proceso or not proceso_contractual:
+                        logger.warning(f"❌ Proceso incompleto {i}/{procesos_en_lote_actual}")
+                        procesos_con_errores_tecnicos.append({
+                            "id": proceso_doc.id,
+                            "referencia_proceso": referencia_proceso or "N/A",
+                            "error": "Datos incompletos"
+                        })
+                        continue
+
+                    # Agregar a la lista de tareas
+                    tareas.append(procesar_proceso_individual(
+                        db_client, proceso_data, referencia_proceso, proceso_contractual, contratos_ref
+                    ))
+                    indices.append((i, referencia_proceso, proceso_contractual, proceso_doc.id))
+                    
+                except Exception as e:
+                    logger.error(f"💥 Error preparando proceso {i}: {e}")
+                    procesos_con_errores_tecnicos.append({
+                        "id": proceso_doc.id,
+                        "referencia_proceso": "DESCONOCIDO",
+                        "error": f"Error: {str(e)}"
+                    })
+                    continue
+            
+            # Procesar tareas en paralelo en grupos de MAX_PARALELO
+            for grupo_idx in range(0, len(tareas), MAX_PARALELO):
+                grupo_tareas = tareas[grupo_idx:min(grupo_idx + MAX_PARALELO, len(tareas))]
+                grupo_indices = indices[grupo_idx:min(grupo_idx + MAX_PARALELO, len(indices))]
+                
+                # Ejecutar tareas en paralelo
+                resultados_grupo = await asyncio.gather(*grupo_tareas, return_exceptions=True)
+                
+                # Procesar resultados
+                for resultado_individual, (i, referencia_proceso, proceso_contractual, doc_id) in zip(resultados_grupo, grupo_indices):
+                    if isinstance(resultado_individual, Exception):
+                        logger.error(f"❌ Excepción en {referencia_proceso}: {resultado_individual}")
+                        procesos_con_errores_tecnicos.append({
+                            "id": doc_id,
+                            "referencia_proceso": referencia_proceso,
+                            "error": str(resultado_individual)
+                        })
+                        continue
+                    
+                    if resultado_individual.get("exito"):
+                        procesados_exitosos += 1
+                        total_documentos_nuevos += resultado_individual["documentos_nuevos"]
+                        total_documentos_actualizados += resultado_individual["documentos_actualizados"]
+                        total_contratos_encontrados += resultado_individual["contratos_encontrados"]
+                        todos_contratos_guardados.extend(resultado_individual["contratos_guardados"])
+
+                        if resultado_individual.get("sin_contratos", False):
+                            procesos_sin_contratos.append({
+                                "id": doc_id,
+                                "referencia_proceso": referencia_proceso,
+                                "proceso_contractual": proceso_contractual,
+                                "motivo": "No encontrados en SECOP"
+                            })
+                        
+                        logger.info(f"  ✅ [{i}] {referencia_proceso}: {resultado_individual['contratos_encontrados']} contratos")
+                    else:
+                        procesos_con_errores_tecnicos.append({
+                            "id": doc_id,
+                            "referencia_proceso": referencia_proceso,
+                            "error": resultado_individual.get("error", "Error desconocido")
+                        })
+                        logger.error(f"  ❌ [{i}] {referencia_proceso}: {resultado_individual.get('error')}")
+
+            # Log de progreso
+            tiempo_transcurrido = (datetime.now() - inicio_tiempo).total_seconds()
+            logger.info(f"⏱️  Progreso: {tiempo_transcurrido:.1f}s | {procesados_exitosos} exitosos")
+
+        # Calcular estadísticas finales
+        total_duplicados_ignorados = 0
+        total_procesados = total_documentos_nuevos + total_documentos_actualizados + total_duplicados_ignorados
+
+        logger.info(f"\n{'='*60}")
+        logger.info(f"🏁 PROCESAMIENTO COMPLETO FINALIZADO")
+        logger.info(f"{'='*60}")
+
+        # Preparar respuesta final
+        return {
+            "success": True,
+            "message": f"✅ COMPLETADO: {procesados_exitosos}/{total_procesos_coleccion} procesos. Contratos: {total_procesados} total",
+            "resumen_procesamiento": {
+                "total_procesos_coleccion": total_procesos_coleccion,
+                "procesos_procesados_exitosamente": procesados_exitosos,
+                "procesos_sin_contratos_en_secop": len(procesos_sin_contratos),
+                "procesos_con_errores_tecnicos": len(procesos_con_errores_tecnicos),
+                "tasa_exito": f"{(procesados_exitosos/total_procesos_coleccion*100):.1f}%" if total_procesos_coleccion > 0 else "0%",
+                "lotes_procesados": total_lotes,
+                "procesamiento_paralelo": f"hasta {MAX_PARALELO} simultáneamente"
+            },
+            "criterios_busqueda": {
+                "coleccion_origen": "procesos_emprestito",
+                "filtro_secop": "nit_entidad = '890399011'",
+                "procesamiento": "completo_iterativo_paralelo"
+            },
+            "resultados_secop": {
+                "total_contratos_encontrados": total_contratos_encontrados,
+                "total_contratos_procesados": total_procesados
+            },
+            "firebase_operacion": {
+                "coleccion_destino": "contratos_emprestito",
+                "documentos_nuevos": total_documentos_nuevos,
+                "documentos_actualizados": total_documentos_actualizados,
+                "duplicados_ignorados": total_duplicados_ignorados
+            },
+            "contratos_guardados": todos_contratos_guardados,
+            "procesos_sin_contratos_en_secop": procesos_sin_contratos,
+            "procesos_con_errores_tecnicos": procesos_con_errores_tecnicos,
+            "tiempo_total": (datetime.now() - inicio_tiempo).total_seconds(),
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Error general en obtener_contratos_desde_proceso_contractual_completo: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "message": "Error durante el procesamiento completo",
+            "timestamp": datetime.now().isoformat()
+        }
+
+
 async def cargar_orden_compra_directa(datos_orden: Dict[str, Any]) -> Dict[str, Any]:
     """
     Cargar orden de compra directamente en la colección ordenes_compra_emprestito
