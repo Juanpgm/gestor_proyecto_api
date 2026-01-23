@@ -47,9 +47,9 @@ async def captura_estado_360_endpoint(
     descripcion_intervencion: str = Form(..., description="Descripción de la intervención"),
     solicitud_intervencion: str = Form(..., description="Solicitud de la intervención"),
     
-    # Campos del entorno (up_entorno)
-    nombre_centro_gestor: str = Form(..., description="Nombre del centro gestor"),
-    solicitud_centro_gestor: str = Form(..., description="Solicitud al centro gestor"),
+    # Campos del entorno (up_entorno) - LISTA de centros gestores
+    nombre_centro_gestor: List[str] = Form(..., description="Lista de nombres de centros gestores"),
+    solicitud_centro_gestor: List[str] = Form(..., description="Lista de solicitudes de centros gestores"),
     
     # Estado y flags
     estado_360: str = Form(..., description="Estado 360: 'Antes', 'Durante' o 'Después'"),
@@ -77,6 +77,7 @@ async def captura_estado_360_endpoint(
     
     ### ✅ Funcionalidades:
     - Crear/actualizar registro en colección "unidades_proyecto_reconocimiento_360"
+    - Guardar MÚLTIPLES centros gestores para la misma unidad de proyecto
     - Calcular automáticamente estado_360 basado en el estado del proyecto:
       - "En alistamiento" → "Antes"
       - "En ejecución" o "Suspendido" → "Durante"
@@ -93,8 +94,8 @@ async def captura_estado_360_endpoint(
     - **nombre_up_detalle**: Detalle del nombre
     - **descripcion_intervencion**: Descripción de la intervención
     - **solicitud_intervencion**: Solicitud de intervención
-    - **nombre_centro_gestor**: Centro gestor responsable
-    - **solicitud_centro_gestor**: Solicitud específica
+    - **nombre_centro_gestor**: LISTA de centros gestores responsables
+    - **solicitud_centro_gestor**: LISTA de solicitudes específicas (debe coincidir en cantidad con nombre_centro_gestor)
     - **estado_360**: Estado 360 del proyecto ('Antes', 'Durante' o 'Después')
     - **requiere_alcalde**: Boolean (True/False)
     - **entrega_publica**: Boolean (True/False)
@@ -106,7 +107,7 @@ async def captura_estado_360_endpoint(
     - **coordinates_data**: JSON array con coordenadas
     - **photosUrl**: Archivos de fotos (obligatorio)
     
-    ### 📝 Ejemplo de uso con JavaScript/fetch:
+    ### 📝 Ejemplo de uso con JavaScript/fetch (MÚLTIPLES CENTROS):
     ```javascript
     const formData = new FormData();
     formData.append('upid', 'UNP-1234');
@@ -114,8 +115,13 @@ async def captura_estado_360_endpoint(
     formData.append('nombre_up_detalle', 'Renovación completa');
     formData.append('descripcion_intervencion', 'Mejoramiento integral');
     formData.append('solicitud_intervencion', 'Solicitud 2024-001');
+    
+    // ✅ AGREGAR MÚLTIPLES CENTROS GESTORES
     formData.append('nombre_centro_gestor', 'Secretaría de Infraestructura');
+    formData.append('nombre_centro_gestor', 'Secretaría de Ambiente');
     formData.append('solicitud_centro_gestor', 'Requiere revisión técnica');
+    formData.append('solicitud_centro_gestor', 'Revisión ambiental necesaria');
+    
     formData.append('estado_360', 'Durante');
     formData.append('requiere_alcalde', 'true');
     formData.append('entrega_publica', 'true');
@@ -140,19 +146,29 @@ async def captura_estado_360_endpoint(
     ### 🗂️ Estructura en S3 (bucket: 360-photos-cali):
     ```
     images/
-    └── Secretaria_de_Infraestructura/
-        └── UNP-1234/
+    ├── secretaria_de_infraestructura/
+    │   └── unp-1234/
+    │       ├── antes/
+    │       │   └── 2024-11-26_10-30-00/
+    │       │       ├── foto1.jpg
+    │       │       └── foto2.jpg
+    │       └── durante/
+    │           └── 2024-11-26_14-30-00/
+    │               └── foto3.jpg
+    └── secretaria_de_ambiente/
+        └── unp-1234/
             ├── antes/
             │   └── 2024-11-26_10-30-00/
-            │       ├── foto1.jpg
-            │       └── foto2.jpg
-            ├── durante/
-            │   └── 2024-11-26_14-30-00/
-            │       └── foto3.jpg
-            └── despues/
-                └── 2024-12-15_16-00-00/
-                    └── foto4.jpg
+            │       └── foto4.jpg
+            └── durante/
+                └── 2024-11-26_14-30-00/
+                    └── foto5.jpg
     ```
+    
+    ### ⚠️ IMPORTANTE:
+    - La cantidad de elementos en `nombre_centro_gestor` debe ser igual a la cantidad en `solicitud_centro_gestor`
+    - Se crean carpetas separadas en S3 para cada centro gestor
+    - Cada centro tendrá sus propias fotos organizadas por estado
     """
     if not CAPTURA_360_OPERATIONS_AVAILABLE:
         raise HTTPException(
@@ -179,10 +195,22 @@ async def captura_estado_360_endpoint(
                 detail=f"tipo_visita inválido. Debe ser uno de: {', '.join(tipos_visita_validos)}"
             )
         
-        # Construir objeto up_entorno
+        # Construir objeto up_entorno como LISTA de centros gestores
+        if len(nombre_centro_gestor) != len(solicitud_centro_gestor):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Los arrays nombre_centro_gestor y solicitud_centro_gestor deben tener la misma cantidad de elementos. Recibido: {len(nombre_centro_gestor)} vs {len(solicitud_centro_gestor)}"
+            )
+        
+        entornos = []
+        for nombre, solicitud in zip(nombre_centro_gestor, solicitud_centro_gestor):
+            entornos.append({
+                "nombre_centro_gestor": nombre,
+                "solicitud_centro_gestor": solicitud
+            })
+        
         up_entorno = {
-            "nombre_centro_gestor": nombre_centro_gestor,
-            "solicitud_centro_gestor": solicitud_centro_gestor
+            "entornos": entornos
         }
         
         # Construir objeto registrado_por

@@ -264,8 +264,11 @@ async def crear_registro_captura_360(
         # Generar timestamp
         fecha_registro = datetime.now().isoformat()
         
-        # Generar estructura de carpetas S3
-        nombre_centro_gestor = up_entorno.get('nombre_centro_gestor', '')
+        # Obtener el primer centro gestor para la estructura S3 (compatibilidad)
+        # Si hay múltiples centros, usamos el primero para la carpeta principal
+        entornos = up_entorno.get('entornos', [])
+        nombre_centro_gestor = entornos[0]['nombre_centro_gestor'] if entornos else ''
+        
         paths = generar_estructura_carpetas_s3(
             nombre_centro_gestor=nombre_centro_gestor,
             upid=upid,

@@ -14,10 +14,23 @@ class RegistradoPor(BaseModel):
     email: str = Field(..., description="Correo electrónico del usuario")
 
 
-class UpEntorno(BaseModel):
-    """Modelo para información del entorno del proyecto"""
+class UpEntornoItem(BaseModel):
+    """Modelo para un item del entorno del proyecto"""
     nombre_centro_gestor: str = Field(..., description="Nombre del centro gestor")
     solicitud_centro_gestor: str = Field(..., description="Solicitud específica al centro gestor")
+
+
+class UpEntorno(BaseModel):
+    """Modelo para información del entorno del proyecto (lista de centros gestores)"""
+    entornos: List['UpEntornoItem'] = Field(..., description="Lista de centros gestores y sus solicitudes")
+    
+    class Config:
+        """Configuración de Pydantic"""
+        arbitrary_types_allowed = True
+
+
+# Actualizar referencias forward
+UpEntorno.model_rebuild()
 
 
 class CoordinatesGPS(BaseModel):
