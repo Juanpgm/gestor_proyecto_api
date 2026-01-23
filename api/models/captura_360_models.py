@@ -61,7 +61,7 @@ class CapturaEstado360Request(BaseModel):
     observaciones: Optional[str] = Field(None, description="Observaciones adicionales (opcional)")
     coordinates_gps: CoordinatesGPS = Field(..., description="Coordenadas GPS del proyecto")
     registrado_por: RegistradoPor = Field(..., description="Información de quién registra (username y email)")
-    photosUrl: List[str] = Field(..., description="Lista de nombres de archivos de fotos a subir (obligatorio)")
+    photosUrl: List[str] = Field(..., description="Lista de URLs de fotos a guardar en Firebase según estado_360 (obligatorio)")
     
     @validator('estado_360')
     def validate_estado_360(cls, v):

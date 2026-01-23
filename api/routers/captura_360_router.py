@@ -3,7 +3,7 @@ Router para Artefacto de Captura #360
 Endpoints para gestión de reconocimiento de unidades de proyecto
 """
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, Form
 from typing import List, Optional
 import logging
 from datetime import datetime
@@ -66,27 +66,25 @@ async def captura_estado_360_endpoint(
     coordinates_type: str = Form(..., description="Tipo de geometría (Point, LineString, Polygon, etc.)"),
     coordinates_data: str = Form(..., description="Coordenadas en formato JSON array"),
     
-    # Archivos de fotos (obligatorio)
-    photosUrl: List[UploadFile] = File(..., description="Fotos a subir (obligatorio)")
+    # URLs de fotos (obligatorio) - cambio: ahora son URLs strings, no archivos
+    photosUrl: List[str] = Form(..., description="Lista de URLs de fotos a guardar según estado_360 (obligatorio)")
 ):
     """
     ## 🟢 POST | 📸 Captura 360 | Registrar Estado de Reconocimiento 360
     
     **Propósito**: Crear registro de captura estado 360 para una unidad de proyecto,
-    incluyendo información del reconocimiento y fotos organizadas por estado.
+    incluyendo información del reconocimiento y URLs de fotos organizadas por estado.
     
     ### ✅ Funcionalidades:
     - Crear/actualizar registro en colección "unidades_proyecto_reconocimiento_360"
     - Guardar MÚLTIPLES centros gestores para la misma unidad de proyecto
+    - Guardar URLs de fotos en Firebase según el estado_360:
+      - Las URLs se almacenan directamente sin subir archivos a S3
+      - Se categorizan automáticamente por estado (Antes/Durante/Después)
     - Calcular automáticamente estado_360 basado en el estado del proyecto:
       - "En alistamiento" → "Antes"
       - "En ejecución" o "Suspendido" → "Durante"
       - "Terminado" o "Inaugurado" → "Después"
-    - Subir fotos a S3 en bucket "360-photos-cali" con estructura organizada:
-      - `/images/nombre_centro_gestor/upid/antes/fecha_registro`
-      - `/images/nombre_centro_gestor/upid/durante/fecha_registro`
-      - `/images/nombre_centro_gestor/upid/despues/fecha_registro`
-    - Generar URLs de carpetas para cada estado (Antes/Durante/Después)
     
     ### 📊 Campos requeridos:
     - **upid**: ID único de la unidad de proyecto
@@ -105,7 +103,7 @@ async def captura_estado_360_endpoint(
     - **registrado_por_email**: Email del usuario que registra
     - **coordinates_type**: Tipo de geometría (Point, LineString, etc.)
     - **coordinates_data**: JSON array con coordenadas
-    - **photosUrl**: Archivos de fotos (obligatorio)
+    - **photosUrl**: LISTA de URLs de fotos a guardar según estado_360 (obligatorio)
     
     ### 📝 Ejemplo de uso con JavaScript/fetch (MÚLTIPLES CENTROS):
     ```javascript
@@ -132,10 +130,10 @@ async def captura_estado_360_endpoint(
     formData.append('coordinates_type', 'Point');
     formData.append('coordinates_data', '[-76.5225, 3.4516]');
     
-    // Agregar fotos
-    for (const file of photoFiles) {
-        formData.append('photosUrl', file);
-    }
+    // ✅ AGREGAR URLs DE FOTOS (según estado_360)
+    formData.append('photosUrl', 'https://example.com/fotos/foto1.jpg');
+    formData.append('photosUrl', 'https://example.com/fotos/foto2.jpg');
+    formData.append('photosUrl', 'https://cloudinary.com/fotos/foto3.jpg');
     
     const response = await fetch('/unidades-proyecto/captura-estado-360', {
         method: 'POST',
@@ -143,32 +141,27 @@ async def captura_estado_360_endpoint(
     });
     ```
     
-    ### 🗂️ Estructura en S3 (bucket: 360-photos-cali):
-    ```
-    images/
-    ├── secretaria_de_infraestructura/
-    │   └── unp-1234/
-    │       ├── antes/
-    │       │   └── 2024-11-26_10-30-00/
-    │       │       ├── foto1.jpg
-    │       │       └── foto2.jpg
-    │       └── durante/
-    │           └── 2024-11-26_14-30-00/
-    │               └── foto3.jpg
-    └── secretaria_de_ambiente/
-        └── unp-1234/
-            ├── antes/
-            │   └── 2024-11-26_10-30-00/
-            │       └── foto4.jpg
-            └── durante/
-                └── 2024-11-26_14-30-00/
-                    └── foto5.jpg
+    ### 📸 Estructura de almacenamiento en Firebase:
+    Las URLs se almacenan en el documento Firestore bajo la estructura:
+    ```json
+    {
+      "photosUrl": {
+        "photosBeforeUrl": [
+          "https://example.com/fotos/antes1.jpg",
+          "https://example.com/fotos/antes2.jpg"
+        ],
+        "photoWhileUrl": [
+          "https://example.com/fotos/durante1.jpg"
+        ],
+        "photosAfterUrl": []
+      }
+    }
     ```
     
-    ### ⚠️ IMPORTANTE:
-    - La cantidad de elementos en `nombre_centro_gestor` debe ser igual a la cantidad en `solicitud_centro_gestor`
-    - Se crean carpetas separadas en S3 para cada centro gestor
-    - Cada centro tendrá sus propias fotos organizadas por estado
+    ⚠️ **IMPORTANTE**:
+    - Las URLs se guardan directamente en Firebase sin subir archivos a S3
+    - Las URLs se categorizan automáticamente según el estado_360 enviado
+    - Se pueden agregar URLs en cada captura (se combinan con las existentes)
     """
     if not CAPTURA_360_OPERATIONS_AVAILABLE:
         raise HTTPException(
@@ -234,35 +227,25 @@ async def captura_estado_360_endpoint(
             "coordinates": coordinates_array
         }
         
-        # Procesar fotos (obligatorias)
+        # Procesar URLs de fotos (obligatorias)
+        # Ahora photosUrl son strings (URLs), no archivos
         photos_uploaded = []
         photos_failed = []
         
-        logger.info(f"📸 Procesando {len(photosUrl)} fotos para UPID {upid}")
+        logger.info(f"📸 Procesando {len(photosUrl)} URLs de fotos para UPID {upid} con estado_360={estado_360}")
         
         if len(photosUrl) > 0:
-            
-            # Preparar archivos para subir
-            files_content = []
-            for photo in photosUrl:
-                content = await photo.read()
-                files_content.append({
-                    'content': content,
-                    'filename': photo.filename,
-                    'content_type': photo.content_type or 'image/jpeg'
-                })
-            
-            # Subir fotos a S3
+            # Validar y procesar URLs
             fecha_registro = datetime.now().isoformat()
             photos_uploaded, photos_failed = await subir_fotos_s3(
-                files_content=files_content,
-                nombre_centro_gestor=nombre_centro_gestor,
+                photos_urls=photosUrl,
+                nombre_centro_gestor=nombre_centro_gestor[0] if nombre_centro_gestor else "sin_centro",
                 upid=upid,
                 estado_360=estado_360,
                 fecha_registro=fecha_registro
             )
             
-            logger.info(f"✅ Fotos subidas: {len(photos_uploaded)}, Fallidas: {len(photos_failed)}")
+            logger.info(f"✅ URLs procesadas: {len(photos_uploaded)}, Fallidas: {len(photos_failed)}")
         
         # Crear/actualizar registro en Firestore (UPSERT)
         resultado = await crear_registro_captura_360(

@@ -121,96 +121,58 @@ def obtener_ruta_por_estado(
 
 
 async def subir_fotos_s3(
-    files_content: List[Dict[str, Any]],
+    photos_urls: List[str],
     nombre_centro_gestor: str,
     upid: str,
     estado_360: str,
     fecha_registro: str
 ) -> Tuple[List[Dict], List[Dict]]:
     """
-    Subir fotos a S3 en la estructura de carpetas correspondiente
+    Procesar URLs de fotos y guardarlas en Firebase según el estado_360
     
     Args:
-        files_content: Lista de diccionarios con 'content', 'filename', 'content_type'
-        nombre_centro_gestor: Nombre del centro gestor
-        upid: ID de la unidad de proyecto
+        photos_urls: Lista de URLs de fotos a guardar
+        nombre_centro_gestor: Nombre del centro gestor (para referencia)
+        upid: ID de la unidad de proyecto (para referencia)
         estado_360: Estado 360 (Antes/Durante/Después)
         fecha_registro: Fecha de registro
         
     Returns:
         Tupla (fotos_exitosas, fotos_fallidas)
     """
-    if not S3_AVAILABLE or S3DocumentManager is None:
-        logger.warning("S3 no disponible - fotos no serán subidas")
-        return [], [{
-            "error": "S3 no disponible",
-            "message": "El servicio de almacenamiento S3 no está configurado"
-        }]
+    fotos_exitosas = []
+    fotos_fallidas = []
     
-    try:
-        # Inicializar S3DocumentManager con bucket específico para fotos 360
-        s3_manager = S3DocumentManager()
-        # Sobrescribir bucket name con el bucket específico para fotos 360
-        s3_manager.bucket_name = "360-photos-cali"
-        
-        # Generar estructura de carpetas
-        paths = generar_estructura_carpetas_s3(
-            nombre_centro_gestor=nombre_centro_gestor,
-            upid=upid,
-            estado_360=estado_360,
-            fecha_registro=fecha_registro
-        )
-        
-        # Obtener ruta base según el estado
-        ruta_base = obtener_ruta_por_estado(paths, estado_360)
-        
-        fotos_exitosas = []
-        fotos_fallidas = []
-        
-        # Subir cada foto
-        for file_info in files_content:
-            try:
-                filename = file_info['filename']
-                content = file_info['content']
-                content_type = file_info.get('content_type', 'image/jpeg')
-                
-                # Construir key S3 completo
-                s3_key = f"{ruta_base}/{filename}"
-                
-                # Subir a S3 directamente (sin metadata para evitar problemas con UTF-8)
-                # AWS S3 metadata solo soporta ASCII, así que no incluimos metadata con caracteres especiales
-                s3_manager.s3_client.put_object(
-                    Bucket=s3_manager.bucket_name,
-                    Key=s3_key,
-                    Body=content,
-                    ContentType=content_type
-                )
-                
-                # Generar URL
-                file_url = f"https://{s3_manager.bucket_name}.s3.{s3_manager.region}.amazonaws.com/{s3_key}"
-                
-                fotos_exitosas.append({
-                    'filename': filename,
-                    's3_key': s3_key,
-                    's3_url': file_url,
-                    'size': len(content),
-                    'estado_360': estado_360
-                })
-                
-                logger.info(f"✅ Foto subida: {filename} -> {s3_key}")
-                
-            except Exception as e:
-                logger.error(f"❌ Error subiendo foto {file_info.get('filename', 'unknown')}: {e}")
-                fotos_fallidas.append({
-                    'filename': file_info.get('filename', 'unknown'),
-                    'error': str(e)
-                })
-        
+    if not photos_urls:
         return fotos_exitosas, fotos_fallidas
-        
-    except Exception as e:
-        logger.error(f"❌ Error inicializando S3: {e}")
-        return [], [{"error": str(e)}]
+    
+    # Procesar cada URL
+    for idx, url in enumerate(photos_urls):
+        try:
+            if not isinstance(url, str) or not url.strip():
+                raise ValueError("URL no válida o vacía")
+            
+            # Validar que sea una URL válida
+            if not url.startswith(('http://', 'https://')):
+                raise ValueError(f"URL debe comenzar con http:// o https://: {url}")
+            
+            fotos_exitosas.append({
+                'url': url,
+                'orden': idx + 1,
+                'estado_360': estado_360,
+                'fecha_registro': fecha_registro
+            })
+            
+            logger.info(f"✅ URL de foto procesada: {url} para {estado_360}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error procesando URL de foto {idx + 1}: {e}")
+            fotos_fallidas.append({
+                'url': photos_urls[idx] if idx < len(photos_urls) else 'unknown',
+                'error': str(e)
+            })
+    
+    return fotos_exitosas, fotos_fallidas
 
 
 async def crear_registro_captura_360(
@@ -264,28 +226,24 @@ async def crear_registro_captura_360(
         # Generar timestamp
         fecha_registro = datetime.now().isoformat()
         
-        # Obtener el primer centro gestor para la estructura S3 (compatibilidad)
+        # Obtener el primer centro gestor para referencia
         # Si hay múltiples centros, usamos el primero para la carpeta principal
         entornos = up_entorno.get('entornos', [])
         nombre_centro_gestor = entornos[0]['nombre_centro_gestor'] if entornos else ''
         
-        paths = generar_estructura_carpetas_s3(
-            nombre_centro_gestor=nombre_centro_gestor,
-            upid=upid,
-            estado_360=estado_360,
-            fecha_registro=fecha_registro
-        )
-        
-        # Preparar objeto photosUrl
+        # Preparar objeto photosUrl basado en estado_360
+        # Ahora guardamos URLs directas (no rutas S3)
         photos_url = {
-            "photosBeforeUrl": paths.get("photosBeforeUrl", ""),
-            "photoWhileUrl": paths.get("photoWhileUrl", ""),
-            "photosAfterUrl": paths.get("photosAfterUrl", "")
+            "photosBeforeUrl": [],
+            "photoWhileUrl": [],
+            "photosAfterUrl": []
         }
         
-        # Si hay fotos subidas, actualizar la URL correspondiente con lista de URLs
+        # Si hay fotos (URLs) subidas, agregarlas a la lista correspondiente según estado_360
         if photos_info and len(photos_info) > 0:
-            photo_urls_list = [photo['s3_url'] for photo in photos_info]
+            # Extraer solo las URLs de photos_info
+            photo_urls_list = [photo['url'] for photo in photos_info]
+            
             if estado_360 == "Antes":
                 photos_url["photosBeforeUrl"] = photo_urls_list
             elif estado_360 == "Durante":
