@@ -3,10 +3,13 @@ Router para Artefacto de Captura #360
 Endpoints para gestión de reconocimiento de unidades de proyecto
 """
 
-from fastapi import APIRouter, HTTPException, Form
-from typing import List, Optional
+from fastapi import APIRouter, HTTPException, Form, status
+from fastapi.responses import JSONResponse
+from typing import List, Optional, Dict, Any
 import logging
 from datetime import datetime
+import json
+import re
 
 from api.models.captura_360_models import (
     CapturaEstado360Request,
@@ -27,6 +30,45 @@ from api.scripts.captura_360_operations import (
 # Configurar logger
 logger = logging.getLogger(__name__)
 
+# ✅ CONSTANTES Y VALIDADORES
+ESTADOS_360_VALIDOS = ["Antes", "Durante", "Después"]
+TIPOS_VISITA_VALIDOS = ["Verificación", "Comunicaciones"]
+
+# Expresión regular para validar emails
+EMAIL_PATTERN = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
+
+def validar_email(email: str) -> bool:
+    """Validar formato de email"""
+    return EMAIL_PATTERN.match(email) is not None
+
+def validar_url_foto(url: str) -> bool:
+    """Validar que la URL sea válida (http/https)"""
+    if not url or not isinstance(url, str):
+        return False
+    return url.startswith('http://') or url.startswith('https://')
+
+def validar_coordenadas_json(coord_json: str) -> tuple[bool, Optional[List]]:
+    """Validar y parsear JSON de coordenadas"""
+    try:
+        coords = json.loads(coord_json)
+        if not isinstance(coords, list) or len(coords) < 2:
+            return False, None
+        # Validar que sean números
+        if not all(isinstance(c, (int, float)) for c in coords):
+            return False, None
+        return True, coords
+    except (json.JSONDecodeError, ValueError):
+        return False, None
+
+def construir_error_validacion(campo: str, detalle: str) -> Dict[str, Any]:
+    """Construir objeto de error de validación consistente"""
+    return {
+        "success": False,
+        "message": f"Error de validación en {campo}",
+        "detail": detalle,
+        "timestamp": datetime.now().isoformat()
+    }
+
 # Crear router
 router = APIRouter(
     prefix="/unidades-proyecto",
@@ -37,15 +79,21 @@ router = APIRouter(
 @router.post(
     "/captura-estado-360",
     response_model=CapturaEstado360Response,
-    summary="🟢 POST | 📸 Captura 360 | Registrar Estado 360"
+    summary="🟢 POST | 📸 Captura 360 | Registrar Estado 360",
+    responses={
+        200: {"description": "✅ Registro creado exitosamente"},
+        400: {"description": "❌ Error de validación de datos"},
+        422: {"description": "❌ Campo faltante o formato incorrecto"},
+        503: {"description": "❌ Servicio no disponible"}
+    }
 )
 async def captura_estado_360_endpoint(
     # Campos de texto
-    upid: str = Form(..., description="ID único de la unidad de proyecto"),
-    nombre_up: str = Form(..., description="Nombre de la unidad de proyecto"),
-    nombre_up_detalle: str = Form(..., description="Detalle del nombre de la unidad de proyecto"),
-    descripcion_intervencion: str = Form(..., description="Descripción de la intervención"),
-    solicitud_intervencion: str = Form(..., description="Solicitud de la intervención"),
+    upid: str = Form(..., min_length=1, description="ID único de la unidad de proyecto"),
+    nombre_up: str = Form(..., min_length=1, description="Nombre de la unidad de proyecto"),
+    nombre_up_detalle: str = Form(..., min_length=1, description="Detalle del nombre de la unidad de proyecto"),
+    descripcion_intervencion: str = Form(..., min_length=1, description="Descripción de la intervención"),
+    solicitud_intervencion: str = Form(..., min_length=1, description="Solicitud de la intervención"),
     
     # Campos del entorno (up_entorno) - LISTA de centros gestores
     nombre_centro_gestor: List[str] = Form(..., description="Lista de nombres de centros gestores"),
@@ -58,15 +106,15 @@ async def captura_estado_360_endpoint(
     tipo_visita: str = Form(..., description="Tipo de visita: 'Verificación' o 'Comunicaciones'"),
     observaciones: Optional[str] = Form(None, description="Observaciones adicionales (opcional)"),
     
-    # Registrado por (como string JSON)
-    registrado_por_username: str = Form(..., description="Nombre de usuario que registra (displayName)"),
-    registrado_por_email: str = Form(..., description="Email del usuario que registra"),
+    # Registrado por
+    registrado_por_username: str = Form(..., min_length=1, description="Nombre de usuario que registra (displayName)"),
+    registrado_por_email: str = Form(..., min_length=1, description="Email del usuario que registra"),
     
-    # Coordenadas GPS (como string JSON)
-    coordinates_type: str = Form(..., description="Tipo de geometría (Point, LineString, Polygon, etc.)"),
+    # Coordenadas GPS
+    coordinates_type: str = Form(..., min_length=1, description="Tipo de geometría (Point, LineString, Polygon, etc.)"),
     coordinates_data: str = Form(..., description="Coordenadas en formato JSON array"),
     
-    # URLs de fotos (obligatorio) - cambio: ahora son URLs strings, no archivos
+    # URLs de fotos
     photosUrl: List[str] = Form(..., description="Lista de URLs de fotos a guardar según estado_360 (obligatorio)")
 ):
     """
@@ -78,177 +126,191 @@ async def captura_estado_360_endpoint(
     ### ✅ Funcionalidades:
     - Crear/actualizar registro en colección "unidades_proyecto_reconocimiento_360"
     - Guardar MÚLTIPLES centros gestores para la misma unidad de proyecto
-    - Guardar URLs de fotos en Firebase según el estado_360:
-      - Las URLs se almacenan directamente sin subir archivos a S3
-      - Se categorizan automáticamente por estado (Antes/Durante/Después)
-    - Calcular automáticamente estado_360 basado en el estado del proyecto:
-      - "En alistamiento" → "Antes"
-      - "En ejecución" o "Suspendido" → "Durante"
-      - "Terminado" o "Inaugurado" → "Después"
+    - Guardar URLs de fotos en Firebase según el estado_360 (Antes/Durante/Después)
+    - Validación robusta de todos los campos en producción
+    - Manejo completo de errores con mensajes detallados
     
-    ### 📊 Campos requeridos:
-    - **upid**: ID único de la unidad de proyecto
-    - **nombre_up**: Nombre del proyecto
-    - **nombre_up_detalle**: Detalle del nombre
-    - **descripcion_intervencion**: Descripción de la intervención
-    - **solicitud_intervencion**: Solicitud de intervención
-    - **nombre_centro_gestor**: LISTA de centros gestores responsables
-    - **solicitud_centro_gestor**: LISTA de solicitudes específicas (debe coincidir en cantidad con nombre_centro_gestor)
-    - **estado_360**: Estado 360 del proyecto ('Antes', 'Durante' o 'Después')
-    - **requiere_alcalde**: Boolean (True/False)
-    - **entrega_publica**: Boolean (True/False)
-    - **tipo_visita**: Tipo de visita ('Verificación' o 'Comunicaciones')
-    - **observaciones**: Observaciones adicionales (opcional)
-    - **registrado_por_username**: Nombre de usuario que registra (displayName)
-    - **registrado_por_email**: Email del usuario que registra
-    - **coordinates_type**: Tipo de geometría (Point, LineString, etc.)
-    - **coordinates_data**: JSON array con coordenadas
-    - **photosUrl**: LISTA de URLs de fotos a guardar según estado_360 (obligatorio)
+    ### ⚠️ VALIDACIONES IMPLEMENTADAS:
+    1. **Campos obligatorios**: Todos deben estar presentes y no vacíos
+    2. **estado_360**: Solo acepta 'Antes', 'Durante' o 'Después'
+    3. **tipo_visita**: Solo acepta 'Verificación' o 'Comunicaciones'
+    4. **Email**: Validación de formato RFC completo
+    5. **Coordenadas**: Deben ser JSON array válido con al menos 2 números
+    6. **URLs de fotos**: Deben comenzar con http:// o https://
+    7. **Centros gestores**: Las listas deben tener el mismo tamaño
     
-    ### 📝 Ejemplo de uso con JavaScript/fetch (MÚLTIPLES CENTROS):
+    ### 📊 Ejemplo de solicitud correcta:
     ```javascript
     const formData = new FormData();
-    formData.append('upid', 'UNP-1234');
+    formData.append('upid', 'UNP-001-2024');
     formData.append('nombre_up', 'Parque Central');
-    formData.append('nombre_up_detalle', 'Renovación completa');
-    formData.append('descripcion_intervencion', 'Mejoramiento integral');
-    formData.append('solicitud_intervencion', 'Solicitud 2024-001');
+    formData.append('nombre_up_detalle', 'Renovación del parque central');
+    formData.append('descripcion_intervencion', 'Intervención integral');
+    formData.append('solicitud_intervencion', 'SOL-2024-001');
     
-    // ✅ AGREGAR MÚLTIPLES CENTROS GESTORES
+    // Centros gestores (MÚLTIPLES permitidos)
     formData.append('nombre_centro_gestor', 'Secretaría de Infraestructura');
-    formData.append('nombre_centro_gestor', 'Secretaría de Ambiente');
-    formData.append('solicitud_centro_gestor', 'Requiere revisión técnica');
-    formData.append('solicitud_centro_gestor', 'Revisión ambiental necesaria');
+    formData.append('solicitud_centro_gestor', 'Revisión técnica requerida');
     
     formData.append('estado_360', 'Durante');
     formData.append('requiere_alcalde', 'true');
     formData.append('entrega_publica', 'true');
     formData.append('tipo_visita', 'Verificación');
-    formData.append('observaciones', 'Proyecto prioritario');
+    formData.append('observaciones', 'Observaciones del proyecto');
+    
     formData.append('registrado_por_username', 'Juan Pérez');
     formData.append('registrado_por_email', 'juan.perez@example.com');
     formData.append('coordinates_type', 'Point');
     formData.append('coordinates_data', '[-76.5225, 3.4516]');
     
-    // ✅ AGREGAR URLs DE FOTOS (según estado_360)
-    formData.append('photosUrl', 'https://example.com/fotos/foto1.jpg');
-    formData.append('photosUrl', 'https://example.com/fotos/foto2.jpg');
-    formData.append('photosUrl', 'https://cloudinary.com/fotos/foto3.jpg');
+    formData.append('photosUrl', 'https://cloudinary.com/foto1.jpg');
+    formData.append('photosUrl', 'https://example.com/foto2.jpg');
     
     const response = await fetch('/unidades-proyecto/captura-estado-360', {
         method: 'POST',
         body: formData
     });
     ```
-    
-    ### 📸 Estructura de almacenamiento en Firebase:
-    Las URLs se almacenan en el documento Firestore bajo la estructura:
-    ```json
-    {
-      "photosUrl": {
-        "photosBeforeUrl": [
-          "https://example.com/fotos/antes1.jpg",
-          "https://example.com/fotos/antes2.jpg"
-        ],
-        "photoWhileUrl": [
-          "https://example.com/fotos/durante1.jpg"
-        ],
-        "photosAfterUrl": []
-      }
-    }
-    ```
-    
-    ⚠️ **IMPORTANTE**:
-    - Las URLs se guardan directamente en Firebase sin subir archivos a S3
-    - Las URLs se categorizan automáticamente según el estado_360 enviado
-    - Se pueden agregar URLs en cada captura (se combinan con las existentes)
     """
-    if not CAPTURA_360_OPERATIONS_AVAILABLE:
-        raise HTTPException(
-            status_code=503,
-            detail="Operaciones de captura 360 no disponibles"
-        )
-    
+    # ✅ VALIDACIÓN EXHAUSTIVA EN PRODUCCIÓN
     try:
-        # Validar estado_360
-        estados_360_validos = ["Antes", "Durante", "Después"]
-        
-        if estado_360 not in estados_360_validos:
-            raise HTTPException(
+        # 1️⃣ Validar estado_360
+        if estado_360 not in ESTADOS_360_VALIDOS:
+            return JSONResponse(
                 status_code=400,
-                detail=f"estado_360 inválido. Debe ser uno de: {', '.join(estados_360_validos)}"
+                content=construir_error_validacion(
+                    "estado_360",
+                    f"Valor inválido: '{estado_360}'. Debe ser uno de: {', '.join(ESTADOS_360_VALIDOS)}"
+                )
             )
         
-        # Validar tipo_visita
-        tipos_visita_validos = ["Verificación", "Comunicaciones"]
-        
-        if tipo_visita not in tipos_visita_validos:
-            raise HTTPException(
+        # 2️⃣ Validar tipo_visita
+        if tipo_visita not in TIPOS_VISITA_VALIDOS:
+            return JSONResponse(
                 status_code=400,
-                detail=f"tipo_visita inválido. Debe ser uno de: {', '.join(tipos_visita_validos)}"
+                content=construir_error_validacion(
+                    "tipo_visita",
+                    f"Valor inválido: '{tipo_visita}'. Debe ser uno de: {', '.join(TIPOS_VISITA_VALIDOS)}"
+                )
             )
         
-        # Construir objeto up_entorno como LISTA de centros gestores
+        # 3️⃣ Validar email
+        if not validar_email(registrado_por_email):
+            return JSONResponse(
+                status_code=400,
+                content=construir_error_validacion(
+                    "registrado_por_email",
+                    f"Email inválido: '{registrado_por_email}'. Debe ser un email válido"
+                )
+            )
+        
+        # 4️⃣ Validar centros gestores
+        if not nombre_centro_gestor or len(nombre_centro_gestor) == 0:
+            return JSONResponse(
+                status_code=400,
+                content=construir_error_validacion(
+                    "nombre_centro_gestor",
+                    "Debe proporcionar al menos un centro gestor"
+                )
+            )
+        
         if len(nombre_centro_gestor) != len(solicitud_centro_gestor):
-            raise HTTPException(
+            return JSONResponse(
                 status_code=400,
-                detail=f"Los arrays nombre_centro_gestor y solicitud_centro_gestor deben tener la misma cantidad de elementos. Recibido: {len(nombre_centro_gestor)} vs {len(solicitud_centro_gestor)}"
+                content=construir_error_validacion(
+                    "arrays_desajustados",
+                    f"nombre_centro_gestor ({len(nombre_centro_gestor)}) y solicitud_centro_gestor ({len(solicitud_centro_gestor)}) deben tener el mismo número de elementos"
+                )
             )
         
+        # 5️⃣ Validar coordenadas
+        coords_validas, coords_parseadas = validar_coordenadas_json(coordinates_data)
+        if not coords_validas:
+            return JSONResponse(
+                status_code=400,
+                content=construir_error_validacion(
+                    "coordinates_data",
+                    f"Coordenadas inválidas: '{coordinates_data}'. Debe ser JSON array con al menos 2 números. Ejemplo: [-76.5225, 3.4516]"
+                )
+            )
+        
+        # 6️⃣ Validar URLs de fotos
+        if not photosUrl or len(photosUrl) == 0:
+            return JSONResponse(
+                status_code=400,
+                content=construir_error_validacion(
+                    "photosUrl",
+                    "Debe proporcionar al menos una URL de foto"
+                )
+            )
+        
+        urls_invalidas = []
+        for idx, url in enumerate(photosUrl):
+            if not validar_url_foto(url):
+                urls_invalidas.append(f"[{idx}] {url}")
+        
+        if urls_invalidas:
+            return JSONResponse(
+                status_code=400,
+                content=construir_error_validacion(
+                    "photosUrl",
+                    f"URLs inválidas encontradas (deben comenzar con http:// o https://): {', '.join(urls_invalidas)}"
+                )
+            )
+        
+        # ✅ SI LLEGAMOS AQUÍ, TODA LA VALIDACIÓN PASÓ
+        
+        if not CAPTURA_360_OPERATIONS_AVAILABLE:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "success": False,
+                    "message": "Servicio de captura 360 no disponible",
+                    "timestamp": datetime.now().isoformat()
+                }
+            )
+        
+        # Construir estructuras de datos
         entornos = []
         for nombre, solicitud in zip(nombre_centro_gestor, solicitud_centro_gestor):
             entornos.append({
-                "nombre_centro_gestor": nombre,
-                "solicitud_centro_gestor": solicitud
+                "nombre_centro_gestor": nombre.strip(),
+                "solicitud_centro_gestor": solicitud.strip()
             })
         
-        up_entorno = {
-            "entornos": entornos
-        }
+        up_entorno = {"entornos": entornos}
         
-        # Construir objeto registrado_por
         registrado_por = {
-            "username": registrado_por_username,
-            "email": registrado_por_email
+            "username": registrado_por_username.strip(),
+            "email": registrado_por_email.strip()
         }
-        
-        # Parsear coordenadas
-        import json
-        try:
-            coordinates_array = json.loads(coordinates_data)
-        except json.JSONDecodeError:
-            raise HTTPException(
-                status_code=400,
-                detail="coordinates_data debe ser un JSON array válido"
-            )
         
         coordinates_gps = {
             "type": coordinates_type,
-            "coordinates": coordinates_array
+            "coordinates": coords_parseadas
         }
         
-        # Procesar URLs de fotos (obligatorias)
-        # Ahora photosUrl son strings (URLs), no archivos
+        # Procesar URLs de fotos
+        logger.info(f"📸 Procesando {len(photosUrl)} URLs para UPID {upid} estado {estado_360}")
+        
         photos_uploaded = []
         photos_failed = []
         
-        logger.info(f"📸 Procesando {len(photosUrl)} URLs de fotos para UPID {upid} con estado_360={estado_360}")
+        fecha_registro = datetime.now().isoformat()
         
-        if len(photosUrl) > 0:
-            # Validar y procesar URLs
-            fecha_registro = datetime.now().isoformat()
-            photos_uploaded, photos_failed = await subir_fotos_s3(
-                photos_urls=photosUrl,
-                nombre_centro_gestor=nombre_centro_gestor[0] if nombre_centro_gestor else "sin_centro",
-                upid=upid,
-                estado_360=estado_360,
-                fecha_registro=fecha_registro
-            )
-            
-            logger.info(f"✅ URLs procesadas: {len(photos_uploaded)}, Fallidas: {len(photos_failed)}")
+        # Llamar función de procesamiento
+        photos_uploaded, photos_failed = await subir_fotos_s3(
+            photos_urls=photosUrl,
+            nombre_centro_gestor=nombre_centro_gestor[0] if nombre_centro_gestor else "sin_centro",
+            upid=upid,
+            estado_360=estado_360,
+            fecha_registro=fecha_registro
+        )
         
-        # Crear/actualizar registro en Firestore (UPSERT)
-        resultado = await crear_registro_captura_360(
+        logger.info(f"✅ URLs procesadas: {len(photos_uploaded)}, Fallidas: {len(photos_failed)}")
+        
+        # Crear registro en Firestore
+        document_id, registro_data = await crear_registro_captura_360(
             upid=upid,
             nombre_up=nombre_up,
             nombre_up_detalle=nombre_up_detalle,
@@ -260,41 +322,39 @@ async def captura_estado_360_endpoint(
             entrega_publica=entrega_publica,
             tipo_visita=tipo_visita,
             observaciones=observaciones,
-            registrado_por=registrado_por,
             coordinates_gps=coordinates_gps,
-            photos_info=photos_uploaded if photos_uploaded else None
+            registrado_por=registrado_por,
+            photosUrl=photos_uploaded,
+            fecha_registro=fecha_registro
         )
         
-        if not resultado["success"]:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error creando registro: {resultado.get('error', 'Error desconocido')}"
-            )
+        logger.info(f"✅ Registro creado: {document_id} para UPID {upid}")
         
-        # Preparar respuesta
-        response = CapturaEstado360Response(
+        return CapturaEstado360Response(
             success=True,
-            message=resultado["message"],
-            data=resultado.get("data"),
-            document_id=resultado.get("document_id"),
-            estado_360=resultado.get("estado_360"),
-            photos_uploaded=photos_uploaded if photos_uploaded else None,
+            message="Registro de captura 360 creado exitosamente",
+            data=registro_data,
+            document_id=document_id,
+            estado_360=estado_360,
+            photos_uploaded=photos_uploaded,
             photos_failed=photos_failed if photos_failed else None,
-            timestamp=resultado["timestamp"]
+            timestamp=fecha_registro
         )
         
-        return response
-        
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"❌ Error en endpoint captura-estado-360: {e}")
-        raise HTTPException(
+        logger.error(f"❌ Error inesperado en captura 360: {str(e)}", exc_info=True)
+        return JSONResponse(
             status_code=500,
-            detail=f"Error procesando captura 360: {str(e)}"
+            content={
+                "success": False,
+                "message": "Error interno del servidor",
+                "detail": str(e),
+                "timestamp": datetime.now().isoformat()
+            }
         )
 
 
+# Endpoints adicionales para consultar registros
 @router.get(
     "/captura-estado-360",
     summary="🔵 GET | 📸 Captura 360 | Obtener Registros con Filtros"

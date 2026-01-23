@@ -172,14 +172,21 @@
                 formData.append('nombre_up_detalle', 'Test desde navegador');
                 formData.append('descripcion_intervencion', 'Intervención test');
                 formData.append('solicitud_intervencion', 'SOL-TEST-001');
+                
+                // nombre_centro_gestor y solicitud_centro_gestor como LISTAS
                 formData.append('nombre_centro_gestor', 'Centro de Prueba');
                 formData.append('solicitud_centro_gestor', 'Solicitud test');
+                
                 formData.append('estado_360', estado360);
                 formData.append('requiere_alcalde', 'false');
                 formData.append('entrega_publica', 'true');
                 formData.append('tipo_visita', 'Verificación');
+                
+                // registrado_por como STRINGS directos
                 formData.append('registrado_por_username', 'Usuario Test');
                 formData.append('registrado_por_email', 'test@example.com');
+                
+                // coordinates como STRINGS directos
                 formData.append('coordinates_type', 'Point');
                 formData.append('coordinates_data', '[-76.5225, 3.4516]');
                 
@@ -209,8 +216,20 @@
                     if (data.photos_failed?.length) {
                         log(`URLs fallidas: ${data.photos_failed.length}`, 'error');
                     }
+                } else if (response.status === 422) {
+                    log(`❌ Error 422 - Validación fallida`, 'error');
+                    log(`Detalles completos:`);
+                    log(JSON.stringify(data, null, 2));
+                    
+                    // Mostrar qué campos son requeridos
+                    if (data.detail && Array.isArray(data.detail)) {
+                        log(`\n⚠️ Campos con problema:`, 'error');
+                        data.detail.forEach((error, idx) => {
+                            log(`  ${idx + 1}. ${error.loc.join('.')}: ${error.msg}`);
+                        });
+                    }
                 } else {
-                    log(`❌ Error: ${data.message || 'Error desconocido'}`, 'error');
+                    log(`❌ Error ${response.status}: ${data.message || 'Error desconocido'}`, 'error');
                     log(`Detalles: ${JSON.stringify(data, null, 2)}`);
                 }
             } catch (error) {
