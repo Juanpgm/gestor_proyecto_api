@@ -38,6 +38,7 @@ if hasattr(sys.stderr, 'reconfigure'):
 from fastapi import FastAPI, HTTPException, Query, Request, status, Form, UploadFile, File, Path, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from typing import Dict, Any, Optional, Union, List
 import uvicorn
 import asyncio
@@ -705,6 +706,15 @@ if AUTH_SYSTEM_AVAILABLE and AuthorizationMiddleware is not None:
         print("✅ Audit log middleware enabled")
 else:
     print("⚠️ Authorization middleware disabled - Auth system not available")
+
+# 📁 SERVIR ARCHIVOS ESTÁTICOS (HTML, JS, CSS para testing)
+# Verificar si existe la carpeta static
+static_path = os.path.join(os.path.dirname(__file__), "static")
+if os.path.isdir(static_path):
+    app.mount("/static", StaticFiles(directory=static_path), name="static")
+    print(f"✅ Static files mounted at /static from {static_path}")
+else:
+    print(f"⚠️ Static directory not found at {static_path}")
 
 # ⏱️ MIDDLEWARE DE TIMING Y MONITOREO APM
 import time
