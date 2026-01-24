@@ -2287,6 +2287,515 @@ async def get_unidades_proyecto_init_360(request: Request):
         )
 
 # ============================================================================
+# ENDPOINTS ARTEFACTO DE CAPTURA DAGMA
+# ============================================================================
+
+@app.get("/init/parques", tags=["Artefacto de Captura DAGMA"], summary="🔵 GET | Inicialización de Parques")
+@optional_rate_limit("60/minute")
+async def get_init_parques(request: Request):
+    """
+    ## 🔵 GET | Inicialización de Parques para DAGMA
+    
+    **Propósito**: Obtener datos iniciales de parques para el artefacto de captura DAGMA.
+    
+    ### ✅ Respuesta
+    Retorna información de parques y zonas verdes del sistema.
+    
+    ### 📝 Ejemplo de uso:
+    ```javascript
+    const response = await fetch('/init/parques');
+    const data = await response.json();
+    ```
+    """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
+    
+    try:
+        # Conectar a Firestore
+        db = get_firestore_client()
+        if db is None:
+            raise HTTPException(
+                status_code=503,
+                detail="No se pudo conectar a Firestore"
+            )
+        
+        # Consultar parques - filtrar por tipo_equipamiento = "Parques y zonas verdes"
+        query = db.collection('unidades_proyecto').where('tipo_equipamiento', '==', 'Parques y zonas verdes')
+        docs = query.stream()
+        
+        # Procesar documentos
+        parques = []
+        for doc in docs:
+            doc_data = doc.to_dict()
+            parques.append(doc_data)
+        
+        # Preparar respuesta
+        response_data = {
+            "success": True,
+            "data": parques,
+            "count": len(parques),
+            "timestamp": datetime.now().isoformat(),
+            "message": f"Se obtuvieron {len(parques)} parques"
+        }
+        
+        return create_utf8_response(response_data)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error obteniendo parques: {str(e)}"
+        )
+
+
+@app.post("/grupo-operativo/reconocimiento", tags=["Artefacto de Captura DAGMA"], summary="🟢 POST | Registrar Reconocimiento")
+@optional_rate_limit("30/minute")
+async def post_reconocimiento(
+    request: Request,
+    # Datos de la intervención
+    tipo_intervencion: str = Form(..., min_length=1, description="Tipo de intervención"),
+    descripcion_intervencion: str = Form(..., min_length=1, description="Descripción de la intervención"),
+    direccion: str = Form(..., min_length=1, description="Dirección del lugar"),
+    observaciones: Optional[str] = Form(None, description="Observaciones adicionales (opcional)"),
+    
+    # Coordenadas GPS (formato JSON)
+    coordinates_type: str = Form(..., min_length=1, description="Tipo de geometría (Point, LineString, Polygon, etc.)"),
+    coordinates_data: str = Form(..., description="Coordenadas en formato JSON array. Ejemplo: [-76.5225, 3.4516]"),
+    
+    # Fotos (archivos)
+    photos: List[UploadFile] = File(..., description="Lista de archivos de fotos a subir a S3")
+):
+    """
+    ## 🟢 POST | Registrar Reconocimiento del Grupo Operativo DAGMA
+    
+    **Propósito**: Registrar un reconocimiento realizado por el grupo operativo DAGMA,
+    incluyendo captura de coordenadas GPS y subida de fotos a Amazon S3.
+    
+    ### ✅ Campos requeridos:
+    - **tipo_intervencion**: Tipo de intervención realizada
+    - **descripcion_intervencion**: Descripción detallada de la intervención
+    - **direccion**: Dirección del lugar intervenido
+    - **observaciones**: Observaciones adicionales (opcional)
+    - **coordinates_type**: Tipo de geometría (Point, LineString, Polygon)
+    - **coordinates_data**: Coordenadas GPS en formato JSON array
+    - **photos**: Archivos de fotos (multipart/form-data)
+    
+    ### 📸 Almacenamiento de Fotos:
+    Las fotos se subirán al bucket **360-dagma-photos** en Amazon S3 con la siguiente estructura:
+    ```
+    360-dagma-photos/
+    └── reconocimientos/
+        └── {id_reconocimiento}/
+            └── {timestamp}_{filename}
+    ```
+    
+    ### 📍 Coordenadas GPS:
+    Basado en la lógica del endpoint `/unidades-proyecto/captura-estado-360`:
+    - Se capturan las coordenadas del dispositivo GPS
+    - Formato JSON: `[-76.5225, 3.4516]` para Point
+    - Soporta diferentes tipos de geometría
+    
+    ### 📝 Ejemplo de uso con FormData:
+    ```javascript
+    const formData = new FormData();
+    formData.append('tipo_intervencion', 'Mantenimiento');
+    formData.append('descripcion_intervencion', 'Poda de árboles');
+    formData.append('direccion', 'Calle 5 #10-20');
+    formData.append('observaciones', 'Trabajo completado satisfactoriamente');
+    formData.append('coordinates_type', 'Point');
+    formData.append('coordinates_data', '[-76.5225, 3.4516]');
+    
+    // Agregar fotos
+    formData.append('photos', file1);
+    formData.append('photos', file2);
+    
+    const response = await fetch('/grupo-operativo/reconocimiento', {
+        method: 'POST',
+        body: formData
+    });
+    ```
+    
+    ### ✅ Respuesta exitosa:
+    ```json
+    {
+        "success": true,
+        "id": "uuid-generado",
+        "message": "Reconocimiento registrado exitosamente",
+        "coordinates": {
+            "type": "Point",
+            "coordinates": [-76.5225, 3.4516]
+        },
+        "photosUrl": [
+            "https://360-dagma-photos.s3.amazonaws.com/reconocimientos/uuid/foto1.jpg",
+            "https://360-dagma-photos.s3.amazonaws.com/reconocimientos/uuid/foto2.jpg"
+        ],
+        "photos_uploaded": 2,
+        "timestamp": "2026-01-24T10:30:00Z"
+    }
+    ```
+    """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
+    
+    try:
+        # 1️⃣ Validar coordenadas GPS (reciclado de captura-estado-360)
+        try:
+            coords = json.loads(coordinates_data)
+            if not isinstance(coords, list) or len(coords) < 2:
+                raise ValueError("Coordenadas deben ser un array JSON con al menos 2 números")
+            # Validar que sean números
+            if not all(isinstance(c, (int, float)) for c in coords):
+                raise ValueError("Todos los elementos de coordenadas deben ser números")
+        except (json.JSONDecodeError, ValueError) as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Coordenadas inválidas: {str(e)}. Ejemplo válido: [-76.5225, 3.4516]"
+            )
+        
+        coordinates_gps = {
+            "type": coordinates_type,
+            "coordinates": coords
+        }
+        
+        # 2️⃣ Generar ID único y timestamp
+        reconocimiento_id = str(uuid.uuid4())
+        timestamp = datetime.now().isoformat()
+        
+        # 3️⃣ Subir fotos a S3 (bucket: 360-dagma-photos)
+        photos_urls = []
+        photos_failed = []
+        
+        # Intentar importar S3DocumentManager
+        try:
+            from api.utils.s3_document_manager import S3DocumentManager, BOTO3_AVAILABLE
+            
+            if not BOTO3_AVAILABLE:
+                logger.warning("⚠️ boto3 no disponible, las fotos no se subirán a S3")
+                raise ImportError("boto3 no disponible")
+            
+            # Inicializar S3DocumentManager con bucket específico para DAGMA
+            s3_manager = S3DocumentManager()
+            
+            # Cambiar bucket a 360-dagma-photos
+            s3_manager.bucket_name = '360-dagma-photos'
+            
+            logger.info(f"📸 Subiendo {len(photos)} fotos a S3 bucket: {s3_manager.bucket_name}")
+            
+            for idx, photo in enumerate(photos):
+                try:
+                    # Leer contenido del archivo
+                    file_content = await photo.read()
+                    
+                    # Determinar content type
+                    content_type = photo.content_type or 'image/jpeg'
+                    
+                    # Generar nombre de archivo seguro
+                    timestamp_str = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    safe_filename = f"{timestamp_str}_{idx}_{photo.filename}"
+                    
+                    # Estructura de carpetas: reconocimientos/{id}/
+                    s3_key = f"reconocimientos/{reconocimiento_id}/{safe_filename}"
+                    
+                    # Subir a S3
+                    s3_manager.s3_client.put_object(
+                        Bucket=s3_manager.bucket_name,
+                        Key=s3_key,
+                        Body=file_content,
+                        ContentType=content_type,
+                        Metadata={
+                            'reconocimiento_id': reconocimiento_id,
+                            'tipo_intervencion': tipo_intervencion,
+                            'fecha_subida': timestamp
+                        }
+                    )
+                    
+                    # Generar URL de la foto
+                    photo_url = f"https://{s3_manager.bucket_name}.s3.amazonaws.com/{s3_key}"
+                    photos_urls.append(photo_url)
+                    
+                    logger.info(f"✅ Foto {idx + 1} subida: {safe_filename}")
+                    
+                except Exception as e:
+                    logger.error(f"❌ Error subiendo foto {idx + 1}: {str(e)}")
+                    photos_failed.append({
+                        'filename': photo.filename,
+                        'error': str(e)
+                    })
+            
+        except ImportError as e:
+            logger.warning(f"⚠️ No se pudo cargar S3DocumentManager: {e}")
+            logger.warning("⚠️ Las fotos se registrarán pero no se subirán a S3")
+        
+        # 4️⃣ Conectar a Firestore
+        db = get_firestore_client()
+        if db is None:
+            raise HTTPException(
+                status_code=503,
+                detail="No se pudo conectar a Firestore"
+            )
+        
+        # 5️⃣ Preparar datos del reconocimiento
+        reconocimiento_data = {
+            'id': reconocimiento_id,
+            'tipo_intervencion': tipo_intervencion,
+            'descripcion_intervencion': descripcion_intervencion,
+            'direccion': direccion,
+            'observaciones': observaciones,
+            'coordinates': coordinates_gps,
+            'photosUrl': photos_urls,
+            'photos_uploaded_count': len(photos_urls),
+            'photos_failed_count': len(photos_failed),
+            'photos_failed': photos_failed if photos_failed else None,
+            'timestamp': timestamp,
+            'created_at': timestamp
+        }
+        
+        # 6️⃣ Guardar en colección de reconocimientos DAGMA
+        doc_ref = db.collection('reconocimientos_dagma').document(reconocimiento_id)
+        doc_ref.set(reconocimiento_data)
+        
+        logger.info(f"✅ Reconocimiento DAGMA guardado: {reconocimiento_id}")
+        
+        # 7️⃣ Preparar respuesta
+        response_data = {
+            "success": True,
+            "id": reconocimiento_id,
+            "message": "Reconocimiento registrado exitosamente",
+            "tipo_intervencion": tipo_intervencion,
+            "descripcion_intervencion": descripcion_intervencion,
+            "direccion": direccion,
+            "coordinates": coordinates_gps,
+            "photosUrl": photos_urls,
+            "photos_uploaded": len(photos_urls),
+            "photos_failed": len(photos_failed),
+            "timestamp": timestamp
+        }
+        
+        # Agregar advertencia si hubo fotos fallidas
+        if photos_failed:
+            response_data["warning"] = f"{len(photos_failed)} foto(s) no se pudieron subir"
+            response_data["failed_photos"] = photos_failed
+        
+        return create_utf8_response(response_data)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error registrando reconocimiento DAGMA: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error registrando reconocimiento: {str(e)}"
+        )
+
+
+@app.get("/grupo-operativo/reportes", tags=["Artefacto de Captura DAGMA"], summary="🔵 GET | Obtener Reportes")
+@optional_rate_limit("60/minute")
+async def get_reportes(request: Request):
+    """
+    ## 🔵 GET | Obtener Reportes del Grupo Operativo
+    
+    **Propósito**: Consultar todos los reportes registrados por el grupo operativo.
+    
+    ### ✅ Respuesta
+    Retorna lista de reportes con sus detalles.
+    
+    ### 📝 Ejemplo de uso:
+    ```javascript
+    const response = await fetch('/grupo-operativo/reportes');
+    const reportes = await response.json();
+    ```
+    """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
+    
+    try:
+        # Conectar a Firestore
+        db = get_firestore_client()
+        if db is None:
+            raise HTTPException(
+                status_code=503,
+                detail="No se pudo conectar a Firestore"
+            )
+        
+        # Consultar reconocimientos
+        query = db.collection('reconocimientos_dagma')
+        docs = query.stream()
+        
+        reportes = []
+        for doc in docs:
+            doc_data = doc.to_dict()
+            reportes.append(doc_data)
+        
+        response_data = {
+            "success": True,
+            "data": reportes,
+            "count": len(reportes),
+            "timestamp": datetime.now().isoformat(),
+            "message": f"Se obtuvieron {len(reportes)} reportes"
+        }
+        
+        return create_utf8_response(response_data)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error obteniendo reportes: {str(e)}"
+        )
+
+
+@app.delete("/grupo-operativo/eliminar-reporte", tags=["Artefacto de Captura DAGMA"], summary="🔴 DELETE | Eliminar Reporte")
+@optional_rate_limit("30/minute")
+async def delete_reporte(request: Request, reporte_id: str = Query(..., description="ID del reporte a eliminar")):
+    """
+    ## 🔴 DELETE | Eliminar Reporte del Grupo Operativo
+    
+    **Propósito**: Eliminar un reporte específico del sistema, incluyendo las fotos en S3.
+    
+    ### 📥 Parámetros
+    - **reporte_id**: ID único del reporte a eliminar
+    
+    ### 🗑️ Acciones realizadas:
+    1. Eliminar imágenes del bucket S3 (360-dagma-photos)
+    2. Eliminar documento de Firebase (reconocimientos_dagma)
+    
+    ### 📝 Ejemplo de uso:
+    ```javascript
+    const response = await fetch('/grupo-operativo/eliminar-reporte?reporte_id=abc-123', {
+        method: 'DELETE'
+    });
+    ```
+    
+    ### ✅ Respuesta exitosa:
+    ```json
+    {
+        "success": true,
+        "id": "abc-123",
+        "message": "Reporte y fotos eliminados exitosamente",
+        "photos_deleted": 3,
+        "timestamp": "2026-01-24T..."
+    }
+    ```
+    """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
+    
+    try:
+        # 1️⃣ Conectar a Firestore
+        db = get_firestore_client()
+        if db is None:
+            raise HTTPException(
+                status_code=503,
+                detail="No se pudo conectar a Firestore"
+            )
+        
+        # 2️⃣ Verificar que el documento existe y obtener sus datos
+        doc_ref = db.collection('reconocimientos_dagma').document(reporte_id)
+        doc = doc_ref.get()
+        
+        if not doc.exists:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Reporte con ID '{reporte_id}' no encontrado"
+            )
+        
+        doc_data = doc.to_dict()
+        
+        # 3️⃣ Eliminar fotos de S3 (si existen)
+        photos_deleted = 0
+        photos_failed = []
+        
+        photos_urls = doc_data.get('photosUrl', [])
+        
+        if photos_urls:
+            try:
+                from api.utils.s3_document_manager import S3DocumentManager, BOTO3_AVAILABLE
+                
+                if BOTO3_AVAILABLE:
+                    # Inicializar S3DocumentManager
+                    s3_manager = S3DocumentManager()
+                    s3_manager.bucket_name = '360-dagma-photos'
+                    
+                    logger.info(f"🗑️ Eliminando {len(photos_urls)} fotos de S3 para reporte {reporte_id}")
+                    
+                    for photo_url in photos_urls:
+                        try:
+                            # Extraer la clave S3 de la URL
+                            # URL format: https://360-dagma-photos.s3.amazonaws.com/reconocimientos/{id}/{filename}
+                            if '360-dagma-photos.s3.amazonaws.com/' in photo_url:
+                                s3_key = photo_url.split('360-dagma-photos.s3.amazonaws.com/')[-1]
+                                
+                                # Eliminar objeto de S3
+                                s3_manager.s3_client.delete_object(
+                                    Bucket=s3_manager.bucket_name,
+                                    Key=s3_key
+                                )
+                                
+                                photos_deleted += 1
+                                logger.info(f"✅ Foto eliminada de S3: {s3_key}")
+                            else:
+                                logger.warning(f"⚠️ URL no reconocida como S3: {photo_url}")
+                                
+                        except Exception as e:
+                            logger.error(f"❌ Error eliminando foto de S3: {str(e)}")
+                            photos_failed.append({
+                                'url': photo_url,
+                                'error': str(e)
+                            })
+                    
+                    # Intentar eliminar la carpeta del reconocimiento si está vacía
+                    try:
+                        folder_key = f"reconocimientos/{reporte_id}/"
+                        # Listar objetos en la carpeta
+                        response = s3_manager.s3_client.list_objects_v2(
+                            Bucket=s3_manager.bucket_name,
+                            Prefix=folder_key
+                        )
+                        
+                        # Si no hay contenido, la carpeta ya está vacía o no existe
+                        if 'Contents' not in response or len(response['Contents']) == 0:
+                            logger.info(f"✅ Carpeta S3 limpia: {folder_key}")
+                    except Exception as e:
+                        logger.warning(f"⚠️ No se pudo verificar carpeta S3: {e}")
+                        
+                else:
+                    logger.warning("⚠️ boto3 no disponible, las fotos no se eliminarán de S3")
+                    
+            except ImportError:
+                logger.warning("⚠️ S3DocumentManager no disponible, las fotos no se eliminarán de S3")
+        
+        # 4️⃣ Eliminar el documento de Firebase
+        doc_ref.delete()
+        logger.info(f"✅ Documento Firebase eliminado: {reporte_id}")
+        
+        # 5️⃣ Preparar respuesta
+        response_data = {
+            "success": True,
+            "id": reporte_id,
+            "message": "Reporte eliminado exitosamente" if photos_deleted == 0 else "Reporte y fotos eliminados exitosamente",
+            "photos_deleted": photos_deleted,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        # Agregar advertencias si hubo fotos que no se pudieron eliminar
+        if photos_failed:
+            response_data["warning"] = f"{len(photos_failed)} foto(s) no se pudieron eliminar de S3"
+            response_data["photos_failed"] = photos_failed
+        
+        return create_utf8_response(response_data)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error eliminando reporte: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error eliminando reporte: {str(e)}"
+        )
+
+# ============================================================================
 # ENDPOINT PARA OPCIONES DE FILTROS
 # ============================================================================
 
