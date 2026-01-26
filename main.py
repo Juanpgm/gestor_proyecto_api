@@ -9753,6 +9753,198 @@ async def get_all_procesos_emprestito():
             detail=f"Error procesando consulta de procesos de empréstito: {str(e)}"
         )
 
+@app.get("/emprestito/obtener-procesos-bp", tags=["Gestión de Empréstito"], summary="🔵 Obtener Procesos BP")
+@async_cache(ttl_seconds=300)  # Cache de 5 minutos
+async def obtener_procesos_bp():
+    """
+    ## Obtener Procesos de Empréstito - Campos Básicos BP
+    
+    **Propósito**: Retorna datos específicos de la colección "procesos_emprestito" optimizados para visualización.
+    
+    ### ✅ Casos de uso:
+    - Listado de procesos para dashboards
+    - Exportación simplificada de datos
+    - Integración con sistemas externos
+    - Reportes básicos de procesos
+    
+    ### 📊 Campos incluidos:
+    - **bp**: Código de proyecto base
+    - **banco**: Entidad bancaria
+    - **nombre_centro_gestor**: Entidad responsable
+    - **nombre_resumido_proceso**: Nombre resumido del proceso
+    - **tipo_contrato**: Tipo de contrato
+    - **urlproceso**: URL del proceso
+    - **valor_publicacion**: Valor del proceso
+    
+    ### 📝 Ejemplo de uso:
+    ```javascript
+    const response = await fetch('/emprestito/obtener-procesos-bp');
+    const data = await response.json();
+    if (data.success) {
+        console.log('Procesos encontrados:', data.count);
+        data.data.forEach(proceso => {
+            console.log(`BP: ${proceso.bp}, Banco: ${proceso.banco}`);
+        });
+    }
+    ```
+    
+    ### 💡 Características:
+    - **Optimizado**: Solo campos necesarios para reducir payload
+    - **UTF-8**: Soporte completo para caracteres especiales
+    - **Cache**: Datos cacheados por 5 minutos para mejor performance
+    """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
+    
+    try:
+        db = get_firestore_client()
+        if db is None:
+            raise HTTPException(
+                status_code=503,
+                detail="No se pudo conectar a Firestore"
+            )
+        
+        collection_ref = db.collection('procesos_emprestito')
+        docs = collection_ref.stream()
+        procesos_data = []
+        
+        for doc in docs:
+            doc_data = doc.to_dict()
+            # Extraer solo los campos solicitados
+            proceso_filtrado = {
+                'bp': doc_data.get('bp', ''),
+                'banco': doc_data.get('nombre_banco', ''),
+                'nombre_centro_gestor': doc_data.get('nombre_centro_gestor', ''),
+                'nombre_resumido_proceso': doc_data.get('nombre_resumido_proceso', ''),
+                'tipo_contrato': doc_data.get('tipo_contrato', ''),
+                'urlproceso': doc_data.get('urlproceso', ''),
+                'valor_publicacion': doc_data.get('valor_publicacion', 0)
+            }
+            procesos_data.append(proceso_filtrado)
+        
+        return create_utf8_response({
+            "success": True,
+            "data": procesos_data,
+            "count": len(procesos_data),
+            "collection": "procesos_emprestito",
+            "timestamp": datetime.now().isoformat(),
+            "message": f"Se obtuvieron {len(procesos_data)} procesos exitosamente",
+            "metadata": {
+                "fields": ["bp", "banco", "nombre_centro_gestor", "nombre_resumido_proceso", "tipo_contrato", "urlproceso", "valor_publicacion"],
+                "utf8_enabled": True,
+                "spanish_support": True
+            }
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error obteniendo procesos BP: {str(e)}"
+        )
+
+@app.get("/emprestito/obtener-contratos-bp", tags=["Gestión de Empréstito"], summary="🔵 Obtener Contratos BP")
+@async_cache(ttl_seconds=300)  # Cache de 5 minutos
+async def obtener_contratos_bp():
+    """
+    ## Obtener Contratos de Empréstito - Campos Básicos BP
+    
+    **Propósito**: Retorna datos específicos de la colección "contratos_emprestito" optimizados para visualización.
+    
+    ### ✅ Casos de uso:
+    - Listado de contratos para dashboards
+    - Exportación simplificada de datos de contratos
+    - Integración con sistemas externos
+    - Reportes básicos de contratos
+    - Seguimiento de vigencias contractuales
+    
+    ### 📊 Campos incluidos:
+    - **bp**: Código de proyecto base
+    - **banco**: Entidad bancaria
+    - **nombre_centro_gestor**: Entidad responsable
+    - **nombre_resumido_proceso**: Nombre resumido del proceso
+    - **tipo_contrato**: Tipo de contrato
+    - **urlproceso**: URL del proceso
+    - **valor_contrato**: Valor del contrato
+    - **fecha_inicio_contrato**: Fecha de inicio del contrato
+    - **fecha_fin_contrato**: Fecha de finalización del contrato
+    - **sector**: Sector del contrato
+    
+    ### 📝 Ejemplo de uso:
+    ```javascript
+    const response = await fetch('/emprestito/obtener-contratos-bp');
+    const data = await response.json();
+    if (data.success) {
+        console.log('Contratos encontrados:', data.count);
+        data.data.forEach(contrato => {
+            console.log(`BP: ${contrato.bp}, Banco: ${contrato.banco}`);
+            console.log(`Valor: ${contrato.valor_contrato}`);
+            console.log(`Vigencia: ${contrato.fecha_inicio_contrato} - ${contrato.fecha_fin_contrato}`);
+        });
+    }
+    ```
+    
+    ### 💡 Características:
+    - **Optimizado**: Solo campos necesarios para reducir payload
+    - **UTF-8**: Soporte completo para caracteres especiales
+    - **Cache**: Datos cacheados por 5 minutos para mejor performance
+    - **Fechas**: Incluye información de vigencia contractual
+    """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
+    
+    try:
+        db = get_firestore_client()
+        if db is None:
+            raise HTTPException(
+                status_code=503,
+                detail="No se pudo conectar a Firestore"
+            )
+        
+        collection_ref = db.collection('contratos_emprestito')
+        docs = collection_ref.stream()
+        contratos_data = []
+        
+        for doc in docs:
+            doc_data = doc.to_dict()
+            # Extraer solo los campos solicitados
+            contrato_filtrado = {
+                'bp': doc_data.get('bp', ''),
+                'banco': doc_data.get('banco', ''),
+                'nombre_centro_gestor': doc_data.get('nombre_centro_gestor', ''),
+                'nombre_resumido_proceso': doc_data.get('nombre_resumido_proceso', ''),
+                'tipo_contrato': doc_data.get('tipo_contrato', ''),
+                'urlproceso': doc_data.get('urlproceso', ''),
+                'valor_contrato': doc_data.get('valor_contrato', 0),
+                'fecha_inicio_contrato': doc_data.get('fecha_inicio_contrato', ''),
+                'fecha_fin_contrato': doc_data.get('fecha_fin_contrato', ''),
+                'sector': doc_data.get('sector', '')
+            }
+            contratos_data.append(contrato_filtrado)
+        
+        return create_utf8_response({
+            "success": True,
+            "data": contratos_data,
+            "count": len(contratos_data),
+            "collection": "contratos_emprestito",
+            "timestamp": datetime.now().isoformat(),
+            "message": f"Se obtuvieron {len(contratos_data)} contratos exitosamente",
+            "metadata": {
+                "fields": ["bp", "banco", "nombre_centro_gestor", "nombre_resumido_proceso", "tipo_contrato", "urlproceso", "valor_contrato", "fecha_inicio_contrato", "fecha_fin_contrato", "sector"],
+                "utf8_enabled": True,
+                "spanish_support": True
+            }
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error obteniendo contratos BP: {str(e)}"
+        )
+
 @app.get("/ordenes_compra_emprestito/numero/{numero_orden}", tags=["Gestión de Empréstito"])
 async def obtener_ordenes_por_numero(numero_orden: str):
     """
