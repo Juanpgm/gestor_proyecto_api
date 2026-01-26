@@ -349,9 +349,74 @@ async def get_nombre_centro_gestor_from_emprestito(referencia_contrato: str) -> 
         logger.warning(f"Error obteniendo nombre_centro_gestor para {referencia_contrato}: {e}")
         return None
 
-async def get_all_centros_gestores_map() -> Dict[str, str]:
+async def get_data_from_emprestito(referencia_contrato: str) -> Optional[Dict[str, str]]:
     """
-    Obtener un mapa de referencia_contrato -> nombre_centro_gestor
+    Obtener nombre_centro_gestor y bp desde las colecciones contratos_emprestito, 
+    ordenes_compra_emprestito y convenios_transferencias_emprestito
+    usando la referencia_contrato como clave de búsqueda
+    
+    Returns:
+        Dict con 'nombre_centro_gestor' y 'bp' si se encuentran, None si no
+    """
+    try:
+        db = get_firestore_client()
+        if db is None:
+            return None
+        
+        # Buscar primero en la colección contratos_emprestito
+        collection_ref = db.collection('contratos_emprestito')
+        query = collection_ref.where('referencia_contrato', '==', referencia_contrato).limit(1)
+        docs = list(query.stream())
+        
+        if docs:
+            doc_data = docs[0].to_dict()
+            nombre_cg = doc_data.get('nombre_centro_gestor', '')
+            bp = doc_data.get('bp', '')
+            if nombre_cg or bp:
+                return {
+                    'nombre_centro_gestor': nombre_cg,
+                    'bp': bp
+                }
+        
+        # Si no se encuentra en contratos, buscar en ordenes_compra_emprestito (usando numero_orden)
+        collection_ref = db.collection('ordenes_compra_emprestito')
+        query = collection_ref.where('numero_orden', '==', referencia_contrato).limit(1)
+        docs = list(query.stream())
+        
+        if docs:
+            doc_data = docs[0].to_dict()
+            nombre_cg = doc_data.get('nombre_centro_gestor', '')
+            bp = doc_data.get('bp', '')
+            if nombre_cg or bp:
+                return {
+                    'nombre_centro_gestor': nombre_cg,
+                    'bp': bp
+                }
+        
+        # Si no se encuentra en ordenes, buscar en convenios_transferencias_emprestito
+        collection_ref = db.collection('convenios_transferencias_emprestito')
+        query = collection_ref.where('referencia_contrato', '==', referencia_contrato).limit(1)
+        docs = list(query.stream())
+        
+        if docs:
+            doc_data = docs[0].to_dict()
+            nombre_cg = doc_data.get('nombre_centro_gestor', '')
+            bp = doc_data.get('bp', '')
+            if nombre_cg or bp:
+                return {
+                    'nombre_centro_gestor': nombre_cg,
+                    'bp': bp
+                }
+        
+        return None
+        
+    except Exception as e:
+        logger.warning(f"Error obteniendo datos de empréstito para {referencia_contrato}: {e}")
+        return None
+
+async def get_all_centros_gestores_map() -> Dict[str, Dict[str, str]]:
+    """
+    Obtener un mapa de referencia_contrato -> {nombre_centro_gestor, bp}
     de las colecciones contratos_emprestito, ordenes_compra_emprestito 
     y convenios_transferencias_emprestito de una sola vez
     """
@@ -371,8 +436,12 @@ async def get_all_centros_gestores_map() -> Dict[str, str]:
             doc_data = doc.to_dict()
             ref_contrato = doc_data.get('referencia_contrato')
             nombre_cg = doc_data.get('nombre_centro_gestor', '')
-            if ref_contrato and nombre_cg:
-                centro_gestor_map[ref_contrato] = nombre_cg
+            bp = doc_data.get('bp', '')
+            if ref_contrato and (nombre_cg or bp):
+                centro_gestor_map[ref_contrato] = {
+                    'nombre_centro_gestor': nombre_cg,
+                    'bp': bp
+                }
         
         # Obtener todas las órdenes de compra
         collection_ref = db.collection('ordenes_compra_emprestito')
@@ -383,8 +452,12 @@ async def get_all_centros_gestores_map() -> Dict[str, str]:
             # Usar numero_orden como referencia_contrato
             ref_contrato = doc_data.get('numero_orden')
             nombre_cg = doc_data.get('nombre_centro_gestor', '')
-            if ref_contrato and nombre_cg and ref_contrato not in centro_gestor_map:
-                centro_gestor_map[ref_contrato] = nombre_cg
+            bp = doc_data.get('bp', '')
+            if ref_contrato and (nombre_cg or bp) and ref_contrato not in centro_gestor_map:
+                centro_gestor_map[ref_contrato] = {
+                    'nombre_centro_gestor': nombre_cg,
+                    'bp': bp
+                }
         
         # Obtener todos los convenios de transferencia
         collection_ref = db.collection('convenios_transferencias_emprestito')
@@ -394,10 +467,14 @@ async def get_all_centros_gestores_map() -> Dict[str, str]:
             doc_data = doc.to_dict()
             ref_contrato = doc_data.get('referencia_contrato')
             nombre_cg = doc_data.get('nombre_centro_gestor', '')
-            if ref_contrato and nombre_cg and ref_contrato not in centro_gestor_map:
-                centro_gestor_map[ref_contrato] = nombre_cg
+            bp = doc_data.get('bp', '')
+            if ref_contrato and (nombre_cg or bp) and ref_contrato not in centro_gestor_map:
+                centro_gestor_map[ref_contrato] = {
+                    'nombre_centro_gestor': nombre_cg,
+                    'bp': bp
+                }
         
-        logger.info(f"✅ Mapa de centros gestores creado con {len(centro_gestor_map)} entradas (contratos + órdenes + convenios)")
+        logger.info(f"✅ Mapa de centros gestores y BP creado con {len(centro_gestor_map)} entradas (contratos + órdenes + convenios)")
         return centro_gestor_map
         
     except Exception as e:
@@ -406,9 +483,9 @@ async def get_all_centros_gestores_map() -> Dict[str, str]:
 
 async def get_reportes_contratos(filtros: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
-    Obtener lista de reportes de contratos con nombre_centro_gestor desde colecciones de empréstito
+    Obtener lista de reportes de contratos con nombre_centro_gestor y bp desde colecciones de empréstito
     (contratos_emprestito, ordenes_compra_emprestito, convenios_transferencias_emprestito)
-    OPTIMIZADO: Carga todos los centros gestores de una sola vez para evitar N+1 queries
+    OPTIMIZADO: Carga todos los centros gestores y bp de una sola vez para evitar N+1 queries
     """
     try:
         db = get_firestore_client()
@@ -447,22 +524,36 @@ async def get_reportes_contratos(filtros: Optional[Dict[str, Any]] = None) -> Di
                 if doc_data:  # Verificar que el documento no esté vacío
                     # Convertir timestamps de Firebase a strings serializables
                     converted_data = convert_firebase_timestamps(doc_data)
-                    reporte_data = {
-                        'id': doc.id,
-                        **converted_data
-                    }
                     
                     # OPTIMIZACIÓN: Lookup en memoria en lugar de query a Firebase
-                    referencia_contrato = reporte_data.get('referencia_contrato')
-                    nombre_centro_gestor_actual = reporte_data.get('nombre_centro_gestor', '')
+                    referencia_contrato = converted_data.get('referencia_contrato')
+                    nombre_centro_gestor_actual = converted_data.get('nombre_centro_gestor', '')
+                    bp_actual = converted_data.get('bp', '')
                     
-                    if referencia_contrato and (not nombre_centro_gestor_actual or nombre_centro_gestor_actual.strip() == ''):
+                    # Heredar datos de empréstito si es necesario
+                    if referencia_contrato:
                         # Buscar en el mapa en memoria (O(1) lookup vs query a Firebase)
                         # El mapa incluye contratos_emprestito, ordenes_compra_emprestito y convenios_transferencias_emprestito
-                        nombre_centro_gestor_emprestito = centro_gestor_map.get(referencia_contrato)
-                        if nombre_centro_gestor_emprestito:
-                            reporte_data['nombre_centro_gestor'] = nombre_centro_gestor_emprestito
-                            reporte_data['nombre_centro_gestor_source'] = 'emprestito_collections'
+                        emprestito_data = centro_gestor_map.get(referencia_contrato)
+                        if emprestito_data:
+                            # Heredar nombre_centro_gestor si no existe o está vacío
+                            if not nombre_centro_gestor_actual or nombre_centro_gestor_actual.strip() == '':
+                                nombre_centro_gestor_emprestito = emprestito_data.get('nombre_centro_gestor', '')
+                                if nombre_centro_gestor_emprestito:
+                                    converted_data['nombre_centro_gestor'] = nombre_centro_gestor_emprestito
+                            
+                            # Heredar bp si no existe o está vacío
+                            if not bp_actual or bp_actual.strip() == '':
+                                bp_emprestito = emprestito_data.get('bp', '')
+                                if bp_emprestito:
+                                    converted_data['bp'] = bp_emprestito
+                    
+                    # Construir reporte_data con el orden deseado: id, bp, luego el resto
+                    reporte_data = {
+                        'id': doc.id,
+                        'bp': converted_data.pop('bp', ''),
+                        **converted_data
+                    }
                     
                     reportes.append(reporte_data)
             except Exception as doc_error:
@@ -481,7 +572,7 @@ async def get_reportes_contratos(filtros: Optional[Dict[str, Any]] = None) -> Di
             "count": len(reportes),
             "collection": "reportes_contratos",
             "timestamp": datetime.now().isoformat(),
-            "message": f"Se obtuvieron {len(reportes)} reportes de contratos exitosamente (con nombre_centro_gestor desde contratos_emprestito cuando necesario)"
+            "message": f"Se obtuvieron {len(reportes)} reportes de contratos exitosamente (con nombre_centro_gestor y bp desde contratos_emprestito cuando necesario)"
         }
         
     except Exception as e:
@@ -495,7 +586,7 @@ async def get_reportes_contratos(filtros: Optional[Dict[str, Any]] = None) -> Di
 
 async def get_reporte_contrato_by_id(reporte_id: str) -> Dict[str, Any]:
     """
-    Obtener un reporte específico por ID con nombre_centro_gestor desde colecciones de empréstito
+    Obtener un reporte específico por ID con nombre_centro_gestor y bp desde colecciones de empréstito
     (contratos_emprestito, ordenes_compra_emprestito, convenios_transferencias_emprestito)
     """
     try:
@@ -520,21 +611,36 @@ async def get_reporte_contrato_by_id(reporte_id: str) -> Dict[str, Any]:
         doc_data = doc.to_dict()
         # Convertir timestamps de Firebase a strings serializables
         converted_data = convert_firebase_timestamps(doc_data)
+        
+        # Obtener nombre_centro_gestor y bp desde colecciones de empréstito si no existen o están vacíos
+        referencia_contrato = converted_data.get('referencia_contrato')
+        nombre_centro_gestor_actual = converted_data.get('nombre_centro_gestor', '')
+        bp_actual = converted_data.get('bp', '')
+        
+        if referencia_contrato:
+            # Obtener datos de empréstito
+            emprestito_data = await get_data_from_emprestito(referencia_contrato)
+            if emprestito_data:
+                # Heredar nombre_centro_gestor si no existe o está vacío
+                if not nombre_centro_gestor_actual or nombre_centro_gestor_actual.strip() == '':
+                    nombre_centro_gestor_emprestito = emprestito_data.get('nombre_centro_gestor', '')
+                    if nombre_centro_gestor_emprestito:
+                        converted_data['nombre_centro_gestor'] = nombre_centro_gestor_emprestito
+                        logger.info(f"✅ Actualizado nombre_centro_gestor para reporte {reporte_id}: {nombre_centro_gestor_emprestito}")
+                
+                # Heredar bp si no existe o está vacío
+                if not bp_actual or bp_actual.strip() == '':
+                    bp_emprestito = emprestito_data.get('bp', '')
+                    if bp_emprestito:
+                        converted_data['bp'] = bp_emprestito
+                        logger.info(f"✅ Actualizado bp para reporte {reporte_id}: {bp_emprestito}")
+        
+        # Construir reporte_data con el orden deseado: id, bp, luego el resto
         reporte_data = {
             'id': doc.id,
+            'bp': converted_data.pop('bp', ''),
             **converted_data
         }
-        
-        # Obtener nombre_centro_gestor desde colecciones de empréstito si no existe o está vacío
-        referencia_contrato = reporte_data.get('referencia_contrato')
-        nombre_centro_gestor_actual = reporte_data.get('nombre_centro_gestor', '')
-        
-        if referencia_contrato and (not nombre_centro_gestor_actual or nombre_centro_gestor_actual.strip() == ''):
-            nombre_centro_gestor_emprestito = await get_nombre_centro_gestor_from_emprestito(referencia_contrato)
-            if nombre_centro_gestor_emprestito:
-                reporte_data['nombre_centro_gestor'] = nombre_centro_gestor_emprestito
-                reporte_data['nombre_centro_gestor_source'] = 'emprestito_collections'
-                logger.info(f"✅ Actualizado nombre_centro_gestor para reporte {reporte_id}: {nombre_centro_gestor_emprestito}")
         
         return {
             "success": True,

@@ -4726,14 +4726,14 @@ async def obtener_reportes_contratos(request: Request):
     ## 📋 Obtener Todos los Reportes de Contratos
     
     **Propósito**: Obtener listado completo de todos los reportes de contratos almacenados en Firebase.
-    Muestra todos los registros de la colección `reportes_contratos` con `nombre_centro_gestor` 
-    actualizado desde las colecciones de empréstito cuando sea necesario.
+    Muestra todos los registros de la colección `reportes_contratos` con `nombre_centro_gestor` y `bp` 
+    actualizados desde las colecciones de empréstito cuando sea necesario.
     
     ### 🔄 Integración con colecciones de empréstito:
     - Si un reporte no tiene `nombre_centro_gestor` o está vacío, se busca automáticamente 
       en las colecciones `contratos_emprestito`, `ordenes_compra_emprestito` y 
       `convenios_transferencias_emprestito` usando `referencia_contrato` como clave
-    - Los reportes actualizados incluyen el campo `nombre_centro_gestor_source` indicando la colección de origen
+    - Si un reporte no tiene `bp` o está vacío, se hereda automáticamente desde las mismas colecciones
     
     ### 📊 Ordenamiento:
     Los resultados se ordenan por `fecha_reporte` descendente (más recientes primero).
@@ -6573,7 +6573,6 @@ async def cargar_rpc_emprestito_endpoint(
     fecha_contabilizacion: str = Form(..., description="Fecha de contabilización (obligatorio)"),
     fecha_impresion: str = Form(..., description="Fecha de impresión (obligatorio)"),
     estado_liberacion: str = Form(..., description="Estado de liberación (obligatorio)"),
-    bp: str = Form(..., description="Código BP (obligatorio)"),
     valor_rpc: float = Form(..., description="Valor del RPC (obligatorio)"),
     nombre_centro_gestor: str = Form(..., description="Centro gestor responsable (obligatorio)"),
     referencia_contrato: str = Form(..., description="Referencia del contrato (obligatorio)"),
@@ -6604,11 +6603,15 @@ async def cargar_rpc_emprestito_endpoint(
     - `fecha_contabilizacion`: Fecha de contabilización del RPC
     - `fecha_impresion`: Fecha de impresión del documento
     - `estado_liberacion`: Estado de liberación del RPC
-    - `bp`: Código BP (Banco de Programas)
     - `valor_rpc`: Valor monetario del RPC
     - `nombre_centro_gestor`: Centro gestor responsable
     - `referencia_contrato`: Referencia del contrato asociado
     - `documentos`: Archivos del RPC (al menos 1 archivo requerido)
+    
+    ### 📌 Nota importante sobre BP:
+    El campo `bp` ya NO es requerido en este endpoint. El valor de `bp` se hereda automáticamente
+    al consultar los RPCs desde las colecciones: `contratos_emprestito`, `convenios_transferencias_emprestito` 
+    o `ordenes_compra_emprestito` usando la `referencia_contrato`.
     
     ### 📝 Campos opcionales:
     - `cdp_asociados`: Lista de CDPs (Certificados de Disponibilidad Presupuestal) asociados
@@ -6633,7 +6636,6 @@ async def cargar_rpc_emprestito_endpoint(
         "fecha_contabilizacion": "2024-10-15",
         "fecha_impresion": "2024-10-16",
         "estado_liberacion": "Liberado",
-        "bp": "BP-2024-001",
         "valor_rpc": 50000000.0,
         "cdp_asociados": ["CDP-2024-100", "CDP-2024-101", "CDP-2024-102"],
         "programacion_pac": {
@@ -6660,7 +6662,6 @@ async def cargar_rpc_emprestito_endpoint(
         "fecha_contabilizacion": "2024-10-15",
         "fecha_impresion": "2024-10-16",
         "estado_liberacion": "Liberado",
-        "bp": "BP-2024-001",
         "valor_rpc": 50000000.0,
         "nombre_centro_gestor": "Secretaría de Salud",
         "referencia_contrato": "CONT-SALUD-003-2024",
@@ -6803,7 +6804,6 @@ async def cargar_rpc_emprestito_endpoint(
             "fecha_contabilizacion": fecha_contabilizacion,
             "fecha_impresion": fecha_impresion,
             "estado_liberacion": estado_liberacion,
-            "bp": bp,
             "valor_rpc": valor_rpc,
             "cdp_asociados": cdp_asociados_processed,
             "programacion_pac": programacion_pac_dict,

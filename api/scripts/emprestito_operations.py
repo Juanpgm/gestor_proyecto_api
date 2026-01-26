@@ -1953,7 +1953,6 @@ def cargar_rpc_emprestito(datos_rpc: Dict[str, Any], documentos: Optional[List[D
             "fecha_contabilizacion",
             "fecha_impresion",
             "estado_liberacion",
-            "bp",
             "valor_rpc",
             "nombre_centro_gestor",
             "referencia_contrato"
@@ -2078,7 +2077,7 @@ def cargar_rpc_emprestito(datos_rpc: Dict[str, Any], documentos: Optional[List[D
             "fecha_contabilizacion": datos_rpc.get("fecha_contabilizacion", "").strip(),
             "fecha_impresion": datos_rpc.get("fecha_impresion", "").strip(),
             "estado_liberacion": datos_rpc.get("estado_liberacion", "").strip(),
-            "bp": datos_rpc.get("bp", "").strip(),
+            "bp": "",  # BP se hereda al consultar desde contratos_emprestito, convenios o ordenes
             "valor_rpc": float(datos_rpc.get("valor_rpc", 0)),
             "cdp_asociados": cdp_asociados_list if cdp_asociados_list else [],
             "programacion_pac": datos_rpc.get("programacion_pac", {}) if isinstance(datos_rpc.get("programacion_pac"), dict) else {},
@@ -2283,7 +2282,15 @@ def cargar_pago_emprestito(datos_pago: Dict[str, Any], documentos: Optional[List
 async def get_pagos_emprestito_all() -> Dict[str, Any]:
     """
     Obtener todos los pagos de empréstito desde la colección pagos_emprestito
-    e incluir información sobre si tienen documentos soporte en S3
+    e incluir información sobre si tienen documentos soporte en S3.
+    
+    El campo 'bp' se hereda de las colecciones: 
+    - 'contratos_emprestito' (prioridad 1)
+    - 'convenios_transferencias_emprestito' (prioridad 2)
+    - 'ordenes_compra_emprestito' (prioridad 3)
+    
+    OPTIMIZACIÓN: Se cargan todas las colecciones en memoria para evitar múltiples
+    consultas a Firestore y prevenir timeouts.
     """
     if not FIRESTORE_AVAILABLE:
         return {
@@ -2303,15 +2310,85 @@ async def get_pagos_emprestito_all() -> Dict[str, Any]:
                 "count": 0
             }
 
-        # Obtener todos los documentos de la colección
+        logger.info("Iniciando carga de pagos con herencia de BP desde múltiples colecciones")
+
+        # PASO 1: Cargar TODAS las colecciones en memoria (optimización para evitar timeouts)
+        logger.info("Cargando contratos_emprestito...")
+        contratos_map = {}  # {referencia_contrato: bp}
+        try:
+            for doc in db_client.collection('contratos_emprestito').stream():
+                data = doc.to_dict()
+                ref = data.get('referencia_contrato', '').strip()
+                bp = data.get('bp', '').strip()
+                if ref and bp:
+                    contratos_map[ref] = bp
+            logger.info(f"✓ Cargados {len(contratos_map)} contratos con BP")
+        except Exception as e:
+            logger.error(f"Error cargando contratos_emprestito: {e}")
+
+        logger.info("Cargando convenios_transferencias_emprestito...")
+        convenios_map = {}  # {referencia_contrato: bp}
+        try:
+            for doc in db_client.collection('convenios_transferencias_emprestito').stream():
+                data = doc.to_dict()
+                ref = data.get('referencia_contrato', '').strip()
+                bp = data.get('bp', '').strip()
+                if ref and bp:
+                    convenios_map[ref] = bp
+            logger.info(f"✓ Cargados {len(convenios_map)} convenios con BP")
+        except Exception as e:
+            logger.error(f"Error cargando convenios_transferencias_emprestito: {e}")
+
+        logger.info("Cargando ordenes_compra_emprestito...")
+        ordenes_map = {}  # {nombre_centro_gestor: bp}
+        try:
+            for doc in db_client.collection('ordenes_compra_emprestito').stream():
+                data = doc.to_dict()
+                centro = data.get('nombre_centro_gestor', '').strip()
+                bp = data.get('bp', '').strip()
+                if centro and bp:
+                    ordenes_map[centro] = bp
+            logger.info(f"✓ Cargadas {len(ordenes_map)} órdenes con BP")
+        except Exception as e:
+            logger.error(f"Error cargando ordenes_compra_emprestito: {e}")
+
+        # PASO 2: Obtener y procesar pagos
+        logger.info("Procesando pagos...")
         pagos_ref = db_client.collection('pagos_emprestito')
         docs = pagos_ref.stream()
 
-        # Procesar documentos
         pagos_list = []
+        bp_stats = {'contratos': 0, 'convenios': 0, 'ordenes': 0, 'sin_bp': 0}
+        
         for doc in docs:
             pago_data = doc.to_dict()
             pago_data['id'] = doc.id
+            
+            # Heredar BP
+            bp_heredado = ''
+            referencia_contrato = pago_data.get('referencia_contrato', '').strip()
+            nombre_centro_gestor = pago_data.get('nombre_centro_gestor', '').strip()
+            
+            # PRIORIDAD 1: Buscar en contratos_map
+            if referencia_contrato and referencia_contrato in contratos_map:
+                bp_heredado = contratos_map[referencia_contrato]
+                bp_stats['contratos'] += 1
+            
+            # PRIORIDAD 2: Buscar en convenios_map
+            elif referencia_contrato and referencia_contrato in convenios_map:
+                bp_heredado = convenios_map[referencia_contrato]
+                bp_stats['convenios'] += 1
+            
+            # PRIORIDAD 3: Buscar en ordenes_map
+            elif nombre_centro_gestor and nombre_centro_gestor in ordenes_map:
+                bp_heredado = ordenes_map[nombre_centro_gestor]
+                bp_stats['ordenes'] += 1
+            
+            else:
+                bp_stats['sin_bp'] += 1
+            
+            # Asignar bp heredado
+            pago_data['bp'] = bp_heredado
             
             # Detectar si tiene documentos soporte revisando la variable documentos_s3
             documentos_s3 = pago_data.get('documentos_s3', [])
@@ -2333,14 +2410,15 @@ async def get_pagos_emprestito_all() -> Dict[str, Any]:
             
             pagos_list.append(pago_data)
 
-        logger.info(f"Se obtuvieron {len(pagos_list)} pagos de empréstito")
+        logger.info(f"✓ Procesados {len(pagos_list)} pagos | BP desde contratos: {bp_stats['contratos']}, convenios: {bp_stats['convenios']}, órdenes: {bp_stats['ordenes']}, sin BP: {bp_stats['sin_bp']}")
 
         return {
             "success": True,
             "data": pagos_list,
             "count": len(pagos_list),
             "collection": "pagos_emprestito",
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
+            "bp_inheritance_stats": bp_stats
         }
 
     except Exception as e:
@@ -2355,7 +2433,17 @@ async def get_pagos_emprestito_all() -> Dict[str, Any]:
 async def get_rpc_contratos_emprestito_all() -> Dict[str, Any]:
     """
     Obtener todos los RPCs (Registros Presupuestales de Compromiso) de empréstito
-    desde la colección rpc_contratos_emprestito
+    desde la colección rpc_contratos_emprestito.
+    
+    El campo 'bp' se hereda de las colecciones: 
+    - 'contratos_emprestito' (prioridad 1)
+    - 'convenios_transferencias_emprestito' (prioridad 2)
+    - 'ordenes_compra_emprestito' (prioridad 3)
+    
+    El valor de 'bp' NO se lee desde rpc_contratos_emprestito, solo se hereda.
+    
+    OPTIMIZACIÓN: Se cargan todas las colecciones en memoria para evitar múltiples
+    consultas a Firestore y prevenir timeouts.
     """
     if not FIRESTORE_AVAILABLE:
         return {
@@ -2375,29 +2463,99 @@ async def get_rpc_contratos_emprestito_all() -> Dict[str, Any]:
                 "count": 0
             }
 
-        # Obtener todos los documentos de la colección
+        logger.info("Iniciando carga de RPCs con herencia de BP desde múltiples colecciones")
+
+        # PASO 1: Cargar TODAS las colecciones en memoria (optimización para evitar timeouts)
+        logger.info("Cargando contratos_emprestito...")
+        contratos_map = {}  # {referencia_contrato: bp}
+        try:
+            for doc in db_client.collection('contratos_emprestito').stream():
+                data = doc.to_dict()
+                ref = data.get('referencia_contrato', '').strip()
+                bp = data.get('bp', '').strip()
+                if ref and bp:
+                    contratos_map[ref] = bp
+            logger.info(f"✓ Cargados {len(contratos_map)} contratos con BP")
+        except Exception as e:
+            logger.error(f"Error cargando contratos_emprestito: {e}")
+
+        logger.info("Cargando convenios_transferencias_emprestito...")
+        convenios_map = {}  # {referencia_contrato: bp}
+        try:
+            for doc in db_client.collection('convenios_transferencias_emprestito').stream():
+                data = doc.to_dict()
+                ref = data.get('referencia_contrato', '').strip()
+                bp = data.get('bp', '').strip()
+                if ref and bp:
+                    convenios_map[ref] = bp
+            logger.info(f"✓ Cargados {len(convenios_map)} convenios con BP")
+        except Exception as e:
+            logger.error(f"Error cargando convenios_transferencias_emprestito: {e}")
+
+        logger.info("Cargando ordenes_compra_emprestito...")
+        ordenes_map = {}  # {nombre_centro_gestor: bp}
+        try:
+            for doc in db_client.collection('ordenes_compra_emprestito').stream():
+                data = doc.to_dict()
+                centro = data.get('nombre_centro_gestor', '').strip()
+                bp = data.get('bp', '').strip()
+                if centro and bp:
+                    ordenes_map[centro] = bp
+            logger.info(f"✓ Cargadas {len(ordenes_map)} órdenes con BP")
+        except Exception as e:
+            logger.error(f"Error cargando ordenes_compra_emprestito: {e}")
+
+        # PASO 2: Obtener y procesar RPCs
+        logger.info("Procesando RPCs...")
         rpc_ref = db_client.collection('rpc_contratos_emprestito')
         docs = rpc_ref.stream()
 
-        # Procesar documentos
         rpc_list = []
+        bp_stats = {'contratos': 0, 'convenios': 0, 'ordenes': 0, 'sin_bp': 0}
+        
         for doc in docs:
             rpc_data = doc.to_dict()
             rpc_data['id'] = doc.id
+            
+            bp_heredado = ''
+            referencia_contrato = rpc_data.get('referencia_contrato', '').strip()
+            nombre_centro_gestor = rpc_data.get('nombre_centro_gestor', '').strip()
+            
+            # PRIORIDAD 1: Buscar en contratos_map
+            if referencia_contrato and referencia_contrato in contratos_map:
+                bp_heredado = contratos_map[referencia_contrato]
+                bp_stats['contratos'] += 1
+            
+            # PRIORIDAD 2: Buscar en convenios_map
+            elif referencia_contrato and referencia_contrato in convenios_map:
+                bp_heredado = convenios_map[referencia_contrato]
+                bp_stats['convenios'] += 1
+            
+            # PRIORIDAD 3: Buscar en ordenes_map
+            elif nombre_centro_gestor and nombre_centro_gestor in ordenes_map:
+                bp_heredado = ordenes_map[nombre_centro_gestor]
+                bp_stats['ordenes'] += 1
+            
+            else:
+                bp_stats['sin_bp'] += 1
+            
+            # Asignar bp heredado
+            rpc_data['bp'] = bp_heredado
             
             # Serializar objetos datetime
             rpc_data = serialize_datetime_objects(rpc_data)
             
             rpc_list.append(rpc_data)
 
-        logger.info(f"Se obtuvieron {len(rpc_list)} RPCs de empréstito")
+        logger.info(f"✓ Procesados {len(rpc_list)} RPCs | BP desde contratos: {bp_stats['contratos']}, convenios: {bp_stats['convenios']}, órdenes: {bp_stats['ordenes']}, sin BP: {bp_stats['sin_bp']}")
 
         return {
             "success": True,
             "data": rpc_list,
             "count": len(rpc_list),
             "collection": "rpc_contratos_emprestito",
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
+            "bp_inheritance_stats": bp_stats
         }
 
     except Exception as e:
