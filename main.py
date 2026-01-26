@@ -9850,7 +9850,12 @@ async def obtener_contratos_bp():
     """
     ## Obtener Contratos de Empréstito - Campos Básicos BP
     
-    **Propósito**: Retorna datos específicos de la colección "contratos_emprestito" optimizados para visualización.
+    **Propósito**: Retorna datos específicos de las tres colecciones de empréstito optimizados para visualización.
+    
+    ### 🗄️ Colecciones incluidas:
+    1. **contratos_emprestito**: Contratos principales
+    2. **ordenes_compra_emprestito**: Órdenes de compra
+    3. **convenios_transferencias_emprestito**: Convenios de transferencia
     
     ### ✅ Casos de uso:
     - Listado de contratos para dashboards
@@ -9876,7 +9881,10 @@ async def obtener_contratos_bp():
     const response = await fetch('/emprestito/obtener-contratos-bp');
     const data = await response.json();
     if (data.success) {
-        console.log('Contratos encontrados:', data.count);
+        console.log('Registros encontrados:', data.count);
+        console.log('Contratos:', data.contratos_count);
+        console.log('Órdenes:', data.ordenes_count);
+        console.log('Convenios:', data.convenios_count);
         data.data.forEach(contrato => {
             console.log(`BP: ${contrato.bp}, Banco: ${contrato.banco}`);
             console.log(`Valor: ${contrato.valor_contrato}`);
@@ -9890,6 +9898,7 @@ async def obtener_contratos_bp():
     - **UTF-8**: Soporte completo para caracteres especiales
     - **Cache**: Datos cacheados por 5 minutos para mejor performance
     - **Fechas**: Incluye información de vigencia contractual
+    - **Multi-colección**: Combina datos de las tres colecciones de empréstito
     """
     if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
         raise HTTPException(status_code=503, detail="Firebase or scripts not available")
@@ -9902,14 +9911,10 @@ async def obtener_contratos_bp():
                 detail="No se pudo conectar a Firestore"
             )
         
-        collection_ref = db.collection('contratos_emprestito')
-        docs = collection_ref.stream()
-        contratos_data = []
-        
-        for doc in docs:
-            doc_data = doc.to_dict()
-            # Extraer solo los campos solicitados
-            contrato_filtrado = {
+        # Función auxiliar para extraer los campos solicitados
+        def extraer_campos_bp(doc_data: dict) -> dict:
+            """Extrae solo los campos solicitados manteniendo la estructura BP"""
+            return {
                 'bp': doc_data.get('bp', ''),
                 'banco': doc_data.get('banco', ''),
                 'nombre_centro_gestor': doc_data.get('nombre_centro_gestor', ''),
@@ -9921,15 +9926,65 @@ async def obtener_contratos_bp():
                 'fecha_fin_contrato': doc_data.get('fecha_fin_contrato', ''),
                 'sector': doc_data.get('sector', '')
             }
-            contratos_data.append(contrato_filtrado)
+        
+        # Lista para almacenar todos los datos combinados
+        todos_los_datos = []
+        
+        # 1. Obtener contratos_emprestito
+        collection_ref = db.collection('contratos_emprestito')
+        docs = collection_ref.stream()
+        contratos_count = 0
+        
+        for doc in docs:
+            doc_data = doc.to_dict()
+            contrato_filtrado = extraer_campos_bp(doc_data)
+            todos_los_datos.append(contrato_filtrado)
+            contratos_count += 1
+        
+        # 2. Obtener ordenes_compra_emprestito
+        ordenes_ref = db.collection('ordenes_compra_emprestito')
+        ordenes_docs = ordenes_ref.stream()
+        ordenes_count = 0
+        
+        for doc in ordenes_docs:
+            doc_data = doc.to_dict()
+            # Mapear campos de órdenes de compra al formato BP
+            orden_mapeada = {
+                'bp': doc_data.get('bp', ''),
+                'banco': doc_data.get('nombre_banco', ''),  # Mapear nombre_banco a banco
+                'nombre_centro_gestor': doc_data.get('nombre_centro_gestor', ''),
+                'nombre_resumido_proceso': doc_data.get('nombre_resumido_proceso', ''),
+                'tipo_contrato': doc_data.get('tipo_contrato', 'Orden de Compra - TVEC'),
+                'urlproceso': doc_data.get('urlproceso', ''),
+                'valor_contrato': int(float(doc_data.get('valor_orden', 0))) if doc_data.get('valor_orden') else 0,
+                'fecha_inicio_contrato': doc_data.get('fecha_publicacion_orden', ''),
+                'fecha_fin_contrato': doc_data.get('fecha_vencimiento_orden', ''),
+                'sector': doc_data.get('sector', '')
+            }
+            todos_los_datos.append(orden_mapeada)
+            ordenes_count += 1
+        
+        # 3. Obtener convenios_transferencias_emprestito
+        convenios_ref = db.collection('convenios_transferencias_emprestito')
+        convenios_docs = convenios_ref.stream()
+        convenios_count = 0
+        
+        for doc in convenios_docs:
+            doc_data = doc.to_dict()
+            convenio_filtrado = extraer_campos_bp(doc_data)
+            todos_los_datos.append(convenio_filtrado)
+            convenios_count += 1
         
         return create_utf8_response({
             "success": True,
-            "data": contratos_data,
-            "count": len(contratos_data),
-            "collection": "contratos_emprestito",
+            "data": todos_los_datos,
+            "count": len(todos_los_datos),
+            "contratos_count": contratos_count,
+            "ordenes_count": ordenes_count,
+            "convenios_count": convenios_count,
+            "collections": ["contratos_emprestito", "ordenes_compra_emprestito", "convenios_transferencias_emprestito"],
             "timestamp": datetime.now().isoformat(),
-            "message": f"Se obtuvieron {len(contratos_data)} contratos exitosamente",
+            "message": f"Se obtuvieron {contratos_count} contratos, {ordenes_count} órdenes de compra y {convenios_count} convenios de transferencia exitosamente ({len(todos_los_datos)} registros totales)",
             "metadata": {
                 "fields": ["bp", "banco", "nombre_centro_gestor", "nombre_resumido_proceso", "tipo_contrato", "urlproceso", "valor_contrato", "fecha_inicio_contrato", "fecha_fin_contrato", "sector"],
                 "utf8_enabled": True,
