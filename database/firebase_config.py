@@ -194,14 +194,10 @@ def _init_with_workload_identity() -> firebase_admin.App:
             # Try to initialize with WIF credentials
             cred = credentials.ApplicationDefault()
             
-            # Test if credentials work by trying to refresh them
-            if not cred.valid:
-                try:
-                    cred.refresh(google.auth.transport.requests.Request())
-                except Exception as refresh_error:
-                    logger.error(f"❌ WIF token refresh failed: {refresh_error}")
-                    # If refresh fails, raise an exception to trigger fallback
-                    raise RuntimeError(f"WIF authentication failed: {refresh_error}")
+            # Initialize Firebase app directly - let it fail if credentials are invalid
+            app = firebase_admin.initialize_app(cred, {'projectId': PROJECT_ID})
+            logger.info("✅ Firebase initialized with Workload Identity Federation")
+            return app
             
             app = firebase_admin.initialize_app(cred, {'projectId': PROJECT_ID})
             logger.info("✅ Firebase initialized with Workload Identity Federation")
