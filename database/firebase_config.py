@@ -16,6 +16,14 @@ import firebase_admin
 from firebase_admin import credentials, firestore, auth
 import google.auth.transport.requests
 
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+    logging.info("✅ Environment variables loaded from .env file")
+except ImportError:
+    logging.warning("⚠️ python-dotenv not installed, using system environment variables only")
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -31,7 +39,7 @@ def get_project_id() -> str:
     
     # 2. FORZAR uso del proyecto específico para desarrollo
     # Este es el proyecto correcto que siempre debe usarse
-    forced_project = "unidad-cumplimiento-aa245"
+    forced_project = "calitrack-44403"
     logger.info(f"🔐 Using configured project: {forced_project}")
     return forced_project
     
@@ -277,24 +285,42 @@ def validate_firebase_connection() -> Dict[str, Any]:
         db = get_firestore_client()
         auth_client = get_auth_client()
         
-        # Test Firestore
-        collections = list(db.collections())
+        # Test Firestore - with permission error handling
+        firestore_available = True
+        collections_count = 0
+        users_collection_exists = False
+        try:
+            collections = list(db.collections())
+            collections_count = len(collections)
+            users_collection_exists = USERS_COLLECTION in [c.id for c in collections]
+        except Exception as e:
+            if "403" in str(e) or "Missing or insufficient permissions" in str(e):
+                logger.warning("⚠️ Firestore permissions limited - basic connection OK")
+                firestore_available = True  # Connection works, just no list permissions
+            else:
+                firestore_available = False
+                logger.error(f"❌ Firestore connection failed: {e}")
         
-        # Test Auth
+        # Test Auth - with permission error handling
+        auth_available = True
         try:
             auth_client.list_users(max_results=1)
-            auth_available = True
-        except Exception:
-            auth_available = False
+        except Exception as e:
+            if "403" in str(e) or "Missing or insufficient permissions" in str(e):
+                logger.warning("⚠️ Auth permissions limited - basic connection OK")
+                auth_available = True  # Connection works, just no list permissions
+            else:
+                auth_available = False
+                logger.error(f"❌ Auth connection failed: {e}")
         
         return {
             "connected": True,
             "project_id": PROJECT_ID,
             "environment": "production" if is_production() else "development",
-            "firestore_available": True,
+            "firestore_available": firestore_available,
             "auth_available": auth_available,
-            "collections_count": len(collections),
-            "users_collection_exists": USERS_COLLECTION in [c.id for c in collections]
+            "collections_count": collections_count,
+            "users_collection_exists": users_collection_exists
         }
     except Exception as e:
         return {
@@ -351,10 +377,10 @@ if __name__ == "__main__":
     if success:
         print(f"✅ Configuration: {status}")
         # Ejecutar pruebas de validación solo en modo directo
-        validation_success, validation_status = validate_firebase_connection()
-        if validation_success:
-            print(f"✅ Validation: {validation_status}")
+        validation_result = validate_firebase_connection()
+        if validation_result.get("connected"):
+            print(f"✅ Validation: {validation_result}")
         else:
-            print(f"❌ Validation: {validation_status}")
+            print(f"❌ Validation: {validation_result}")
     else:
         print(f"❌ Configuration: {status}")
