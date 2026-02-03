@@ -82,7 +82,11 @@ def is_workload_identity_available() -> bool:
 
 def get_service_account_key() -> Optional[str]:
     """Get service account key from environment"""
-    return os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY")
+    key = os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY")
+    logger.info(f"🔍 FIREBASE_SERVICE_ACCOUNT_KEY present: {bool(key)}")
+    if key:
+        logger.info(f"🔍 Key length: {len(key)} characters")
+    return key
 
 # Pure functions for credential processing
 def decode_service_account(encoded_key: str) -> Dict[str, Any]:
@@ -111,34 +115,29 @@ def initialize_firebase_app() -> firebase_admin.App:
     
     logger.info(f"🚀 Initializing Firebase: {PROJECT_ID}")
     
-    # ESTRATEGIA DE FALLBACK ROBUSTO: WIF > Service Account Key > ADC
-    # Cambio: Service Account como fallback preferido para Railway
+    # ESTRATEGIA OPTIMIZADA PARA RAILWAY:
+    # Prioritario: Service Account Key (más rápido y confiable en Railway)
+    # Fallback: Workload Identity Federation (solo si no hay Service Account)
+    # Último: Application Default Credentials
     
-    # 1. Intentar Workload Identity Federation (pero con manejo robusto de errores)
+    # 1. Service Account Key (PRIORITARIO en Railway/Producción)
+    if get_service_account_key():
+        try:
+            logger.info("🔑 Using Service Account Key...")
+            return _init_with_service_account()
+        except Exception as e:
+            logger.error(f"❌ Service Account Key failed: {e}")
+            logger.info("🔄 Falling back to next method...")
+    
+    # 2. Workload Identity Federation (intentar con timeout)
     if is_workload_identity_available():
         try:
-            logger.info("🔐 Attempting Workload Identity Federation...")
+            logger.info("🔐 Attempting Workload Identity Federation (with timeout)...")
             return _init_with_workload_identity()
         except Exception as e:
             error_msg = str(e)
             logger.warning(f"⚠️ Workload Identity failed: {error_msg}")
-            
-            # Detección específica de errores de Railway WIF
-            if "RefreshError" in error_msg or "Identity Pool" in error_msg:
-                logger.error("🚨 Railway WIF Token Issue Detected!")
-                logger.error("💡 Railway OIDC endpoint is not working properly")
-                logger.info("🔄 Attempting Service Account fallback immediately...")
-            else:
-                logger.info("🔄 Falling back to next authentication method...")
-    
-    # 2. Service Account Key (fallback confiable para Railway)
-    if get_service_account_key():
-        try:
-            logger.info("� Using Service Account Key (Railway fallback)...")
-            return _init_with_service_account()
-        except Exception as e:
-            logger.error(f"❌ Service Account Key failed: {e}")
-            logger.info("🔄 Trying Application Default Credentials as last resort...")
+            logger.info("🔄 Falling back to ADC...")
     
     # 3. Application Default Credentials (último recurso para desarrollo local)
     if _adc_available():
@@ -163,10 +162,16 @@ def _init_with_service_account() -> firebase_admin.App:
     """Initialize with service account credentials"""
     service_key = get_service_account_key()
     if not service_key:
+        logger.error("❌ FIREBASE_SERVICE_ACCOUNT_KEY is None or empty")
         raise RuntimeError("FIREBASE_SERVICE_ACCOUNT_KEY required in production")
     
-    creds_data = decode_service_account(service_key)
-    logger.info(f"✅ Service Account: {creds_data.get('client_email')}")
+    logger.info("🔑 Attempting to decode Service Account Key...")
+    try:
+        creds_data = decode_service_account(service_key)
+        logger.info(f"✅ Service Account decoded: {creds_data.get('client_email')}")
+    except Exception as decode_error:
+        logger.error(f"❌ Failed to decode Service Account Key: {decode_error}")
+        raise RuntimeError(f"Invalid Service Account Key: {decode_error}")
     
     cred = credentials.Certificate(creds_data)
     app = firebase_admin.initialize_app(cred, {'projectId': PROJECT_ID})
