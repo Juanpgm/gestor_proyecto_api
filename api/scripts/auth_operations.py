@@ -110,6 +110,12 @@ async def validate_password_with_firebase_rest(email: str, password: str) -> Dic
                             "error": "Demasiados intentos, intente más tarde",
                             "code": "TOO_MANY_ATTEMPTS"
                         }
+                    elif "INVALID_LOGIN_CREDENTIALS" in error_message:
+                        return {
+                            "success": False,
+                            "error": "Credenciales incorrectas",
+                            "code": "INVALID_CREDENTIALS"
+                        }
                     else:
                         return {
                             "success": False,

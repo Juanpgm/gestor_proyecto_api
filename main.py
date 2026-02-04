@@ -98,6 +98,75 @@ except ImportError as e:
     DEFAULT_USER_ROLE = "visualizador"
     ROLE_HIERARCHY = {}
     AUTH_PUBLIC_PATHS = []
+
+# 🔐 FUNCIÓN HELPER PARA VERIFICAR AUTENTICACIÓN FIREBASE
+async def verify_firebase_token(request: Request) -> dict:
+    """
+    Verifica el token de Firebase desde el header Authorization
+    Retorna los datos del usuario si el token es válido
+    """
+    auth_header = request.headers.get("Authorization")
+    
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "success": False,
+                "error": "Token de autenticación requerido",
+                "code": "MISSING_TOKEN"
+            }
+        )
+    
+    try:
+        token = auth_header.split(" ")[1]
+        
+        # Verificar token con Firebase
+        from firebase_admin import auth
+        decoded_token = auth.verify_id_token(token)
+        
+        # Obtener datos adicionales del usuario desde Firestore
+        from database.firebase_config import get_firestore_client
+        firestore_client = get_firestore_client()
+        
+        user_doc = firestore_client.collection('users').document(decoded_token['uid']).get()
+        user_data = {}
+        if user_doc.exists:
+            user_data = user_doc.to_dict()
+        
+        return {
+            "uid": decoded_token['uid'],
+            "email": decoded_token.get('email'),
+            "email_verified": decoded_token.get('email_verified', False),
+            "firestore_data": user_data
+        }
+        
+    except auth.InvalidIdTokenError:
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "success": False,
+                "error": "Token inválido o expirado",
+                "code": "INVALID_TOKEN"
+            }
+        )
+    except auth.ExpiredIdTokenError:
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "success": False,
+                "error": "Token expirado",
+                "code": "TOKEN_EXPIRED"
+            }
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "success": False,
+                "error": f"Error verificando autenticación: {str(e)}",
+                "code": "AUTH_VERIFICATION_ERROR"
+            }
+        )
     AuthorizationMiddleware = None
     AuditLogMiddleware = None
 
@@ -669,6 +738,8 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)  # Comprimir respuestas > 
 print("🗜️ GZIP compression enabled for responses > 1KB")
 
 # 🔐 MIDDLEWARE DE AUTENTICACIÓN Y AUTORIZACIÓN
+print(f"🔍 AUTH_SYSTEM_AVAILABLE: {AUTH_SYSTEM_AVAILABLE}")
+print(f"🔍 AuthorizationMiddleware: {AuthorizationMiddleware}")
 if AUTH_SYSTEM_AVAILABLE and AuthorizationMiddleware is not None:
     # Definir rutas públicas (combinar con las del sistema de auth)
     public_paths = [
@@ -689,8 +760,10 @@ if AUTH_SYSTEM_AVAILABLE and AuthorizationMiddleware is not None:
         "/auth/validate-session",
         "/auth/workload-identity/status",
         "/unidades-proyecto/captura-estado-360"
+        # NOTA: /admin/users ahora requiere autenticación directa
     ]
     
+    print(f"📋 Public paths configured: {public_paths}")
     app.add_middleware(
         AuthorizationMiddleware,
         public_paths=public_paths
@@ -5319,6 +5392,7 @@ async def register_user(registration_data: UserRegistrationRequest):
 
 @app.post("/auth/change-password", tags=["Administración y Control de Accesos"])
 async def change_password(
+    request: Request,
     uid: str = Form(..., description="ID del usuario"),
     new_password: str = Form(..., description="Nueva contraseña")
 ):
@@ -5326,6 +5400,10 @@ async def change_password(
     ## 🔒 Cambio de Contraseña
     
     Actualiza contraseñas de usuarios con validaciones de seguridad completas.
+    **Requiere autenticación con token de Firebase.**
+    
+    ### 🔐 Autenticación requerida:
+    - Header: `Authorization: Bearer <firebase_id_token>`
     
     ### ✅ Casos de uso:
     - Reset de contraseña por administrador
@@ -5351,12 +5429,18 @@ async def change_password(
       new_password: "NuevaPassword123!"
     };
     const response = await fetch('/auth/change-password', {
-      method: 'POST', 
-      body: JSON.stringify(passwordData)
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + idToken,
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: new URLSearchParams(passwordData)
     });
     ```
     """
     try:
+        # 🔐 VERIFICAR AUTENTICACIÓN FIREBASE
+        current_user = await verify_firebase_token(request)
         check_user_management_availability()
         
         result = await update_user_password(uid, new_password)
@@ -5598,11 +5682,19 @@ async def google_auth_unified(
 # ============================================================================
 
 @app.delete("/auth/user/{uid}", tags=["Administración y Control de Accesos"])
-async def delete_user(uid: str, soft_delete: Optional[bool] = Query(default=None, description="Eliminación lógica (true) o física (false)")):
+async def delete_user(
+    uid: str, 
+    request: Request,
+    soft_delete: Optional[bool] = Query(default=None, description="Eliminación lógica (true) o física (false)")
+):
     """
     ## 🗑️ Eliminación de Usuario
     
     Elimina cuentas con opciones flexibles de soft delete (recomendado) o hard delete.
+    **Requiere autenticación con token de Firebase.**
+    
+    ### 🔐 Autenticación requerida:
+    - Header: `Authorization: Bearer <firebase_id_token>`
     
     ### ✅ Casos de uso:
     - Desvinculación de empleados (soft delete)
@@ -5622,16 +5714,25 @@ async def delete_user(uid: str, soft_delete: Optional[bool] = Query(default=None
     ```javascript
     // Eliminación lógica (recomendada)
     const response = await fetch('/auth/user/Zx9mK2pQ8RhV3nL7jM4uX1qW6tY0sA5e?soft_delete=true', {
-      method: 'DELETE'
+      method: 'DELETE',
+      headers: {
+        'Authorization': 'Bearer ' + idToken
+      }
     });
     
     // Eliminación física (permanente)
     const response = await fetch('/auth/user/Zx9mK2pQ8RhV3nL7jM4uX1qW6tY0sA5e?soft_delete=false', {
-      method: 'DELETE'
+      method: 'DELETE',
+      headers: {
+        'Authorization': 'Bearer ' + idToken
+      }
     });
     ```
     """
     try:
+        # 🔐 VERIFICAR AUTENTICACIÓN FIREBASE
+        current_user = await verify_firebase_token(request)
+        
         check_user_management_availability()
         
         result = await delete_user_account(uid, soft_delete if soft_delete is not None else True)
@@ -5690,12 +5791,17 @@ async def delete_user(uid: str, soft_delete: Optional[bool] = Query(default=None
 
 @app.get("/admin/users", tags=["Administración y Control de Accesos"])
 async def list_system_users(
+    request: Request,
     limit: int = Query(default=100, ge=1, le=1000, description="Límite de resultados por página")
 ):
     """
     ## 📋 Listado de Usuarios desde Firestore
     
     Lee directamente la colección "users" de Firestore y devuelve todos los usuarios registrados.
+    **Requiere autenticación con token de Firebase.**
+    
+    ### 🔐 Autenticación requerida:
+    - Header: `Authorization: Bearer <firebase_id_token>`
     
     ### � Información incluida:
     - UID del usuario
@@ -5708,12 +5814,20 @@ async def list_system_users(
     
     ### 📝 Ejemplo de uso:
     ```javascript
-    const response = await fetch('/admin/users?limit=50');
+    const response = await fetch('/admin/users?limit=50', {
+      headers: {
+        'Authorization': 'Bearer ' + idToken,
+        'Content-Type': 'application/json'
+      }
+    });
     const data = await response.json();
     console.log(`Encontrados ${data.count} usuarios`);
     ```
     """
     try:
+        # 🔐 VERIFICAR AUTENTICACIÓN FIREBASE
+        current_user = await verify_firebase_token(request)
+        
         check_user_management_availability()
         
         from database.firebase_config import get_firestore_client
@@ -5763,6 +5877,9 @@ async def list_system_users(
             headers={"Content-Type": "application/json; charset=utf-8"}
         )
         
+    except HTTPException:
+        # Re-lanzar HTTPException (como las de autenticación) sin modificar
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=500, 

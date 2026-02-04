@@ -27,14 +27,24 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
         # Verificar si la ruta es pública
         path = request.url.path
         
+        # Logging para debug
+        print(f"🔍 Middleware checking path: {path}")
+        print(f"📋 Public paths: {self.public_paths}")
+        
         # Permitir acceso a rutas públicas
-        if any(path.startswith(public_path) for public_path in self.public_paths):
+        is_public = any(path.startswith(public_path) for public_path in self.public_paths)
+        print(f"✅ Path is public: {is_public}")
+        
+        if is_public:
             return await call_next(request)
+        
+        print(f"🔐 Path requires auth: {path}")
         
         # Verificar presencia de token de autorización
         auth_header = request.headers.get("Authorization")
         
         if not auth_header or not auth_header.startswith("Bearer "):
+            print(f"❌ Missing or invalid auth header: {auth_header}")
             return JSONResponse(
                 status_code=401,
                 content={
@@ -46,6 +56,7 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
         try:
             # Extraer token
             token = auth_header.split(" ")[1]
+            print(f"🔑 Token extracted: {token[:20]}...")
             
             # Verificar token con Firebase
             from firebase_admin import auth
