@@ -74,6 +74,7 @@ La API estará en: `http://localhost:8000`
 
 - `GET /unidades-proyecto` - Todas las unidades de proyecto
 - `GET /unidades-proyecto/summary` - Resumen estadístico
+- `GET /unidades-proyecto/calidad-datos` - Métricas unificadas de calidad con historial diario
 
 ## 🌐 Despliegue
 

@@ -2992,6 +2992,25 @@ async def get_intervenciones_filtradas_endpoint(
                 return [normalize_value(item) for item in value]
             return value
 
+        def coerce_float_value(value):
+            if value is None or value == '':
+                return None
+            try:
+                if isinstance(value, str):
+                    cleaned = value.strip().replace('%', '').replace(' ', '')
+                    if ',' in cleaned and cleaned.count(',') == 1:
+                        comma_pos = cleaned.find(',')
+                        if len(cleaned) - comma_pos <= 3:
+                            cleaned = cleaned.replace(',', '.')
+                        else:
+                            cleaned = cleaned.replace(',', '')
+                    else:
+                        cleaned = cleaned.replace(',', '')
+                    return float(cleaned) if cleaned else None
+                return float(value)
+            except (ValueError, TypeError):
+                return None
+
         data = []
         for doc in docs:
             doc_data = doc.to_dict()
@@ -3000,6 +3019,7 @@ async def get_intervenciones_filtradas_endpoint(
 
             record = {field: doc_data.get(field) for field in fields}
             record["intervencion_id"] = record.get("intervencion_id") or doc.id
+            record["avance_obra"] = coerce_float_value(record.get("avance_obra"))
             data.append(record)
 
         return create_utf8_response({
@@ -3022,16 +3042,15 @@ async def get_frentes_activos_endpoint():
     """
     ## 🔵 GET | Obtener Frentes Activos
     
-    **Propósito**: Retornar todas las unidades que tienen intervenciones
-    con frente activo.
+    **Propósito**: Retornar conteos de frentes activos usando datos reales
+    de `unidades_proyecto` y `intervenciones_unidades_proyecto`.
     
     ### Estructura de Respuesta
     
-    GeoJSON FeatureCollection con:
-    - **features**: Unidades con frentes activos
-    - **properties.total_frentes_activos**: Conteo total de intervenciones con frente activo
-    - **properties.total_unidades_con_frentes**: Número de unidades que tienen frentes activos
-    - **properties.total_por_intervencion**: Diccionario con el conteo de registros por tipo de intervención
+    Respuesta con conteos:
+    - **total_frentes_activos**: Conteo total de intervenciones con frente activo
+    - **total_unidades_con_frentes**: Número de unidades que tienen frentes activos
+    - **total_por_intervencion**: Diccionario con el conteo de registros por tipo de intervención
     
     ### Ejemplo de Uso
     
@@ -3039,9 +3058,9 @@ async def get_frentes_activos_endpoint():
     const response = await fetch('/frentes-activos');
     const data = await response.json();
     
-    console.log(data.properties.total_frentes_activos); // Total de frentes activos
-    console.log(data.properties.total_unidades_con_frentes); // Unidades con frentes
-    console.log(data.properties.total_por_intervencion); // {"Tipo 1": 5, "Tipo 2": 10, ...}
+    console.log(data.total_frentes_activos); // Total de frentes activos
+    console.log(data.total_unidades_con_frentes); // Unidades con frentes
+    console.log(data.total_por_intervencion); // {"Tipo 1": 5, "Tipo 2": 10, ...}
     
     // Renderizar en mapa con icono especial
     data.features.forEach(feature => {
@@ -3077,502 +3096,34 @@ async def get_frentes_activos_endpoint():
         )
 
 
-@app.post("/unidades-proyecto/cargar-geojson", tags=["Unidades de Proyecto"], summary="🟢 Cargar GeoJSON a Firestore (UPSERT)")
-async def cargar_geojson_a_firestore(
-    geojson_file: UploadFile = File(..., description="Archivo GeoJSON con unidades de proyecto"),
-    batch_size: int = Query(500, ge=1, le=500, description="Tamaño de lote para operaciones batch"),
-    override_existing: bool = Query(False, description="[DEPRECADO] Parámetro legacy, ahora siempre hace UPSERT"),
-    override_upid: bool = Query(False, description="Generar nuevos UPIDs aunque existan"),
-    dry_run: bool = Query(False, description="Simular carga sin escribir en Firebase")
-):
+@app.get("/unidades-proyecto/calidad-datos", tags=["Unidades de Proyecto"], summary="🔵 GET | Calidad de Datos")
+@optional_rate_limit("30/minute")
+async def get_calidad_datos_unidades_proyecto_endpoint():
     """
-    ## 🟢 POST | 📤 UPSERT | Importar/Actualizar Unidades de Proyecto desde GeoJSON a Firestore
-    
-    **Propósito**: Cargar o actualizar masivamente datos de unidades de proyecto desde un archivo GeoJSON 
-    a la colección 'unidades_proyecto' en Firebase Firestore usando estrategia **UPSERT**.
-    
-    ### ✅ Características principales:
-    - **🔄 UPSERT automático**: Si el documento existe, actualiza solo los campos modificados. Si no existe, lo crea.
-    - **Importación masiva**: Procesa múltiples features en un solo archivo
-    - **Validación automática**: Verifica estructura GeoJSON y campos requeridos
-    - **Procesamiento por lotes**: Optimizado para grandes volúmenes (hasta 500 por batch)
-    - **Generación de UPIDs consecutivos**: Mantiene el consecutivo UNP-{número}
-    - **Campo automático**: Agrega `tipo_equipamiento: "Vías"` a todos los elementos
-    - **Modo dry-run**: Simula la carga para validar datos sin escribir en BD
-    
-    ### 🔄 Comportamiento UPSERT:
-    - **Si el documento existe**: Actualiza solo los campos que cambiaron (merge)
-    - **Si el documento NO existe**: Crea un nuevo documento completo
-    - **Beneficios**: 
-      - No duplica datos
-      - Preserva campos que no están en el GeoJSON
-      - Actualiza solo lo necesario
-      - Más eficiente que sobrescribir completo
-    
-    ### 📋 Estructura esperada del GeoJSON:
-    ```json
-    {
-      "type": "FeatureCollection",
-      "features": [
-        {
-          "type": "Feature",
-          "geometry": {
-            "type": "LineString|Point|Polygon",
-            "coordinates": [[lng, lat], ...]
-          },
-          "properties": {
-            "nombre_up": "Nombre del proyecto",
-            "estado": "Finalizado|En Ejecución|etc.",
-            "clase_up": "Obra Vial|etc.",
-            "comuna_corregimiento": "COMUNA XX",
-            "barrio_vereda": "Nombre del barrio",
-            "presupuesto_base": "123456.78",
-            "avance_obra": "100",
-            "ano": "2024",
-            "nombre_centro_gestor": "Secretaría de...",
-            "bpin": "2023760010180",
-            ...otros campos opcionales
-          }
-        }
-      ]
-    }
-    ```
-    
-    ### 🔧 Parámetros de configuración:
-    - **batch_size** (1-500): Número de documentos por lote (default: 500)
-    - **override_existing**: [DEPRECADO] Ya no se usa, siempre hace UPSERT
-    - **override_upid**: 
-      - `false` (default): Usa UPIDs del GeoJSON si existen, genera consecutivos si no
-      - `true`: Genera nuevos UPIDs consecutivos para todos
-    - **dry_run**: 
-      - `false` (default): Ejecuta la carga/actualización real
-      - `true`: Solo simula y muestra estadísticas
-    
-    ### 📊 Procesamiento automático:
-    - **UPID**: Genera `UNP-{número}` consecutivo si no existe
-    - **tipo_equipamiento**: Agrega automáticamente valor "Vías"
-    - **Geometría**: Detecta tipo (Point, LineString, Polygon, Multi*) y serializa como JSON string
-    - **Validación de coordenadas**: Identifica coordenadas válidas vs placeholders [0,0]
-    - **Conversión de tipos**: 
-      - `presupuesto_base` → float
-      - `avance_obra` → float (porcentaje)
-      - `cantidad` → int
-      - `bpin` → string limpia (sin prefijos '-')
-    - **Limpieza de datos**: Elimina valores null, NaN, vacíos
-    - **Timestamps**: Agrega `updated_at` y `loaded_at` automáticamente
-    
-    ### 📈 Respuesta incluye:
-    - **Estadísticas detalladas**:
-      - Total de features procesados
-      - Documentos **creados** (nuevos)
-      - Documentos **actualizados** (existentes modificados)
-      - Documentos omitidos (solo en dry-run)
-      - Errores encontrados
-    - **Detalles de errores**: Lista de features que fallaron con razón
-    - **Tasa de éxito**: Porcentaje de procesamiento exitoso
-    
-    ### 🎯 Casos de uso:
-    - **Migración inicial**: Cargar datos históricos desde sistemas SIG
-    - **Actualización masiva**: Importar nuevos proyectos desde herramientas externas
-    - **Sincronización**: Mantener datos actualizados desde fuentes GeoJSON
-    - **Backup/Restore**: Restaurar datos desde respaldos
-    - **Integración**: Importar desde QGIS, ArcGIS, u otras plataformas SIG
-    
-    ### ⚠️ Consideraciones:
-    - El archivo debe ser GeoJSON válido (RFC 7946)
-    - Máximo 500 documentos por batch (limitación de Firestore)
-    - Los UPIDs deben ser únicos en toda la colección
-    - Para archivos muy grandes (>1000 features), considerar múltiples cargas
-    - En modo dry-run, no se valida duplicidad de UPIDs
-    
-    ### 📝 Ejemplo de respuesta exitosa:
-    ```json
-    {
-      "success": true,
-      "message": "Carga completada: 646/646 features procesados",
-      "stats": {
-        "total_features": 646,
-        "processed": 646,
-        "created": 500,
-        "updated": 0,
-        "skipped": 146,
-        "errors": 0,
-        "error_details": []
-      },
-      "dry_run": false
-    }
-    ```
+    ## 🔵 GET | Calidad de Datos
+
+    **Propósito**: Generar y devolver métricas unificadas de calidad de datos
+    para `unidades_proyecto` e `intervenciones_unidades_proyecto`.
+
+    **Frecuencia**: La respuesta se calcula una vez al día y se almacena con
+    historial para analizar el progreso de calidad.
     """
-    
-    # Verificar disponibilidad de Firebase
     if not FIREBASE_AVAILABLE:
-        raise HTTPException(
-            status_code=503,
-            detail="Firebase no está disponible en este momento"
-        )
-    
-    # Validar tipo de archivo
-    if not geojson_file.filename.lower().endswith('.geojson') and not geojson_file.filename.lower().endswith('.json'):
-        raise HTTPException(
-            status_code=400,
-            detail="Solo se permiten archivos .geojson o .json"
-        )
-    
+        raise HTTPException(status_code=503, detail="Firebase not available")
+
     try:
-        # Leer contenido del archivo
-        print(f"📁 Leyendo archivo: {geojson_file.filename}")
-        geojson_content = await geojson_file.read()
-        
-        # Decodificar como UTF-8
-        try:
-            geojson_text = geojson_content.decode('utf-8')
-        except UnicodeDecodeError:
-            raise HTTPException(
-                status_code=400,
-                detail="El archivo debe estar codificado en UTF-8"
-            )
-        
-        # Parsear JSON
-        try:
-            geojson_data = json.loads(geojson_text)
-        except json.JSONDecodeError as e:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Error parseando JSON: {str(e)}"
-            )
-        
-        # Importar función de carga
-        try:
-            from api.scripts.unidades_proyecto_loader import load_geojson_to_firestore
-        except ImportError as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error importando módulo de carga: {str(e)}"
-            )
-        
-        # Ejecutar carga
-        print(f"🚀 Iniciando carga de GeoJSON...")
-        print(f"   - Archivo: {geojson_file.filename}")
-        print(f"   - Tamaño: {len(geojson_content)} bytes")
-        print(f"   - Batch size: {batch_size}")
-        print(f"   - Override existing: {override_existing}")
-        print(f"   - Override UPID: {override_upid}")
-        print(f"   - Dry run: {dry_run}")
-        
-        result = await load_geojson_to_firestore(
-            geojson_data=geojson_data,
-            batch_size=batch_size,
-            override_existing=override_existing,
-            override_upid=override_upid,
-            dry_run=dry_run
-        )
-        
-        if not result.get('success'):
-            raise HTTPException(
-                status_code=400,
-                detail=result.get('error', 'Error desconocido durante la carga')
-            )
-        
-        # Preparar respuesta
-        response_data = {
-            "success": True,
-            "message": result.get('message'),
-            "stats": result.get('stats', {}),
-            "dry_run": dry_run,
-            "file_info": {
-                "filename": geojson_file.filename,
-                "size_bytes": len(geojson_content),
-                "processed_at": datetime.now().isoformat()
-            }
-        }
-        
-        # Agregar advertencias si hay
-        if result.get('stats', {}).get('errors', 0) > 0:
-            response_data['warnings'] = {
-                "message": "Algunos features no pudieron ser procesados",
-                "error_count": result['stats']['errors'],
-                "error_details": result['stats'].get('error_details', [])[:10]  # Limitar a 10 primeros errores
-            }
-        
-        return create_utf8_response(response_data)
-        
-    except HTTPException:
-        raise
+        from api.scripts.unidades_proyecto_quality_metrics import get_unidades_proyecto_quality_metrics
+
+        result = await get_unidades_proyecto_quality_metrics()
+        return create_utf8_response(result)
+
     except Exception as e:
-        import traceback
-        print(f"❌ ERROR CRÍTICO: {str(e)}")
-        print(traceback.format_exc())
-        
         raise HTTPException(
             status_code=500,
-            detail=f"Error interno procesando archivo GeoJSON: {str(e)}"
+            detail=f"Error obteniendo métricas de calidad: {str(e)}"
         )
 
 
-@app.delete("/unidades-proyecto/delete-by-centro-gestor", tags=["Unidades de Proyecto"], summary="🔴 Eliminar por Centro Gestor")
-async def delete_unidades_by_centro_gestor(
-    nombre_centro_gestor: str = Query(..., description="Nombre del centro gestor cuyos proyectos serán eliminados"),
-    confirm: bool = Query(False, description="Debe ser true para confirmar la eliminación")
-):
-    """
-    ## 🔴 DELETE | Eliminar Unidades de Proyecto por Centro Gestor
-    
-    **Propósito**: Eliminar todos los documentos de la colección 'unidades_proyecto' que 
-    correspondan a un centro gestor específico.
-    
-    ### ⚠️ ADVERTENCIA
-    Esta operación es **IRREVERSIBLE**. Todos los documentos que coincidan con el filtro 
-    serán eliminados permanentemente de Firebase.
-    
-    ### 🔧 Parámetros:
-    - **nombre_centro_gestor** (requerido): Nombre exacto del centro gestor
-    - **confirm** (requerido): Debe ser `true` para ejecutar la eliminación
-    
-    ### 📊 Proceso:
-    1. Busca todos los documentos con el `nombre_centro_gestor` especificado
-    2. Cuenta cuántos documentos serán eliminados
-    3. Si `confirm=true`, elimina los documentos en batches de 500
-    4. Retorna estadísticas de la operación
-    
-    ### 📝 Ejemplo de uso:
-    ```
-    DELETE /unidades-proyecto/delete-by-centro-gestor?nombre_centro_gestor=Secretaría de Infraestructura&confirm=true
-    ```
-    
-    ### 📈 Respuesta exitosa:
-    ```json
-    {
-      "success": true,
-      "message": "15 documentos eliminados correctamente",
-      "stats": {
-        "deleted_count": 15,
-        "nombre_centro_gestor": "Secretaría de Infraestructura"
-      }
-    }
-    ```
-    
-    ### ⚠️ Seguridad:
-    - Requiere `confirm=true` para ejecutar
-    - Sin `confirm=true`, solo muestra cuántos documentos serían eliminados
-    """
-    
-    # Verificar disponibilidad de Firebase
-    if not FIREBASE_AVAILABLE:
-        raise HTTPException(
-            status_code=503,
-            detail="Firebase no está disponible en este momento"
-        )
-    
-    try:
-        from database.firebase_config import get_firestore_client
-        
-        db = get_firestore_client()
-        if db is None:
-            raise HTTPException(
-                status_code=503,
-                detail="No se pudo conectar a Firestore"
-            )
-        
-        collection_ref = db.collection('unidades_proyecto')
-        
-        # Buscar documentos que coincidan con el filtro
-        print(f"🔍 Buscando documentos con nombre_centro_gestor='{nombre_centro_gestor}'...")
-        query = collection_ref.where('nombre_centro_gestor', '==', nombre_centro_gestor)
-        docs = list(query.stream())
-        
-        total_docs = len(docs)
-        
-        if total_docs == 0:
-            return create_utf8_response({
-                "success": False,
-                "message": f"No se encontraron documentos con nombre_centro_gestor='{nombre_centro_gestor}'",
-                "stats": {
-                    "deleted_count": 0,
-                    "nombre_centro_gestor": nombre_centro_gestor
-                }
-            })
-        
-        # Si no hay confirmación, solo reportar cuántos se eliminarían
-        if not confirm:
-            return create_utf8_response({
-                "success": False,
-                "message": f"Se encontraron {total_docs} documentos. Use confirm=true para eliminarlos.",
-                "warning": "La eliminación no se ejecutó porque confirm=false",
-                "stats": {
-                    "found_count": total_docs,
-                    "nombre_centro_gestor": nombre_centro_gestor
-                }
-            })
-        
-        # Eliminar en batches de 500 (límite de Firestore)
-        print(f"🗑️  Eliminando {total_docs} documentos...")
-        batch_size = 500
-        deleted_count = 0
-        
-        for i in range(0, total_docs, batch_size):
-            batch = db.batch()
-            batch_docs = docs[i:i + batch_size]
-            
-            for doc in batch_docs:
-                batch.delete(doc.reference)
-            
-            batch.commit()
-            deleted_count += len(batch_docs)
-            print(f"   Eliminados {deleted_count}/{total_docs} documentos...")
-        
-        print(f"✅ Eliminación completada: {deleted_count} documentos")
-        
-        return create_utf8_response({
-            "success": True,
-            "message": f"{deleted_count} documentos eliminados correctamente",
-            "stats": {
-                "deleted_count": deleted_count,
-                "nombre_centro_gestor": nombre_centro_gestor
-            }
-        })
-        
-    except Exception as e:
-        import traceback
-        print(f"❌ ERROR: {str(e)}")
-        print(traceback.format_exc())
-        
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error eliminando documentos: {str(e)}"
-        )
-
-
-@app.delete("/unidades-proyecto/delete-by-tipo-equipamiento", tags=["Unidades de Proyecto"], summary="🔴 Eliminar por Tipo de Equipamiento")
-async def delete_unidades_by_tipo_equipamiento(
-    tipo_equipamiento: str = Query(..., description="Tipo de equipamiento cuyos proyectos serán eliminados"),
-    confirm: bool = Query(False, description="Debe ser true para confirmar la eliminación")
-):
-    """
-    ## 🔴 DELETE | Eliminar Unidades de Proyecto por Tipo de Equipamiento
-    
-    **Propósito**: Eliminar todos los documentos de la colección 'unidades_proyecto' que 
-    correspondan a un tipo de equipamiento específico.
-    
-    ### ⚠️ ADVERTENCIA
-    Esta operación es **IRREVERSIBLE**. Todos los documentos que coincidan con el filtro 
-    serán eliminados permanentemente de Firebase.
-    
-    ### 🔧 Parámetros:
-    - **tipo_equipamiento** (requerido): Tipo de equipamiento exacto (ej: "Vías", "Parques y zonas verdes")
-    - **confirm** (requerido): Debe ser `true` para ejecutar la eliminación
-    
-    ### 📊 Proceso:
-    1. Busca todos los documentos con el `tipo_equipamiento` especificado
-    2. Cuenta cuántos documentos serán eliminados
-    3. Si `confirm=true`, elimina los documentos en batches de 500
-    4. Retorna estadísticas de la operación
-    
-    ### 📝 Ejemplo de uso:
-    ```
-    DELETE /unidades-proyecto/delete-by-tipo-equipamiento?tipo_equipamiento=Vías&confirm=true
-    ```
-    
-    ### 📈 Respuesta exitosa:
-    ```json
-    {
-      "success": true,
-      "message": "369 documentos eliminados correctamente",
-      "stats": {
-        "deleted_count": 369,
-        "tipo_equipamiento": "Vías"
-      }
-    }
-    ```
-    
-    ### ⚠️ Seguridad:
-    - Requiere `confirm=true` para ejecutar
-    - Sin `confirm=true`, solo muestra cuántos documentos serían eliminados
-    """
-    
-    # Verificar disponibilidad de Firebase
-    if not FIREBASE_AVAILABLE:
-        raise HTTPException(
-            status_code=503,
-            detail="Firebase no está disponible en este momento"
-        )
-    
-    try:
-        from database.firebase_config import get_firestore_client
-        
-        db = get_firestore_client()
-        if db is None:
-            raise HTTPException(
-                status_code=503,
-                detail="No se pudo conectar a Firestore"
-            )
-        
-        collection_ref = db.collection('unidades_proyecto')
-        
-        # Buscar documentos que coincidan con el filtro
-        print(f"🔍 Buscando documentos con tipo_equipamiento='{tipo_equipamiento}'...")
-        query = collection_ref.where('tipo_equipamiento', '==', tipo_equipamiento)
-        docs = list(query.stream())
-        
-        total_docs = len(docs)
-        
-        if total_docs == 0:
-            return create_utf8_response({
-                "success": False,
-                "message": f"No se encontraron documentos con tipo_equipamiento='{tipo_equipamiento}'",
-                "stats": {
-                    "deleted_count": 0,
-                    "tipo_equipamiento": tipo_equipamiento
-                }
-            })
-        
-        # Si no hay confirmación, solo reportar cuántos se eliminarían
-        if not confirm:
-            return create_utf8_response({
-                "success": False,
-                "message": f"Se encontraron {total_docs} documentos. Use confirm=true para eliminarlos.",
-                "warning": "La eliminación no se ejecutó porque confirm=false",
-                "stats": {
-                    "found_count": total_docs,
-                    "tipo_equipamiento": tipo_equipamiento
-                }
-            })
-        
-        # Eliminar en batches de 500 (límite de Firestore)
-        print(f"🗑️  Eliminando {total_docs} documentos...")
-        batch_size = 500
-        deleted_count = 0
-        
-        for i in range(0, total_docs, batch_size):
-            batch = db.batch()
-            batch_docs = docs[i:i + batch_size]
-            
-            for doc in batch_docs:
-                batch.delete(doc.reference)
-            
-            batch.commit()
-            deleted_count += len(batch_docs)
-            print(f"   Eliminados {deleted_count}/{total_docs} documentos...")
-        
-        print(f"✅ Eliminación completada: {deleted_count} documentos")
-        
-        return create_utf8_response({
-            "success": True,
-            "message": f"{deleted_count} documentos eliminados correctamente",
-            "stats": {
-                "deleted_count": deleted_count,
-                "tipo_equipamiento": tipo_equipamiento
-            }
-        })
-        
-    except Exception as e:
-        import traceback
-        print(f"❌ ERROR: {str(e)}")
-        print(traceback.format_exc())
-        
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error eliminando documentos: {str(e)}"
-        )
 
 
 # ============================================================================
@@ -11156,14 +10707,6 @@ if AUTH_SYSTEM_AVAILABLE:
         print(f"⚠️ Warning: Could not include auth admin router: {e}")
 else:
     print("⚠️ Auth admin router not included - Auth system not available")
-
-# Incluir router de control de calidad de unidades de proyecto
-try:
-    from api.routers.quality_control import router as quality_control_router
-    app.include_router(quality_control_router)
-    print("✅ Quality control router included successfully")
-except Exception as e:
-    print(f"⚠️ Warning: Could not include quality control router: {e}")
 
 # NOTA: Router de Captura 360 ya fue incluido antes de las rutas dinámicas (ver línea ~2410)
 

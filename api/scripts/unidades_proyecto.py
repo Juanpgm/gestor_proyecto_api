@@ -1781,45 +1781,114 @@ async def get_intervenciones_filtradas(
         }
 
 
+def _clasificar_frente_activo(intervencion: Dict[str, Any], unidad_props: Dict[str, Any]) -> str:
+    tipos_equipamiento_excluidos = {
+        'Vivienda mejoramiento',
+        'Vivienda nueva',
+        'Adquisición de predios',
+        'Señalización vial'
+    }
+    tipos_intervencion_excluidos = {
+        'Mantenimiento',
+        'Estudios y diseños',
+        'Transferencia directa'
+    }
+    clases_validas = {'Obras equipamientos', 'Obra vial', 'Obra Vial', 'Espacio Público'}
+
+    clase_up = unidad_props.get('clase_up')
+    tipo_equipamiento = unidad_props.get('tipo_equipamiento')
+    tipo_intervencion = intervencion.get('tipo_intervencion')
+    estado = intervencion.get('estado')
+
+    condiciones_base = (
+        clase_up in clases_validas and
+        tipo_equipamiento not in tipos_equipamiento_excluidos and
+        tipo_intervencion not in tipos_intervencion_excluidos
+    )
+
+    if estado == 'En ejecución' and condiciones_base:
+        return 'Frente activo'
+    if estado == 'Suspendido' and condiciones_base:
+        return 'Inactivo'
+    return 'No aplica'
+
+
 async def get_frentes_activos() -> Dict[str, Any]:
     """
-    Obtener todas las unidades con frentes activos
+    Contar frentes activos usando datos reales de Firestore
     
     Returns:
-        GeoJSON con unidades que tienen intervenciones con frente activo
+        Dict con conteos de frentes activos
     """
     try:
-        result = await get_intervenciones_filtradas(frente_activo="Frente activo")
-        
-        if result.get("type") == "FeatureCollection":
-            total_frentes = sum(
-                len(feature["properties"]["intervenciones"])
-                for feature in result["features"]
-            )
-            
-            # Contar registros por tipo de intervención
-            intervenciones_count = {}
-            for feature in result["features"]:
-                intervenciones = feature["properties"].get("intervenciones", [])
-                for intervencion in intervenciones:
-                    tipo = intervencion.get("tipo_intervencion", "Sin tipo")
-                    intervenciones_count[tipo] = intervenciones_count.get(tipo, 0) + 1
-            
-            result["properties"]["total_frentes_activos"] = total_frentes
-            result["properties"]["total_unidades_con_frentes"] = len(result["features"])
-            result["properties"]["total_por_intervencion"] = intervenciones_count
-        
-        return result
+        db = get_firestore_client()
+        if db is None:
+            return {
+                "success": False,
+                "error": "No se pudo conectar a Firestore",
+                "count": 0,
+                "total_frentes_activos": 0,
+                "total_unidades_con_frentes": 0,
+                "total_por_intervencion": {}
+            }
+
+        unidades_por_upid = {}
+        for doc in db.collection('unidades_proyecto').stream():
+            doc_data = doc.to_dict()
+            props = doc_data.get('properties', {}) if isinstance(doc_data.get('properties'), dict) else {}
+            upid = doc_data.get('upid') or props.get('upid')
+            if not upid:
+                continue
+            unidades_por_upid[upid] = {
+                "clase_up": doc_data.get('clase_up') or doc_data.get('clase_obra') or props.get('clase_up') or props.get('clase_obra'),
+                "tipo_equipamiento": doc_data.get('tipo_equipamiento') or props.get('tipo_equipamiento')
+            }
+
+        total_frentes_activos = 0
+        total_por_intervencion = {}
+        unidades_con_frentes = set()
+
+        intervenciones_query = db.collection('intervenciones_unidades_proyecto')
+        for doc in intervenciones_query.stream():
+            doc_data = doc.to_dict()
+            upid = doc_data.get('upid') or doc_data.get('properties', {}).get('upid')
+            if not upid:
+                continue
+
+            unidad_props = unidades_por_upid.get(upid)
+            if not unidad_props:
+                continue
+
+            interv = {
+                "estado": doc_data.get("estado"),
+                "tipo_intervencion": doc_data.get("tipo_intervencion")
+            }
+
+            frente_activo = _clasificar_frente_activo(interv, unidad_props)
+            if frente_activo == "Frente activo":
+                total_frentes_activos += 1
+                unidades_con_frentes.add(upid)
+                tipo = interv.get("tipo_intervencion") or "Sin tipo"
+                total_por_intervencion[tipo] = total_por_intervencion.get(tipo, 0) + 1
+
+        return {
+            "success": True,
+            "count": total_frentes_activos,
+            "total_frentes_activos": total_frentes_activos,
+            "total_unidades_con_frentes": len(unidades_con_frentes),
+            "total_por_intervencion": total_por_intervencion
+        }
         
     except Exception as e:
         print(f"❌ ERROR en get_frentes_activos: {str(e)}")
         return {
-            "type": "FeatureCollection",
-            "features": [],
-            "properties": {"success": False, "error": str(e)}
+            "success": False,
+            "error": str(e),
+            "count": 0,
+            "total_frentes_activos": 0,
+            "total_unidades_con_frentes": 0,
+            "total_por_intervencion": {}
         }
-
-
 async def get_unidades_proyecto_summary() -> Dict[str, Any]:
     """
     Obtener resumen simple de las unidades de proyecto
@@ -1870,7 +1939,7 @@ async def get_unidades_proyecto_summary() -> Dict[str, Any]:
             "with_properties": with_properties,
             "unique_estados": len(estados),
             "unique_tipos_intervencion": len(tipos),
-            "sample_estados": list(estados)[:5],  # Mostrar solo los primeros 5
+            "sample_estados": list(estados)[:5],
             "sample_tipos": list(tipos)[:5]
         }
         
