@@ -90,7 +90,7 @@ def get_service_account_key() -> Optional[str]:
 
 # Pure functions for credential processing
 def decode_service_account(encoded_key: str) -> Dict[str, Any]:
-    """Decode base64 service account key"""
+    """Decode base64 service account key con soporte robusto para claves privadas"""
     try:
         # Clean and pad base64 string
         clean_key = encoded_key.strip().replace('\n', '').replace('\r', '').replace(' ', '')
@@ -100,16 +100,29 @@ def decode_service_account(encoded_key: str) -> Dict[str, Any]:
         
         # Decode and parse JSON
         decoded = base64.b64decode(clean_key).decode('utf-8')
-        return json.loads(decoded)
+        creds_data = json.loads(decoded)
+        
+        # FIX CRÍTICO: Asegurar que private_key tenga saltos de línea correctos
+        # Algunas codificaciones base64 escapan \n como \\n, lo que rompe el JWT
+        if 'private_key' in creds_data:
+            private_key = creds_data['private_key']
+            # Si tiene \\n literales (escaped), convertirlos a \n reales
+            if '\\n' in private_key and '\n' not in private_key:
+                private_key = private_key.replace('\\n', '\n')
+                creds_data['private_key'] = private_key
+                logger.info("✅ Fixed private_key line breaks in service account")
+        
+        return creds_data
     except Exception as e:
         raise ValueError(f"Invalid service account key: {e}")
 
 # Core Firebase initialization functions
-@lru_cache(maxsize=1)
 def initialize_firebase_app() -> firebase_admin.App:
     """Initialize Firebase app with appropriate credentials and robust Railway fallback"""
     try:
-        return firebase_admin.get_app()
+        app = firebase_admin.get_app()
+        logger.info("✅ Firebase app already initialized")
+        return app
     except ValueError:
         pass
     

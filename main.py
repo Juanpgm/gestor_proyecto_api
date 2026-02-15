@@ -953,10 +953,7 @@ async def read_root():
                 "/unidades-proyecto/geometry", 
                 "/unidades-proyecto/attributes",
                 "/unidades-proyecto/dashboard",
-                "/unidades-proyecto/filters",
-                "/unidades-proyecto/download-geojson",
-                "/unidades-proyecto/download-table",
-                "/unidades-proyecto/download-table_by_centro_gestor"
+                "/unidades-proyecto/filters"
             ],
             "gestion_contractual": [
                 "/contratos/init_contratos_seguimiento"
@@ -1890,305 +1887,270 @@ async def cargar_proyectos_presupuestales_json(
 
 
 # ============================================================================
-# ENDPOINTS DE UNIDADES DE PROYECTO
+# ENDPOINT DE UNIDADES DE PROYECTO
 # ============================================================================
 
-@app.get("/unidades-proyecto/geometry", tags=["Unidades de Proyecto"], summary="🔵 Geometrías Completas")
-@optional_rate_limit("60/minute")  # Máximo 60 requests por minuto (endpoint pesado)
-async def export_geometry_for_nextjs(
+@app.get("/unidades-proyecto", tags=["Unidades de Proyecto"], summary="🔵 Consultar Unidades de Proyecto")
+@optional_rate_limit("60/minute")
+async def consultar_unidades_proyecto(
     request: Request,
-    # Filtros server-side optimizados
+    # Filtros básicos
+    upid: Optional[str] = Query(None, description="ID específico de unidad (ej: UNP-1000)"),
     nombre_centro_gestor: Optional[str] = Query(None, description="Centro gestor responsable"),
     tipo_intervencion: Optional[str] = Query(None, description="Tipo de intervención"),
     estado: Optional[str] = Query(None, description="Estado del proyecto"),
-    upid: Optional[str] = Query(None, description="ID específico de unidad"),
     clase_up: Optional[str] = Query(None, description="Clase de la unidad de proyecto"),
-    tipo_equipamiento: Optional[str] = Query(None, description="Tipo de equipamiento del proyecto"),
-    
-    # Filtros geográficos adicionales
-    comuna_corregimiento: Optional[str] = Query(None, description="Comuna o corregimiento específico"),
-    barrio_vereda: Optional[str] = Query(None, description="Barrio o vereda específico"),
-    
-    # Filtros de visualización y análisis
-    presupuesto_base: Optional[float] = Query(None, ge=0, description="Presupuesto mínimo del proyecto"),
-    avance_obra: Optional[float] = Query(None, ge=0, le=100, description="Porcentaje mínimo de avance de obra"),
-    frente_activo: Optional[str] = Query(None, description="Frente activo del proyecto"),
-    
-    # Configuración geográfica
-    include_bbox: Optional[bool] = Query(False, description="Calcular y incluir bounding box"),
-    limit: Optional[int] = Query(None, ge=1, le=10000, description="Límite de registros"),
-    
-    # Parámetros de mantenimiento y debug
-    force_refresh: Optional[str] = Query(None, description="Forzar limpieza de cache (debug)"),
-    debug: Optional[bool] = Query(False, description="Modo debug con información adicional")
-):
-    """
-    ## 🔵 GET | 🗺️ Datos Geoespaciales | Datos Geoespaciales Completos
-    
-    **Propósito**: Retorna TODOS los registros de proyectos en formato GeoJSON con soporte completo para:
-    - LineString, MultiLineString, Polygon, MultiPolygon
-    - GeometryCollection (geometrías unificadas)
-    - Todas las propiedades del proyecto (nombre_up, centro_gestor, etc.)
-    
-    ### Geometrías Soportadas
-    
-    **Simples**: Point, LineString, Polygon
-    **Multi**: MultiPoint, MultiLineString, MultiPolygon  
-    **Complejas**: GeometryCollection (resultado de unificación de features)
-    
-    ### Parámetros de Filtrado
-    
-    | Filtro | Descripción |
-    |--------|-------------|
-    | upid | ID específico de unidad (ej: UNP-1000) |
-    | nombre_centro_gestor | Centro gestor responsable |
-    | tipo_equipamiento | Tipo de equipamiento (ej: Vías) |
-    | comuna_corregimiento | Comuna o corregimiento |
-    | limit | Límite de resultados (1-10000) |
-    | debug | Incluir información de depuración |
-    """
-    # Verificación robusta de Firebase
-    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
-        return create_utf8_response({
-            "type": "FeatureCollection",
-            "features": [],
-            "properties": {
-                "success": False,
-                "error": "Firebase not available",
-                "count": 0
-            }
-        }, status_code=503)
-    
-    try:
-        # Construir filtros optimizados para geometrías
-        filters = {}
-        
-        if nombre_centro_gestor:
-            filters["nombre_centro_gestor"] = nombre_centro_gestor
-        if tipo_intervencion:
-            filters["tipo_intervencion"] = tipo_intervencion
-        if estado:
-            filters["estado"] = estado
-        if upid:
-            filters["upid"] = upid
-        if clase_up:
-            filters["clase_up"] = clase_up
-        if tipo_equipamiento:
-            filters["tipo_equipamiento"] = tipo_equipamiento
-        if comuna_corregimiento:
-            filters["comuna_corregimiento"] = comuna_corregimiento
-        if barrio_vereda:
-            filters["barrio_vereda"] = barrio_vereda
-        if presupuesto_base is not None:
-            filters["presupuesto_base"] = presupuesto_base
-        if avance_obra is not None:
-            filters["avance_obra"] = avance_obra
-        if frente_activo:
-            filters["frente_activo"] = frente_activo
-        if limit:
-            filters["limit"] = limit
-        if include_bbox:
-            filters["include_bbox"] = include_bbox
-        if force_refresh:
-            filters["force_refresh"] = force_refresh
-        
-        result = await get_unidades_proyecto_geometry(filters)
-        
-        # Agregar información de debug si se solicita
-        if debug and result.get("type") == "FeatureCollection":
-            result["properties"]["debug"] = {
-                "filters_applied": filters,
-                "server_version": "2.0-geometry-collection-support",
-                "timestamp": datetime.utcnow().isoformat()
-            }
-        
-        # Manejar el formato correcto de respuesta
-        if result.get("type") == "FeatureCollection":
-            # Respuesta GeoJSON exitosa - retornar directamente
-            return create_utf8_response(result)
-        elif result.get("success") is False:
-            # Respuesta de error
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error obteniendo geometrías: {result.get('error', 'Error desconocido')}"
-            )
-        else:
-            # Formato inesperado
-            raise HTTPException(
-                status_code=500,
-                detail="Formato de respuesta inesperado del servicio de geometrías"
-            )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error procesando geometrías: {str(e)}"
-        )
-
-@app.get("/unidades-proyecto/attributes", tags=["Unidades de Proyecto"], summary="🔵 GET | 📊 Datos Tabulares | Atributos Tabulares")
-@optional_rate_limit("60/minute")  # Máximo 60 requests por minuto
-async def export_attributes_for_nextjs(
-    request: Request,
-    # Filtros básicos originales
-    nombre_centro_gestor: Optional[str] = Query(None, description="Centro gestor responsable"),
-    tipo_intervencion: Optional[str] = Query(None, description="Tipo de intervención"),
-    estado: Optional[str] = Query(None, description="Estado del proyecto"),
-    upid: Optional[str] = Query(None, description="ID específico de unidad"),
-    clase_obra: Optional[str] = Query(None, description="Clase de obra del proyecto"),
-    tipo_equipamiento: Optional[str] = Query(None, description="Tipo de equipamiento del proyecto"),
-    nombre_up: Optional[str] = Query(None, description="Búsqueda parcial en nombre (contiene texto)"),
+    tipo_equipamiento: Optional[str] = Query(None, description="Tipo de equipamiento"),
     comuna_corregimiento: Optional[str] = Query(None, description="Comuna o corregimiento"),
     barrio_vereda: Optional[str] = Query(None, description="Barrio o vereda"),
-    direccion: Optional[str] = Query(None, description="Búsqueda parcial en dirección (contiene texto)"),
-    referencia_contrato: Optional[str] = Query(None, description="Referencia del contrato"),
-    referencia_proceso: Optional[str] = Query(None, description="Referencia del proceso"),
-    frente_activo: Optional[str] = Query(None, description="Frente activo del proyecto"),
+    frente_activo: Optional[str] = Query(None, description="Frente activo"),
+    fuente_financiacion: Optional[str] = Query(None, description="Fuente de financiación"),
+    ano: Optional[int] = Query(None, description="Año de ejecución"),
     
     # Paginación
-    limit: Optional[int] = Query(None, ge=1, le=1000, description="Máximo de resultados"),
-    offset: Optional[int] = Query(None, ge=0, description="Saltar registros para paginación")
+    limit: Optional[int] = Query(None, ge=1, le=10000, description="Límite de registros"),
+    offset: Optional[int] = Query(None, ge=0, description="Offset para paginación"),
 ):
     """
-    ## 🔵 GET | 📊 Datos Tabulares | Atributos Tabulares
+    ## 🔵 Consultar Unidades de Proyecto
     
-    **Propósito**: Retorna atributos completos de proyectos excluyendo datos geográficos.
+    **Propósito**: Acceso directo a la colección `unidades_proyecto` en Firebase.
     
-    ### Optimización de Datos
+    ### Respuesta
     
-    **Campos incluidos**: Todos los atributos del proyecto (nombres, estados, referencias, etc.)
-    **Campos excluidos**: coordinates, geometry, linestring, polygon, lat, lng y similares
-    **Paginación**: Sistema limit/offset para manejo eficiente de grandes volúmenes
+    Retorna documentos de la colección con todos sus campos:
     
-    ### Estrategia de Filtrado
+    ```json
+    {
+      "success": true,
+      "data": [
+        {
+          "upid": "UNP-1000",
+          "nombre_up": "Nombre del proyecto",
+          "estado": "En ejecución",
+          "tipo_equipamiento": "Vías",
+          "clase_up": "Construcción",
+          "nombre_centro_gestor": "DAGRD",
+          "comuna_corregimiento": "Comuna 1",
+          "barrio_vereda": "El Centro",
+          "ano": 2024,
+          ...
+        }
+      ],
+      "count": 150,
+      "collection": "unidades_proyecto"
+    }
+    ```
     
-    **Sin filtros**: Dataset completo de atributos  
-    **Con filtros**: Optimización server-side + filtros client-side específicos
+    ### Filtros Disponibles
     
-    **Server-side**: upid, estado, tipo_intervencion, nombre_centro_gestor  
-    **Client-side**: search, nombre_up, direccion, ubicación geográfica
+    - `upid` - Filtrar por ID específico
+    - `nombre_centro_gestor` - Filtrar por centro gestor
+    - `estado` - Filtrar por estado del proyecto
+    - `tipo_intervencion` - Filtrar por tipo de intervención
+    - `clase_up` - Filtrar por clase de unidad
+    - `tipo_equipamiento` - Filtrar por tipo de equipamiento
+    - `comuna_corregimiento` - Filtrar por ubicación
+    - `barrio_vereda` - Filtrar por barrio
+    - `frente_activo` - Filtrar por frente activo
+    - `fuente_financiacion` - Filtrar por fuente de financiación
+    - `ano` - Filtrar por año
     
-    ### Parámetros
+    ### Paginación
     
-    | Filtro | Descripción |
-    |--------|-------------|
-    | nombre_centro_gestor | Centro gestor responsable |
-    | tipo_intervencion | Tipo de intervención |
-    | estado | Estado del proyecto |
-    | upid | ID específico de unidad |
-    | clase_up | Clase de la unidad de proyecto |
-    | tipo_equipamiento | Tipo de equipamiento del proyecto |
-    | nombre_up | Búsqueda parcial en nombre |
-    | comuna_corregimiento | Comuna o corregimiento |
-    | barrio_vereda | Barrio o vereda |
-    | direccion | Búsqueda parcial en dirección |
-    | referencia_contrato | Referencia del contrato |
-    | referencia_proceso | Referencia del proceso |
-    | **limit** | Máximo resultados (1-1000) |
-    | **offset** | Registros a omitir |
+    Use `limit` y `offset`:
+    ```bash
+    # Primera página (50 resultados)
+    GET /unidades-proyecto?limit=50&offset=0
     
-    ### Aplicaciones
+    # Segunda página
+    GET /unidades-proyecto?limit=50&offset=50
+    ```
     
-    - Grillas de datos y tablas administrativas
-    - Reportes tabulares con filtros múltiples
-    - Exportación a formatos estructurados
-    - Interfaces de búsqueda avanzada
+    ### Ejemplos
+    
+    ```bash
+    # Todos los proyectos (limitado a 1000)
+    GET /unidades-proyecto
+    
+    # Proyectos por centro gestor
+    GET /unidades-proyecto?nombre_centro_gestor=DAGRD
+    
+    # Proyectos en ejecución
+    GET /unidades-proyecto?estado=En ejecución
+    
+    # Proyectos por tipo de equipamiento
+    GET /unidades-proyecto?tipo_equipamiento=Vías&limit=100
+    
+    # Unidad específica por ID
+    GET /unidades-proyecto?upid=UNP-1000
+    
+    ```
+    
+    ### Optimizaciones de Rendimiento
+    
+    - 🚀 **Streaming eficiente** de documentos Firestore
+    - ⚡ **Procesamiento batch** optimizado
+    - 📦 **Compresión automática** de respuestas
+    - 🎯 **Queries con índices** Firestore
+    - 🔄 **Retry automático** en caso de errores transitorios
+    
+    **Índices Firestore recomendados:**
+    ```
+    Collection: unidades_proyecto
+    Fields: nombre_centro_gestor, estado, ano (Ascending)
+    ```
     """
-    # Verificación robusta de Firebase con reintentos
-    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
-        # Intentar reconfigurar Firebase como último recurso
-        try:
-            print("⚠️ Attempting Firebase reconfiguration...")
-            firebase_initialized, status = configure_firebase()
-            if firebase_initialized:
-                print("✅ Firebase reconfiguration successful")
-            else:
-                print(f"❌ Firebase reconfiguration failed: {status.get('error', 'Unknown error')}")
-                return {
-                    "success": False,
-                    "error": "Firebase not available - check Railway environment variables",
-                    "data": [],
-                    "count": 0,
-                    "type": "attributes",
-                    "help": "Verify FIREBASE_SERVICE_ACCOUNT_KEY or GOOGLE_APPLICATION_CREDENTIALS_JSON",
-                    "railway_fix": "Run generate_railway_fallback.py to create Service Account fallback"
-                }
-        except Exception as e:
-            return {
-                "success": False,
-                "error": f"Firebase configuration failed: {str(e)}",
-                "data": [],
-                "count": 0,
-                "type": "attributes",
-                "help": "Check Railway environment variables or use Service Account fallback"
-            }
+    import time
+    import asyncio
+    
+    start_time = time.time()
+    
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(
+            status_code=503, 
+            detail="Firebase no disponible - verifica las credenciales"
+        )
     
     try:
-        # Construir filtros
-        filters = {}
+        from database.firebase_config import get_firestore_client
+        import google.cloud.firestore
         
-        if nombre_centro_gestor:
-            filters["nombre_centro_gestor"] = nombre_centro_gestor
-        if tipo_intervencion:
-            filters["tipo_intervencion"] = tipo_intervencion
-        if estado:
-            filters["estado"] = estado
-        if upid:
-            filters["upid"] = upid
-        if clase_obra:
-            filters["clase_obra"] = clase_obra
-        if tipo_equipamiento:
-            filters["tipo_equipamiento"] = tipo_equipamiento
-        if nombre_up:
-            filters["nombre_up"] = nombre_up
-        if comuna_corregimiento:
-            filters["comuna_corregimiento"] = comuna_corregimiento
-        if barrio_vereda:
-            filters["barrio_vereda"] = barrio_vereda
-        if direccion:
-            filters["direccion"] = direccion
-        if referencia_contrato:
-            filters["referencia_contrato"] = referencia_contrato
-        if referencia_proceso:
-            filters["referencia_proceso"] = referencia_proceso
-        if frente_activo:
-            filters["frente_activo"] = frente_activo
+        logger.info(f"🔍 Consulta unidades_proyecto iniciada")
         
-        result = await get_unidades_proyecto_attributes(
-            filters=filters,
-            limit=limit,
-            offset=offset
-        )
-        
-        if not result["success"]:
+        # Obtener cliente Firestore
+        db = get_firestore_client()
+        if db is None:
             raise HTTPException(
-                status_code=500,
-                detail=f"Error obteniendo atributos: {result.get('error', 'Error desconocido')}"
+                status_code=503,
+                detail="No se pudo conectar a Firestore"
             )
         
+        logger.info(f"✅ Cliente Firestore obtenido")
+        
+            # Construir query optimizada
+        logger.info(f"📊 Construyendo query para unidades_proyecto...")
+        query = db.collection('unidades_proyecto')
+        
+        # Aplicar filtros
+        filters_applied = 0
+        active_filters = {}
+        
+        if upid:
+            query = query.where('upid', '==', upid)
+            filters_applied += 1
+            active_filters['upid'] = upid
+        if nombre_centro_gestor:
+            query = query.where('nombre_centro_gestor', '==', nombre_centro_gestor)
+            filters_applied += 1
+            active_filters['nombre_centro_gestor'] = nombre_centro_gestor
+        if estado:
+            query = query.where('estado', '==', estado)
+            filters_applied += 1
+            active_filters['estado'] = estado
+        if tipo_intervencion:
+            query = query.where('tipo_intervencion', '==', tipo_intervencion)
+            filters_applied += 1
+            active_filters['tipo_intervencion'] = tipo_intervencion
+        if clase_up:
+            query = query.where('clase_up', '==', clase_up)
+            filters_applied += 1
+            active_filters['clase_up'] = clase_up
+        if tipo_equipamiento:
+            query = query.where('tipo_equipamiento', '==', tipo_equipamiento)
+            filters_applied += 1
+            active_filters['tipo_equipamiento'] = tipo_equipamiento
+        if comuna_corregimiento:
+            query = query.where('comuna_corregimiento', '==', comuna_corregimiento)
+            filters_applied += 1
+            active_filters['comuna_corregimiento'] = comuna_corregimiento
+        if barrio_vereda:
+            query = query.where('barrio_vereda', '==', barrio_vereda)
+            filters_applied += 1
+            active_filters['barrio_vereda'] = barrio_vereda
+        if frente_activo:
+            query = query.where('frente_activo', '==', frente_activo)
+            filters_applied += 1
+            active_filters['frente_activo'] = frente_activo
+        if fuente_financiacion:
+            query = query.where('fuente_financiacion', '==', fuente_financiacion)
+            filters_applied += 1
+            active_filters['fuente_financiacion'] = fuente_financiacion
+        if ano:
+            query = query.where('ano', '==', ano)
+            filters_applied += 1
+            active_filters['ano'] = ano
+        
+        logger.info(f"🔍 Filtros aplicados: {filters_applied}")
+        
+        # Aplicar límite (max 10000, default 100 para velocidad)
+        query_limit = min(limit or 100, 10000)
+        query = query.limit(query_limit)
+        
+        # Aplicar offset si existe
+        if offset:
+            query = query.offset(offset)
+        
+        logger.info(f"⚡ Ejecutando query (limit={query_limit}, offset={offset or 0})...")
+        
+        # Ejecutar query
+        docs = query.stream()
+        
+        # Procesar resultados de forma eficiente
+        data = []
+        doc_count = 0
+        
+        for doc in docs:
+            doc_count += 1
+            doc_dict = doc.to_dict()
+            
+            # Optimización: Convertir timestamps solo si existen
+            if FIREBASE_TYPES_AVAILABLE:
+                for key, value in doc_dict.items():
+                    if isinstance(value, DatetimeWithNanoseconds):
+                        doc_dict[key] = value.isoformat()
+            
+            data.append(doc_dict)
+            
+            # Log progreso cada 50 docs
+            if doc_count % 50 == 0:
+                logger.info(f"📦 Procesados {doc_count} documentos...")
+        
+        logger.info(f"✅ Query completada: {doc_count} documentos obtenidos")
+        
+        # Calcular tiempo de procesamiento
+        elapsed_time = time.time() - start_time
+        
+        # Respuesta optimizada
         response_data = {
             "success": True,
-            "data": result["data"],
-            "count": result["count"],
-            "total_before_limit": result.get("total_before_limit"),
-            "type": "attributes",
-            "collection": "unidades-proyecto",
-            "filters_applied": result.get("filters_applied", {}),
-            "pagination": result.get("pagination", {}),
-            "timestamp": datetime.now().isoformat(),
-            "last_updated": "2025-10-02T00:00:00Z",  # Endpoint creation/update date
-            "message": result.get("message", "Atributos obtenidos exitosamente")
+            "data": data,
+            "count": len(data),
+            "collection": "unidades_proyecto",
+            "filters": {
+                "applied": filters_applied,
+                "active": active_filters,
+                "limit": query_limit,
+                "offset": offset or 0
+            },
+            "performance": {
+                "query_time_seconds": round(elapsed_time, 3),
+                "docs_per_second": round(len(data) / elapsed_time, 2) if elapsed_time > 0 else 0
+            },
+            "timestamp": datetime.now().isoformat()
         }
+        
+        logger.info(f"🎯 Respuesta generada en {elapsed_time:.3f}s - {len(data)} documentos")
         
         return create_utf8_response(response_data)
         
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"❌ Error consultando unidades_proyecto: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail=f"Error procesando atributos: {str(e)}"
+            detail=f"Error consultando colección: {str(e)}"
         )
 
 # ============================================================================
@@ -2868,295 +2830,34 @@ async def delete_reporte(request: Request, reporte_id: str = Query(..., descript
             detail=f"Error eliminando reporte: {str(e)}"
         )
 
-# ============================================================================
-# ENDPOINT PARA OPCIONES DE FILTROS
-# ============================================================================
-
-@app.get("/unidades-proyecto/filters", tags=["Unidades de Proyecto"], response_class=JSONResponse)
-async def get_filters_endpoint(
-    field: Optional[str] = Query(
-        None, 
-        description="Campo específico para obtener valores únicos (opcional)",
-        enum=[
-            "estado", "tipo_intervencion", "nombre_centro_gestor", 
-            "comuna_corregimiento", "barrio_vereda", "fuente_financiacion", 
-            "ano", "clase_up", "frente_activo"
-        ]
-    ),
-    limit: Optional[int] = Query(
-        None, 
-        description="Límite de valores únicos a retornar (opcional)", 
-        ge=1,
-        le=100
-    )
-):
-    """
-    **Obtener valores únicos para filtros de Unidades de Proyecto**
-    
-    Endpoint optimizado para poblar controles de filtrado en dashboards y interfaces.
-    Diseñado específicamente para aplicaciones NextJS con carga eficiente de opciones.
-    
-    **Características principales:**
-    - **Filtrado inteligente**: Especifica un campo para cargar solo sus valores
-    - **Control de volumen**: Aplica límites para evitar sobrecarga de datos  
-    - **Optimización server-side**: Usa queries eficientes de Firestore
-    - **Cache-friendly**: Estructura optimizada para sistemas de caché
-    
-    **Casos de uso:**
-    - Poblar dropdowns y selectores en dashboards
-    - Cargar opciones de filtrado dinámicamente
-    - Implementar autocomplete y búsqueda predictiva
-    - Validar valores disponibles antes de filtrar
-    
-    **Campos disponibles:**
-    - `estado`: Estados de proyecto (activo, completado, etc.)
-    - `tipo_intervencion`: Tipos de intervención urbana
-    - `nombre_centro_gestor`: Centros gestores responsables
-    - `comuna_corregimiento`: Ubicaciones por comuna/corregimiento
-    - `barrio_vereda`: Ubicaciones por barrio/vereda
-    - `fuente_financiacion`: Fuentes de financiación del proyecto
-    - `ano`: Años de ejecución disponibles
-    - `departamento`: Departamentos con proyectos
-    - `municipio`: Municipios con proyectos
-    
-    **Optimizaciones aplicadas:**
-    - Sampling inteligente de documentos para reducir latencia
-    - Filtros server-side en Firestore para mejor rendimiento
-    - Límites configurables para controlar payload
-    - Estructura de respuesta optimizada para frontend
-    """
-    # Verificación robusta de Firebase con reintentos
-    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
-        # Intentar reconfigurar Firebase como último recurso
-        try:
-            print("⚠️ Attempting Firebase reconfiguration...")
-            firebase_initialized, status = configure_firebase()
-            if firebase_initialized:
-                print("✅ Firebase reconfiguration successful")
-            else:
-                print(f"❌ Firebase reconfiguration failed: {status.get('error', 'Unknown error')}")
-                return {
-                    "success": False,
-                    "error": "Firebase not available - check Railway environment variables",
-                    "filters": {},
-                    "type": "filters",
-                    "help": "Verify FIREBASE_SERVICE_ACCOUNT_KEY or GOOGLE_APPLICATION_CREDENTIALS_JSON",
-                    "railway_fix": "Run generate_railway_fallback.py to create Service Account fallback"
-                }
-        except Exception as e:
-            return {
-                "success": False,
-                "error": f"Firebase configuration failed: {str(e)}",
-                "filters": {},
-                "type": "filters",
-                "help": "Check Railway environment variables or use Service Account fallback"
-            }
-    
-    # Intentar obtener del cache (TTL 5 minutos)
-    cache_key = get_cache_key(f"unidades_filters_{field}_{limit}")
-    cached_data, is_valid = get_from_cache(cache_key, max_age_seconds=300)
-    if is_valid:
-        return cached_data
-    
-    try:
-        result = await get_filter_options(field=field, limit=limit)
-        
-        if not result.get("success", False):
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error obteniendo filtros: {result.get('error', 'Error desconocido')}"
-            )
-        
-        response_data = {
-            "success": True,
-            "filters": result["filters"],
-            "metadata": {
-                "total_fields": result.get("total_fields", 0),
-                "field_requested": result.get("field_requested"),
-                "limit_applied": result.get("limit_applied"),
-                "optimized_query": True,
-                "cache_recommended": True,
-                "utf8_enabled": True,
-                "spanish_support": True
-            },
-            "type": "filters",
-            "collection": "unidades-proyecto", 
-            "timestamp": datetime.now().isoformat(),
-            "last_updated": "2025-10-02T00:00:00Z",  # Endpoint creation/update date
-            "message": f"Filtros obtenidos exitosamente"
-        }
-        
-        # Guardar en cache
-        set_in_cache(cache_key, response_data)
-        
-        return create_utf8_response(response_data)
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error procesando filtros: {str(e)}"
-        )
-
-# ============================================================================
-# INCLUIR ROUTERS ESPECÍFICOS ANTES DE RUTAS DINÁMICAS
-# ============================================================================
-
-# Incluir router de Artefacto de Captura #360 ANTES de rutas dinámicas
-try:
-    from api.routers.captura_360_router import router as captura_360_router
-    app.include_router(captura_360_router)
-    print("✅ Captura 360 router included successfully (before dynamic routes)")
-except Exception as e:
-    print(f"⚠️ Warning: Could not include captura 360 router: {e}")
-
-# ============================================================================
-# NUEVOS ENDPOINTS PARA ESTRUCTURA CON INTERVENCIONES
-# ============================================================================
-
-@app.get("/unidades-proyecto/{upid}", tags=["Unidades de Proyecto"], summary="🔵 GET | Unidad Específica con Intervenciones")
-@optional_rate_limit("60/minute")
-async def get_unidad_by_upid(
-    upid: str = Path(..., description="ID único de la unidad de proyecto (ej: UNP-1978)")
-):
-    """
-    ## 🔵 GET | Obtener Unidad de Proyecto Específica
-    
-    **Propósito**: Retorna una unidad de proyecto específica con todas sus intervenciones.
-    
-    ### Estructura de Respuesta
-    
-    Retorna un GeoJSON Feature con:
-    - **geometry**: Geometría de la unidad (Point, LineString, etc.)
-    - **properties.intervenciones**: Array de intervenciones en esta unidad
-    - **properties.n_intervenciones**: Conteo de intervenciones
-    
-    ### Ejemplo de Uso
-    
-    ```javascript
-    // Obtener unidad UNP-1978
-    const response = await fetch('/unidades-proyecto/UNP-1978');
-    const unidad = await response.json();
-    
-    console.log(unidad.properties.nombre_up);
-    console.log(unidad.properties.n_intervenciones); // 1
-    console.log(unidad.properties.intervenciones[0].estado); // "Terminado"
-    ```
-    
-    ### Campos Retornados
-    
-    **Unidad:**
-    - upid, nombre_up, direccion, barrio_vereda, comuna_corregimiento
-    - tipo_equipamiento, clase_up, nombre_centro_gestor
-    
-    **Intervenciones (array):**
-    - intervencion_id, ano, estado, tipo_intervencion
-    - presupuesto_base, avance_obra, frente_activo
-    - fecha_inicio, fecha_fin, referencias
-    """
-    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Firebase not available")
-    
-    try:
-        from api.scripts.unidades_proyecto import get_unidades_proyecto_geometry
-        
-        result = await get_unidades_proyecto_geometry({"upid": upid})
-        
-        if result.get("type") == "FeatureCollection":
-            features = result["features"]
-            if features:
-                return create_utf8_response(features[0])
-        
-        raise HTTPException(status_code=404, detail=f"Unidad {upid} no encontrada")
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error obteniendo unidad: {str(e)}"
-        )
-
-
-@app.get("/intervenciones/{intervencion_id}", tags=["Unidades de Proyecto"], summary="🔵 GET | Intervención Específica")
-@optional_rate_limit("60/minute")
-async def get_intervencion_by_id_endpoint(
-    intervencion_id: str = Path(..., description="ID de la intervención (ej: UNP-1978-0)")
-):
-    """
-    ## 🔵 GET | Obtener Intervención Específica
-    
-    **Propósito**: Buscar una intervención específica dentro de todas las unidades.
-    
-    ### Estructura de Respuesta
-    
-    ```json
-    {
-      "unidad": {
-        "upid": "UNP-1978",
-        "nombre_up": "Carrera 118 Entre Calle 15 Y 16",
-        "direccion": "...",
-        "geometry": {...}
-      },
-      "intervencion": {
-        "intervencion_id": "UNP-1978-0",
-        "ano": 2024,
-        "estado": "Terminado",
-        "presupuesto_base": 55041504.84,
-        "avance_obra": 100.0
-      }
-    }
-    ```
-    
-    ### Ejemplo de Uso
-    
-    ```javascript
-    const response = await fetch('/intervenciones/UNP-1978-0');
-    const data = await response.json();
-    
-    console.log(data.unidad.nombre_up);
-    console.log(data.intervencion.estado);
-    ```
-    """
-    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Firebase not available")
-    
-    try:
-        from api.scripts.unidades_proyecto import get_intervencion_by_id
-        
-        result = await get_intervencion_by_id(intervencion_id)
-        
-        if not result:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Intervención {intervencion_id} no encontrada"
-            )
-        
-        return create_utf8_response(result)
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error obteniendo intervención: {str(e)}"
-        )
-
 
 @app.get("/intervenciones", tags=["Unidades de Proyecto"], summary="🔵 GET | Filtrar Intervenciones")
 @optional_rate_limit("60/minute")
 async def get_intervenciones_filtradas_endpoint(
+    avance_obra: Optional[float] = Query(None, description="Avance de obra"),
+    bpin: Optional[int] = Query(None, description="BPIN"),
+    cantidad: Optional[int] = Query(None, description="Cantidad"),
+    clase_up: Optional[str] = Query(None, description="Clase UP"),
     estado: Optional[str] = Query(None, description="Estado de la intervención"),
-    tipo_intervencion: Optional[str] = Query(None, description="Tipo de intervención"),
-    ano: Optional[int] = Query(None, description="Año de la intervención"),
-    frente_activo: Optional[str] = Query(None, description="Estado del frente activo")
+    fecha_fin: Optional[str] = Query(None, description="Fecha fin (string)"),
+    fecha_inicio: Optional[str] = Query(None, description="Fecha inicio (string)"),
+    fuente_financiacion: Optional[str] = Query(None, description="Fuente de financiacion"),
+    identificador: Optional[str] = Query(None, description="Identificador"),
+    intervencion_id: Optional[str] = Query(None, description="ID de la intervencion"),
+    nombre_centro_gestor: Optional[str] = Query(None, description="Nombre centro gestor"),
+    presupuesto_base: Optional[float] = Query(None, description="Presupuesto base"),
+    referencia_contrato: Optional[str] = Query(None, description="Referencia contrato"),
+    referencia_proceso: Optional[str] = Query(None, description="Referencia proceso"),
+    tipo_intervencion: Optional[str] = Query(None, description="Tipo de intervencion"),
+    unidad: Optional[str] = Query(None, description="Unidad"),
+    upid: Optional[str] = Query(None, description="UPID"),
+    url_proceso: Optional[str] = Query(None, description="URL proceso")
 ):
     """
     ## 🔵 GET | Filtrar Intervenciones
     
-    **Propósito**: Filtrar intervenciones dentro de todas las unidades y retornar
-    solo las unidades que tienen intervenciones que cumplen los criterios.
+    **Propósito**: Filtrar intervenciones desde la colección
+    `intervenciones_unidades_proyecto` y retornar solo las unidades que cumplen.
     
     ### Filtros Disponibles
     
@@ -3167,10 +2868,7 @@ async def get_intervenciones_filtradas_endpoint(
     
     ### Estructura de Respuesta
     
-    GeoJSON FeatureCollection donde:
-    - Cada feature es una unidad que tiene intervenciones que cumplen los filtros
-    - `properties.intervenciones` contiene SOLO las intervenciones filtradas
-    - `properties.n_intervenciones` es el conteo de intervenciones filtradas
+    Respuesta plana con lista de intervenciones.
     
     ### Ejemplo de Uso
     
@@ -3179,8 +2877,8 @@ async def get_intervenciones_filtradas_endpoint(
     const response = await fetch('/intervenciones?estado=En ejecución&ano=2024');
     const data = await response.json();
     
-    console.log(data.properties.total_intervenciones); // Total de intervenciones encontradas
-    console.log(data.features.length); // Unidades con intervenciones que cumplen
+    console.log(data.count); // Total de intervenciones encontradas
+    console.log(data.data.length); // Total de registros
     ```
     
     ### Casos de Uso
@@ -3190,20 +2888,126 @@ async def get_intervenciones_filtradas_endpoint(
     - Buscar frentes activos específicos
     - Combinar múltiples filtros para búsquedas precisas
     """
-    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+    if not FIREBASE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Firebase not available")
     
     try:
-        from api.scripts.unidades_proyecto import get_intervenciones_filtradas
-        
-        result = await get_intervenciones_filtradas(
-            estado=estado,
-            tipo_intervencion=tipo_intervencion,
-            ano=ano,
-            frente_activo=frente_activo
-        )
-        
-        return create_utf8_response(result)
+        db = get_firestore_client()
+        if db is None:
+            raise HTTPException(status_code=503, detail="No se pudo conectar a Firestore")
+        query = db.collection('intervenciones_unidades_proyecto')
+        if avance_obra is not None:
+            query = query.where('avance_obra', '==', avance_obra)
+        if bpin is not None:
+            query = query.where('bpin', '==', bpin)
+        if cantidad is not None:
+            query = query.where('cantidad', '==', cantidad)
+        if clase_up:
+            query = query.where('clase_up', '==', clase_up)
+        if estado:
+            query = query.where('estado', '==', estado)
+        if fecha_fin:
+            query = query.where('fecha_fin', '==', fecha_fin)
+        if fecha_inicio:
+            query = query.where('fecha_inicio', '==', fecha_inicio)
+        if fuente_financiacion:
+            query = query.where('fuente_financiacion', '==', fuente_financiacion)
+        if identificador:
+            query = query.where('identificador', '==', identificador)
+        if intervencion_id:
+            query = query.where('intervencion_id', '==', intervencion_id)
+        if nombre_centro_gestor:
+            query = query.where('nombre_centro_gestor', '==', nombre_centro_gestor)
+        if presupuesto_base is not None:
+            query = query.where('presupuesto_base', '==', presupuesto_base)
+        if referencia_contrato:
+            query = query.where('referencia_contrato', '==', referencia_contrato)
+        if referencia_proceso:
+            query = query.where('referencia_proceso', '==', referencia_proceso)
+        if tipo_intervencion:
+            query = query.where('tipo_intervencion', '==', tipo_intervencion)
+        if unidad:
+            query = query.where('unidad', '==', unidad)
+        if upid:
+            query = query.where('upid', '==', upid)
+        if url_proceso:
+            query = query.where('url_proceso', '==', url_proceso)
+
+        fields = [
+            "avance_obra",
+            "bpin",
+            "cantidad",
+            "clase_up",
+            "estado",
+            "fecha_fin",
+            "fecha_inicio",
+            "fuente_financiacion",
+            "identificador",
+            "intervencion_id",
+            "nombre_centro_gestor",
+            "presupuesto_base",
+            "referencia_contrato",
+            "referencia_proceso",
+            "tipo_intervencion",
+            "unidad",
+            "upid",
+            "url_proceso"
+        ]
+
+        query = query.select(fields)
+        docs = query.stream()
+
+        filters_payload = {
+            "avance_obra": avance_obra,
+            "bpin": bpin,
+            "cantidad": cantidad,
+            "clase_up": clase_up,
+            "estado": estado,
+            "fecha_fin": fecha_fin,
+            "fecha_inicio": fecha_inicio,
+            "fuente_financiacion": fuente_financiacion,
+            "identificador": identificador,
+            "intervencion_id": intervencion_id,
+            "nombre_centro_gestor": nombre_centro_gestor,
+            "presupuesto_base": presupuesto_base,
+            "referencia_contrato": referencia_contrato,
+            "referencia_proceso": referencia_proceso,
+            "tipo_intervencion": tipo_intervencion,
+            "unidad": unidad,
+            "upid": upid,
+            "url_proceso": url_proceso
+        }
+
+        should_convert = FIREBASE_TYPES_AVAILABLE
+        datetime_type = DatetimeWithNanoseconds
+
+        def normalize_value(value):
+            if should_convert and isinstance(value, datetime_type):
+                return value.isoformat()
+            if isinstance(value, dict):
+                for inner_key, inner_value in value.items():
+                    value[inner_key] = normalize_value(inner_value)
+                return value
+            if isinstance(value, list):
+                return [normalize_value(item) for item in value]
+            return value
+
+        data = []
+        for doc in docs:
+            doc_data = doc.to_dict()
+            if should_convert:
+                doc_data = normalize_value(doc_data)
+
+            record = {field: doc_data.get(field) for field in fields}
+            record["intervencion_id"] = record.get("intervencion_id") or doc.id
+            data.append(record)
+
+        return create_utf8_response({
+            "success": True,
+            "data": data,
+            "count": len(data),
+            "filters": filters_payload
+        })
         
     except Exception as e:
         raise HTTPException(
@@ -3270,779 +3074,6 @@ async def get_frentes_activos_endpoint():
         raise HTTPException(
             status_code=500,
             detail=f"Error obteniendo frentes activos: {str(e)}"
-        )
-
-
-@app.get("/frentes-activos/diagnostico", tags=["Unidades de Proyecto"], summary="🔍 Diagnóstico de Geometrías")
-@optional_rate_limit("10/minute")
-async def diagnostico_frentes_activos():
-    """
-    ## 🔍 Diagnóstico de Geometrías en Frentes Activos
-    
-    **Propósito**: Diagnosticar la calidad de las geometrías en los frentes activos,
-    identificando registros sin geometría válida y proporcionando información detallada
-    sobre el origen de las geometrías.
-    
-    ### Información Retornada
-    
-    - Total de frentes activos
-    - Conteo de registros con/sin geometría válida
-    - Lista de registros sin geometría con detalles completos
-    - Estadísticas de fuentes de geometría
-    
-    ### Aplicaciones
-    
-    - Debugging de problemas de geometría
-    - Identificar registros que necesitan geocodificación
-    - Auditoría de calidad de datos geoespaciales
-    """
-    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Firebase not available")
-    
-    try:
-        from api.scripts.unidades_proyecto import get_frentes_activos
-        
-        result = await get_frentes_activos()
-        
-        if result.get("type") != "FeatureCollection":
-            raise HTTPException(status_code=500, detail="Respuesta inválida del servicio")
-        
-        features = result.get("features", [])
-        
-        # Análisis de geometrías
-        total = len(features)
-        con_geometria = []
-        sin_geometria = []
-        fuentes_geometria = {}
-        
-        for feature in features:
-            props = feature.get("properties", {})
-            geometry = feature.get("geometry", {})
-            has_valid = props.get("has_valid_geometry", True)
-            source = props.get("geometry_source", "unknown")
-            
-            # Contar fuentes
-            if source not in fuentes_geometria:
-                fuentes_geometria[source] = 0
-            fuentes_geometria[source] += 1
-            
-            if has_valid and geometry.get("coordinates") != [0, 0]:
-                con_geometria.append({
-                    "upid": props.get("upid"),
-                    "nombre_up": props.get("nombre_up"),
-                    "geometry_source": source
-                })
-            else:
-                sin_geometria.append({
-                    "upid": props.get("upid"),
-                    "nombre_up": props.get("nombre_up"),
-                    "direccion": props.get("direccion"),
-                    "barrio_vereda": props.get("barrio_vereda"),
-                    "comuna_corregimiento": props.get("comuna_corregimiento"),
-                    "nombre_centro_gestor": props.get("nombre_centro_gestor"),
-                    "geometry": geometry,
-                    "n_intervenciones": len(props.get("intervenciones", []))
-                })
-        
-        diagnostico = {
-            "success": True,
-            "timestamp": datetime.now().isoformat(),
-            "resumen": {
-                "total_frentes_activos": total,
-                "con_geometria_valida": len(con_geometria),
-                "sin_geometria_valida": len(sin_geometria),
-                "porcentaje_con_geometria": round((len(con_geometria) / total * 100), 2) if total > 0 else 0
-            },
-            "fuentes_geometria": fuentes_geometria,
-            "registros_sin_geometria": sin_geometria,
-            "muestra_registros_con_geometria": con_geometria[:10]  # Primeros 10 como muestra
-        }
-        
-        return create_utf8_response(diagnostico)
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error en diagnóstico: {str(e)}"
-        )
-
-
-# ============================================================================
-# ENDPOINT PARA DESCARGA DE GEOJSON
-# ============================================================================
-
-@app.get("/unidades-proyecto/download-geojson", tags=["Unidades de Proyecto"], summary="🔵 Descarga GeoJSON")
-@optional_rate_limit("30/minute")  # Rate limiting para descargas pesadas
-async def download_unidades_proyecto_geojson(
-    request: Request,
-    # Filtros de contenido
-    nombre_centro_gestor: Optional[str] = Query(None, description="Centro gestor responsable"),
-    tipo_intervencion: Optional[str] = Query(None, description="Tipo de intervención"),
-    estado: Optional[str] = Query(None, description="Estado del proyecto"),
-    upid: Optional[str] = Query(None, description="ID específico de unidad"),
-    
-    # Filtros geográficos
-    comuna_corregimiento: Optional[str] = Query(None, description="Comuna o corregimiento específico"),
-    barrio_vereda: Optional[str] = Query(None, description="Barrio o vereda específico"),
-    
-    # Configuración de descarga
-    include_all_records: Optional[bool] = Query(True, description="Incluir todos los registros (con y sin geometría)"),
-    only_with_geometry: Optional[bool] = Query(False, description="Solo registros con geometría válida"),
-    limit: Optional[int] = Query(1000, ge=1, le=10000, description="Límite de registros (default: 1000 para performance)"),
-    
-    # Parámetros de formato
-    include_metadata: Optional[bool] = Query(True, description="Incluir metadata en el GeoJSON")
-):
-    """
-    ## 🔵 GET | 📁 Descarga | Descargar Unidades de Proyecto en formato GeoJSON
-    
-    **Propósito**: Descarga datos de la colección "unidades_proyecto" en formato .geojson 
-    estándar para uso en aplicaciones SIG y herramientas geoespaciales.
-    
-    ### ✅ Características principales:
-    - **Formato estándar**: GeoJSON compatible con QGIS, ArcGIS, Leaflet, etc.
-    - **Filtros flexibles**: Permite filtrar por centro gestor, tipo, estado, ubicación
-    - **Geometría configurable**: Opción de incluir todos los registros o solo los que tienen geometría
-    - **Campos optimizados**: Incluye todos los campos relevantes para análisis SIG
-    - **Encoding UTF-8**: Soporte completo para caracteres especiales en español
-    
-    ### 🗺️ Estrategia de geometría:
-    - **include_all_records=true** (por defecto): Incluye todos los registros, los sin geometría usan coordenadas [0,0]
-    - **only_with_geometry=true**: Solo registros con coordenadas válidas
-    - Campo **has_valid_geometry** indica si las coordenadas son reales o placeholder
-    
-    ### 📊 Campos incluidos:
-    - **upid**: Identificador único del proyecto
-    - **nombre_up**: Nombre del proyecto
-    - **estado**: Estado actual del proyecto
-    - **tipo_intervencion**: Tipo de intervención urbana
-    - **nombre_centro_gestor**: Entidad responsable
-    - **comuna_corregimiento**: Ubicación administrativa
-    - **barrio_vereda**: Ubicación específica
-    - **presupuesto_base**: Valor del proyecto
-    - **avance_obra**: Porcentaje de avance
-    - **bpin**: Código BPIN del proyecto
-    - **has_valid_geometry**: Indica si tiene coordenadas reales
-    
-    ### 🎯 Casos de uso:
-    - **Análisis SIG**: Importar en QGIS, ArcGIS para análisis espacial
-    - **Mapas web**: Cargar en Leaflet, Mapbox, OpenLayers
-    - **Visualización**: Crear mapas temáticos y dashboards geográficos
-    - **Integración**: Conectar con otras plataformas geoespaciales
-    - **Backup**: Exportar datos para respaldo
-    
-    ### 📝 Ejemplo de uso:
-    ```bash
-    # Descargar todos los proyectos
-    GET /unidades-proyecto/download-geojson
-    
-    # Solo proyectos de una secretaría
-    GET /unidades-proyecto/download-geojson?nombre_centro_gestor=Secretaría de Infraestructura
-    
-    # Solo proyectos con geometría válida
-    GET /unidades-proyecto/download-geojson?only_with_geometry=true
-    
-    # Proyectos de una comuna específica
-    GET /unidades-proyecto/download-geojson?comuna_corregimiento=Comuna 1
-    ```
-    
-    ### 💡 Nota técnica:
-    - El archivo se descarga directamente como .geojson
-    - Content-Type: application/geo+json
-    - Encoding: UTF-8 para caracteres especiales
-    - Compatible con estándares RFC 7946 (GeoJSON)
-    """
-    
-    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
-    
-    try:
-        # Construir filtros
-        filters = {}
-        
-        if nombre_centro_gestor:
-            filters["nombre_centro_gestor"] = nombre_centro_gestor
-        if tipo_intervencion:
-            filters["tipo_intervencion"] = tipo_intervencion
-        if estado:
-            filters["estado"] = estado
-        if upid:
-            filters["upid"] = upid
-        if comuna_corregimiento:
-            filters["comuna_corregimiento"] = comuna_corregimiento
-        if barrio_vereda:
-            filters["barrio_vereda"] = barrio_vereda
-        if limit:
-            filters["limit"] = limit
-        
-        # Obtener datos geoespaciales
-        result = await get_unidades_proyecto_geometry(filters)
-        
-        # Verificar si el resultado es exitoso
-        if result.get("type") != "FeatureCollection":
-            if result.get("success") is False:
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Error obteniendo datos: {result.get('error', 'Error desconocido')}"
-                )
-            else:
-                raise HTTPException(
-                    status_code=500,
-                    detail="Formato de respuesta inesperado del servicio de geometrías"
-                )
-        
-        # Extraer features
-        features = result.get("features", [])
-        
-        # Aplicar filtro de geometría si se solicita
-        if only_with_geometry and not include_all_records:
-            features = [
-                feature for feature in features 
-                if feature.get("properties", {}).get("has_valid_geometry", False)
-            ]
-        
-        # Crear GeoJSON final
-        geojson_response = {
-            "type": "FeatureCollection",
-            "features": features
-        }
-        
-        # Agregar metadata si se solicita
-        if include_metadata:
-            geojson_response["metadata"] = {
-                "source": "unidades_proyecto collection",
-                "exported_at": datetime.now().isoformat(),
-                "total_features": len(features),
-                "filters_applied": filters,
-                "has_valid_geometry_count": len([
-                    f for f in features 
-                    if f.get("properties", {}).get("has_valid_geometry", False)
-                ]),
-                "coordinate_system": "WGS84 (EPSG:4326)",
-                "format": "GeoJSON (RFC 7946)",
-                "encoding": "UTF-8",
-                "api_version": "1.0.0",
-                "last_updated": "2025-10-28T00:00:00Z"
-            }
-        
-        # Retornar como respuesta JSON con headers apropiados para descarga
-        return JSONResponse(
-            content=geojson_response,
-            status_code=200,
-            headers={
-                "Content-Type": "application/geo+json; charset=utf-8",
-                "Content-Disposition": "attachment; filename=unidades_proyecto.geojson",
-                "Access-Control-Expose-Headers": "Content-Disposition"
-            }
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error procesando descarga GeoJSON: {str(e)}"
-        )
-
-
-# ============================================================================
-# ENDPOINT PARA CARGAR GEOJSON A FIRESTORE
-# ============================================================================
-
-@app.get("/unidades-proyecto/download-table", tags=["Unidades de Proyecto"], summary="🔵 Descarga Tabla Excel")
-@optional_rate_limit("20/minute")  # Rate limiting para descargas pesadas
-async def download_unidades_proyecto_table(
-    request: Request,
-    # Filtros de contenido
-    nombre_centro_gestor: Optional[str] = Query(None, description="Centro gestor responsable"),
-    tipo_intervencion: Optional[str] = Query(None, description="Tipo de intervención"),
-    estado: Optional[str] = Query(None, description="Estado del proyecto"),
-    upid: Optional[str] = Query(None, description="ID específico de unidad"),
-    clase_obra: Optional[str] = Query(None, description="Clase de obra"),
-    tipo_equipamiento: Optional[str] = Query(None, description="Tipo de equipamiento"),
-    
-    # Filtros geográficos
-    comuna_corregimiento: Optional[str] = Query(None, description="Comuna o corregimiento"),
-    barrio_vereda: Optional[str] = Query(None, description="Barrio o vereda"),
-    
-    # Configuración de descarga
-    limit: Optional[int] = Query(None, ge=1, le=10000, description="Límite de registros (None = todos)")
-):
-    """
-    ## 🔵 GET | 📁 Descarga | Tabla Excel de Unidades de Proyecto
-    
-    **Propósito**: Descarga todos los datos de la colección "unidades_proyecto" en formato Excel (.xlsx)
-    con todos los campos tabulares para análisis, reportes y gestión de proyectos.
-    
-    ### ✅ Características:
-    - **Formato Excel**: Compatible con Microsoft Excel, Google Sheets, LibreOffice
-    - **Todos los campos**: Incluye toda la información tabular de proyectos
-    - **Filtros disponibles**: Por centro gestor, estado, ubicación, etc.
-    - **Encoding UTF-8**: Soporte completo para caracteres especiales
-    - **Headers descriptivos**: Nombres de columnas legibles
-    
-    ### 📊 Campos incluidos:
-    - **UPID**: Identificador único
-    - **Nombre UP**: Nombre del proyecto
-    - **Estado**: Estado actual
-    - **Tipo Intervención**: Categoría de intervención
-    - **Clase Obra**: Clasificación de obra
-    - **Tipo Equipamiento**: Tipo de equipamiento
-    - **Centro Gestor**: Entidad responsable
-    - **Comuna/Corregimiento**: Ubicación administrativa
-    - **Barrio/Vereda**: Ubicación específica
-    - **Dirección**: Dirección del proyecto
-    - **Presupuesto Base**: Valor inicial del proyecto
-    - **Presupuesto Total UP**: Presupuesto total
-    - **Avance Obra**: Porcentaje de avance
-    - **BPIN**: Código BPIN
-    - **Año**: Año del proyecto
-    - **Fuente Financiación**: Origen de recursos
-    - **Referencia Contrato**: Referencias de contratos
-    - **Plataforma**: Plataforma de contratación
-    - **Fechas**: Fecha inicio y fin
-    
-    ### 🎯 Casos de uso:
-    - **Reportes**: Crear informes gerenciales y ejecutivos
-    - **Análisis**: Análisis de datos en Excel/Power BI
-    - **Seguimiento**: Control y seguimiento de proyectos
-    - **Auditoría**: Revisión y verificación de información
-    - **Integración**: Importar a otros sistemas de gestión
-    
-    ### 📝 Ejemplos:
-    ```bash
-    # Descargar todos los proyectos
-    GET /unidades-proyecto/download-table
-    
-    # Proyectos de una secretaría
-    GET /unidades-proyecto/download-table?nombre_centro_gestor=Secretaría de Infraestructura
-    
-    # Proyectos activos de una comuna
-    GET /unidades-proyecto/download-table?estado=Activo&comuna_corregimiento=COMUNA 01
-    
-    # Primeros 500 registros
-    GET /unidades-proyecto/download-table?limit=500
-    ```
-    """
-    
-    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
-    
-    try:
-        from openpyxl import Workbook
-        from openpyxl.styles import Font, PatternFill, Alignment
-        from openpyxl.utils import get_column_letter
-        from io import BytesIO
-        
-        # Construir filtros
-        filters = {}
-        
-        if nombre_centro_gestor:
-            filters["nombre_centro_gestor"] = nombre_centro_gestor
-        if tipo_intervencion:
-            filters["tipo_intervencion"] = tipo_intervencion
-        if estado:
-            filters["estado"] = estado
-        if upid:
-            filters["upid"] = upid
-        if clase_up:
-            filters["clase_up"] = clase_up
-        if tipo_equipamiento:
-            filters["tipo_equipamiento"] = tipo_equipamiento
-        if comuna_corregimiento:
-            filters["comuna_corregimiento"] = comuna_corregimiento
-        if barrio_vereda:
-            filters["barrio_vereda"] = barrio_vereda
-        if limit:
-            filters["limit"] = limit
-        
-        # Obtener datos de atributos (sin geometría para mejor performance)
-        result = await get_unidades_proyecto_attributes(filters=filters, limit=limit)
-        
-        # Verificar si el resultado es exitoso
-        if not result.get("success"):
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error obteniendo datos: {result.get('error', 'Error desconocido')}"
-            )
-        
-        # Extraer datos
-        data = result.get("data", [])
-        
-        if not data:
-            raise HTTPException(
-                status_code=404,
-                detail="No se encontraron registros con los filtros especificados"
-            )
-        
-        # Crear libro de Excel
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Unidades Proyecto"
-        
-        # Definir columnas (en orden lógico)
-        columns = [
-            ("upid", "UPID"),
-            ("nombre_up", "Nombre UP"),
-            ("nombre_up_detalle", "Nombre UP Detalle"),
-            ("estado", "Estado"),
-            ("tipo_intervencion", "Tipo Intervención"),
-            ("clase_up", "Clase UP"),
-            ("tipo_equipamiento", "Tipo Equipamiento"),
-            ("nombre_centro_gestor", "Centro Gestor"),
-            ("centro_gestor", "Centro Gestor (Código)"),
-            ("comuna_corregimiento", "Comuna/Corregimiento"),
-            ("barrio_vereda", "Barrio/Vereda"),
-            ("direccion", "Dirección"),
-            ("presupuesto_base", "Presupuesto Base"),
-            ("presupuesto_total_up", "Presupuesto Total UP"),
-            ("avance_obra", "Avance Obra (%)"),
-            ("bpin", "BPIN"),
-            ("ano", "Año"),
-            ("fuente_financiacion", "Fuente Financiación"),
-            ("referencia_contrato", "Referencia Contrato"),
-            ("referencia_proceso", "Referencia Proceso"),
-            ("plataforma", "Plataforma"),
-            ("url_proceso", "URL Proceso"),
-            ("fecha_inicio", "Fecha Inicio"),
-            ("fecha_inicio_std", "Fecha Inicio Estandarizada"),
-            ("fecha_fin", "Fecha Fin"),
-            ("identificador", "Identificador"),
-            ("cantidad", "Cantidad"),
-            ("unidad_medida", "Unidad Medida"),
-            ("fuera_rango", "Fuera Rango"),
-            ("has_geometry", "Tiene Geometría"),
-            ("created_at", "Fecha Creación"),
-            ("updated_at", "Fecha Actualización"),
-            ("processed_timestamp", "Timestamp Procesamiento")
-        ]
-        
-        # Estilo del encabezado
-        header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
-        header_font = Font(bold=True, color="FFFFFF", size=11)
-        header_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        
-        # Escribir encabezados
-        for col_idx, (field_key, field_name) in enumerate(columns, start=1):
-            cell = ws.cell(row=1, column=col_idx)
-            cell.value = field_name
-            cell.fill = header_fill
-            cell.font = header_font
-            cell.alignment = header_alignment
-        
-        # Escribir datos
-        for row_idx, record in enumerate(data, start=2):
-            for col_idx, (field_key, _) in enumerate(columns, start=1):
-                value = record.get(field_key)
-                
-                # Formatear valores especiales
-                if value is not None:
-                    # Convertir listas a string separado por comas
-                    if isinstance(value, list):
-                        value = ", ".join(str(v) for v in value if v)
-                    # Convertir booleanos a texto
-                    elif isinstance(value, bool):
-                        value = "Sí" if value else "No"
-                    # Formatear fechas
-                    elif field_key in ["created_at", "updated_at", "processed_timestamp", "fecha_inicio_std"]:
-                        value = str(value) if value else ""
-                
-                ws.cell(row=row_idx, column=col_idx, value=value)
-        
-        # Ajustar ancho de columnas
-        for col_idx in range(1, len(columns) + 1):
-            column_letter = get_column_letter(col_idx)
-            # Ancho basado en el contenido (máximo 50)
-            max_length = 15  # Ancho mínimo
-            for row in ws.iter_rows(min_col=col_idx, max_col=col_idx):
-                for cell in row:
-                    if cell.value:
-                        max_length = max(max_length, len(str(cell.value)))
-            ws.column_dimensions[column_letter].width = min(max_length + 2, 50)
-        
-        # Congelar primera fila (encabezados)
-        ws.freeze_panes = "A2"
-        
-        # Guardar en memoria
-        excel_file = BytesIO()
-        wb.save(excel_file)
-        excel_file.seek(0)
-        
-        # Generar nombre de archivo con timestamp
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"unidades_proyecto_{timestamp}.xlsx"
-        
-        # Retornar archivo Excel
-        return StreamingResponse(
-            excel_file,
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={
-                "Content-Disposition": f"attachment; filename={filename}",
-                "Access-Control-Expose-Headers": "Content-Disposition"
-            }
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        import traceback
-        print(f"❌ ERROR en download_table: {str(e)}")
-        print(f"❌ TRACEBACK: {traceback.format_exc()}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error procesando descarga de tabla: {str(e)}"
-        )
-
-
-@app.get("/unidades-proyecto/download-table_by_centro_gestor", tags=["Unidades de Proyecto"], summary="🔵 Descarga Tabla Excel por Centro Gestor")
-@optional_rate_limit("20/minute")  # Rate limiting para descargas pesadas
-async def download_unidades_proyecto_table_by_centro_gestor(
-    request: Request,
-    nombre_centro_gestor: str = Query(..., description="Centro gestor responsable (requerido)"),
-    
-    # Filtros adicionales opcionales
-    tipo_intervencion: Optional[str] = Query(None, description="Tipo de intervención"),
-    estado: Optional[str] = Query(None, description="Estado del proyecto"),
-    upid: Optional[str] = Query(None, description="ID específico de unidad"),
-    clase_obra: Optional[str] = Query(None, description="Clase de obra"),
-    tipo_equipamiento: Optional[str] = Query(None, description="Tipo de equipamiento"),
-    
-    # Filtros geográficos
-    comuna_corregimiento: Optional[str] = Query(None, description="Comuna o corregimiento"),
-    barrio_vereda: Optional[str] = Query(None, description="Barrio o vereda"),
-    
-    # Configuración de descarga
-    limit: Optional[int] = Query(None, ge=1, le=10000, description="Límite de registros (None = todos)")
-):
-    """
-    ## 🔵 GET | 📁 Descarga | Tabla Excel de Unidades de Proyecto por Centro Gestor
-    
-    **Propósito**: Descarga datos de la colección "unidades_proyecto" filtrados por "nombre_centro_gestor"
-    en formato Excel (.xlsx) con todos los campos tabulares para análisis y reportes específicos por entidad.
-    
-    ### ✅ Características:
-    - **Filtro obligatorio**: Requiere especificar el centro gestor
-    - **Formato Excel**: Compatible con Microsoft Excel, Google Sheets, LibreOffice
-    - **Todos los campos**: Incluye toda la información tabular de proyectos
-    - **Filtros adicionales**: Combinar con otros filtros (estado, ubicación, etc.)
-    - **Encoding UTF-8**: Soporte completo para caracteres especiales
-    - **Headers descriptivos**: Nombres de columnas legibles
-    
-    ### 📊 Campos incluidos:
-    - **UPID**: Identificador único
-    - **Nombre UP**: Nombre del proyecto
-    - **Estado**: Estado actual
-    - **Tipo Intervención**: Categoría de intervención
-    - **Clase Obra**: Clasificación de obra
-    - **Tipo Equipamiento**: Tipo de equipamiento
-    - **Centro Gestor**: Entidad responsable
-    - **Comuna/Corregimiento**: Ubicación administrativa
-    - **Barrio/Vereda**: Ubicación específica
-    - **Dirección**: Dirección del proyecto
-    - **Presupuesto Base**: Valor inicial del proyecto
-    - **Presupuesto Total UP**: Presupuesto total
-    - **Avance Obra**: Porcentaje de avance
-    - **BPIN**: Código BPIN
-    - **Año**: Año del proyecto
-    - **Fuente Financiación**: Origen de recursos
-    - **Referencia Contrato**: Referencias de contratos
-    - **Plataforma**: Plataforma de contratación
-    - **Fechas**: Fecha inicio y fin
-    
-    ### 🎯 Casos de uso:
-    - **Reportes por entidad**: Informes específicos por secretaría o entidad
-    - **Seguimiento sectorial**: Control de proyectos por sector
-    - **Análisis comparativo**: Comparar gestión entre diferentes centros gestores
-    - **Auditoría específica**: Revisión de proyectos de una entidad particular
-    - **Informes gerenciales**: Reportes ejecutivos por dependencia
-    
-    ### 📝 Ejemplos:
-    ```bash
-    # Descargar todos los proyectos de una secretaría
-    GET /unidades-proyecto/download-table_by_centro_gestor?nombre_centro_gestor=Secretaría de Infraestructura
-    
-    # Proyectos activos de una secretaría
-    GET /unidades-proyecto/download-table_by_centro_gestor?nombre_centro_gestor=Secretaría de Educación&estado=Activo
-    
-    # Proyectos de una secretaría en una comuna específica
-    GET /unidades-proyecto/download-table_by_centro_gestor?nombre_centro_gestor=Secretaría de Salud&comuna_corregimiento=COMUNA 01
-    
-    # Primeros 100 registros de una secretaría
-    GET /unidades-proyecto/download-table_by_centro_gestor?nombre_centro_gestor=Secretaría de Hacienda&limit=100
-    ```
-    """
-    
-    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
-    
-    try:
-        from openpyxl import Workbook
-        from openpyxl.styles import Font, PatternFill, Alignment
-        from openpyxl.utils import get_column_letter
-        from io import BytesIO
-        
-        # Construir filtros (nombre_centro_gestor es obligatorio)
-        filters = {
-            "nombre_centro_gestor": nombre_centro_gestor
-        }
-        
-        # Agregar filtros opcionales
-        if tipo_intervencion:
-            filters["tipo_intervencion"] = tipo_intervencion
-        if estado:
-            filters["estado"] = estado
-        if upid:
-            filters["upid"] = upid
-        if clase_up:
-            filters["clase_up"] = clase_up
-        if tipo_equipamiento:
-            filters["tipo_equipamiento"] = tipo_equipamiento
-        if comuna_corregimiento:
-            filters["comuna_corregimiento"] = comuna_corregimiento
-        if barrio_vereda:
-            filters["barrio_vereda"] = barrio_vereda
-        if limit:
-            filters["limit"] = limit
-        
-        # Obtener datos de atributos (sin geometría para mejor performance)
-        result = await get_unidades_proyecto_attributes(filters=filters, limit=limit)
-        
-        # Verificar si el resultado es exitoso
-        if not result.get("success"):
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error obteniendo datos: {result.get('error', 'Error desconocido')}"
-            )
-        
-        # Extraer datos
-        data = result.get("data", [])
-        
-        if not data:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No se encontraron registros para el centro gestor '{nombre_centro_gestor}' con los filtros especificados"
-            )
-        
-        # Crear libro de Excel
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Unidades Proyecto"
-        
-        # Definir columnas (en orden lógico)
-        columns = [
-            ("upid", "UPID"),
-            ("nombre_up", "Nombre UP"),
-            ("nombre_up_detalle", "Nombre UP Detalle"),
-            ("estado", "Estado"),
-            ("tipo_intervencion", "Tipo Intervención"),
-            ("clase_up", "Clase UP"),
-            ("tipo_equipamiento", "Tipo Equipamiento"),
-            ("nombre_centro_gestor", "Centro Gestor"),
-            ("centro_gestor", "Centro Gestor (Código)"),
-            ("comuna_corregimiento", "Comuna/Corregimiento"),
-            ("barrio_vereda", "Barrio/Vereda"),
-            ("direccion", "Dirección"),
-            ("presupuesto_base", "Presupuesto Base"),
-            ("presupuesto_total_up", "Presupuesto Total UP"),
-            ("avance_obra", "Avance Obra (%)"),
-            ("bpin", "BPIN"),
-            ("ano", "Año"),
-            ("fuente_financiacion", "Fuente Financiación"),
-            ("referencia_contrato", "Referencia Contrato"),
-            ("referencia_proceso", "Referencia Proceso"),
-            ("plataforma", "Plataforma"),
-            ("url_proceso", "URL Proceso"),
-            ("fecha_inicio", "Fecha Inicio"),
-            ("fecha_inicio_std", "Fecha Inicio Estandarizada"),
-            ("fecha_fin", "Fecha Fin"),
-            ("identificador", "Identificador"),
-            ("cantidad", "Cantidad"),
-            ("unidad_medida", "Unidad Medida"),
-            ("fuera_rango", "Fuera Rango"),
-            ("has_geometry", "Tiene Geometría"),
-            ("created_at", "Fecha Creación"),
-            ("updated_at", "Fecha Actualización"),
-            ("processed_timestamp", "Timestamp Procesamiento")
-        ]
-        
-        # Estilo del encabezado
-        header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
-        header_font = Font(bold=True, color="FFFFFF", size=11)
-        header_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        
-        # Escribir encabezados
-        for col_idx, (field_key, field_name) in enumerate(columns, start=1):
-            cell = ws.cell(row=1, column=col_idx)
-            cell.value = field_name
-            cell.fill = header_fill
-            cell.font = header_font
-            cell.alignment = header_alignment
-        
-        # Escribir datos
-        for row_idx, record in enumerate(data, start=2):
-            for col_idx, (field_key, _) in enumerate(columns, start=1):
-                value = record.get(field_key)
-                
-                # Formatear valores especiales
-                if value is not None:
-                    # Convertir listas a string separado por comas
-                    if isinstance(value, list):
-                        value = ", ".join(str(v) for v in value if v)
-                    # Convertir booleanos a texto
-                    elif isinstance(value, bool):
-                        value = "Sí" if value else "No"
-                    # Formatear fechas
-                    elif field_key in ["created_at", "updated_at", "processed_timestamp", "fecha_inicio_std"]:
-                        value = str(value) if value else ""
-                
-                ws.cell(row=row_idx, column=col_idx, value=value)
-        
-        # Ajustar ancho de columnas
-        for col_idx in range(1, len(columns) + 1):
-            column_letter = get_column_letter(col_idx)
-            # Ancho basado en el contenido (máximo 50)
-            max_length = 15  # Ancho mínimo
-            for row in ws.iter_rows(min_col=col_idx, max_col=col_idx):
-                for cell in row:
-                    if cell.value:
-                        max_length = max(max_length, len(str(cell.value)))
-            ws.column_dimensions[column_letter].width = min(max_length + 2, 50)
-        
-        # Congelar primera fila (encabezados)
-        ws.freeze_panes = "A2"
-        
-        # Guardar en memoria
-        excel_file = BytesIO()
-        wb.save(excel_file)
-        excel_file.seek(0)
-        
-        # Generar nombre de archivo con timestamp y nombre del centro gestor
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        # Limpiar nombre del centro gestor para usarlo en el nombre del archivo
-        centro_gestor_safe = nombre_centro_gestor.replace(" ", "_").replace("/", "-")
-        filename = f"unidades_proyecto_{centro_gestor_safe}_{timestamp}.xlsx"
-        
-        # Retornar archivo Excel
-        return StreamingResponse(
-            excel_file,
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={
-                "Content-Disposition": f"attachment; filename={filename}",
-                "Access-Control-Expose-Headers": "Content-Disposition"
-            }
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        import traceback
-        print(f"❌ ERROR en download_table_by_centro_gestor: {str(e)}")
-        print(f"❌ TRACEBACK: {traceback.format_exc()}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error procesando descarga de tabla por centro gestor: {str(e)}"
         )
 
 
