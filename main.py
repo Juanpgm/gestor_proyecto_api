@@ -625,6 +625,8 @@ def get_cors_origins():
         "https://artefacto-calitrack-360-frontend-production-dbcd9wrsi.vercel.app",
         "https://artefacto-calitrack-360-frontend-production.vercel.app",
         "https://artefacto-calitrack-360-frontend.vercel.app",
+        # CaliTrack Red Frontend
+        "https://calitrack-red.vercel.app",
         # Agrega aquí otros dominios específicos de producción según sea necesario
     ]
     
