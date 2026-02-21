@@ -3492,6 +3492,7 @@ async def registrar_avance_up(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error registrando avance UP: {str(e)}")
 
+@app.post("/reportes_contratos/", tags=["Interoperabilidad con Artefacto de Seguimiento"])
 async def crear_reporte_contrato(
     # Información básica del reporte
     referencia_contrato: str = Form(..., min_length=1, description="Referencia del contrato"),
