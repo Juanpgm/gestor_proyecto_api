@@ -35,24 +35,47 @@ except Exception as e:
 async def get_procesos_emprestito_all() -> Dict[str, Any]:
     """Obtener todos los registros de la colección procesos_emprestito"""
     try:
-        if not FIRESTORE_AVAILABLE:
-            return {"success": False, "error": "Firebase no disponible", "data": [], "count": 0}
-        
-        db = get_firestore_client()
+        # Intentar obtener el cliente de Firestore siempre, sin depender de variable global
+        try:
+            db = get_firestore_client()
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"No se pudo inicializar Firestore: {str(e)}",
+                "data": [],
+                "count": 0
+            }
+
         if db is None:
-            return {"success": False, "error": "No se pudo conectar a Firestore", "data": [], "count": 0}
-        
-        collection_ref = db.collection('procesos_emprestito')
-        docs = collection_ref.stream()
+            return {"success": False, "error": "No se pudo conectar a Firestore (cliente es None)", "data": [], "count": 0}
+
+        try:
+            collection_ref = db.collection('procesos_emprestito')
+            docs = collection_ref.stream()
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Error accediendo a la colección procesos_emprestito: {str(e)}",
+                "data": [],
+                "count": 0
+            }
+
         procesos_data = []
-        
-        for doc in docs:
-            doc_data = doc.to_dict()
-            doc_data['id'] = doc.id  # Agregar ID del documento
-            # Limpiar datos de Firebase para serialización JSON
-            doc_data_clean = serialize_datetime_objects(doc_data)
-            procesos_data.append(doc_data_clean)
-        
+        try:
+            for doc in docs:
+                doc_data = doc.to_dict()
+                doc_data['id'] = doc.id  # Agregar ID del documento
+                # Limpiar datos de Firebase para serialización JSON
+                doc_data_clean = serialize_datetime_objects(doc_data)
+                procesos_data.append(doc_data_clean)
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Error procesando documentos de la colección: {str(e)}",
+                "data": [],
+                "count": 0
+            }
+
         return {
             "success": True,
             "data": procesos_data,
@@ -61,11 +84,10 @@ async def get_procesos_emprestito_all() -> Dict[str, Any]:
             "timestamp": datetime.now().isoformat(),
             "message": f"Se obtuvieron {len(procesos_data)} procesos de empréstito exitosamente"
         }
-        
     except Exception as e:
         return {
-            "success": False, 
-            "error": f"Error obteniendo todos los procesos de empréstito: {str(e)}",
+            "success": False,
+            "error": f"Error inesperado en get_procesos_emprestito_all: {str(e)}",
             "data": [],
             "count": 0
         }
