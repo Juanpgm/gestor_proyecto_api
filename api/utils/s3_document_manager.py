@@ -58,6 +58,7 @@ class S3DocumentManager:
             's3',
             aws_access_key_id=self.credentials.get('aws_access_key_id'),
             aws_secret_access_key=self.credentials.get('aws_secret_access_key'),
+            aws_session_token=self.credentials.get('aws_session_token') or None,
             region_name=self.region
         )
         
@@ -99,6 +100,7 @@ class S3DocumentManager:
             env_creds = {
                 'aws_access_key_id': os.getenv('AWS_ACCESS_KEY_ID', ''),
                 'aws_secret_access_key': os.getenv('AWS_SECRET_ACCESS_KEY', ''),
+                'aws_session_token': os.getenv('AWS_SESSION_TOKEN', ''),
                 'aws_region': os.getenv('AWS_REGION', 'us-east-1'),
                 'region': os.getenv('AWS_REGION', 'us-east-1'),
                 'bucket_name_emprestito': os.getenv('S3_BUCKET_EMPRESTITO', 'contratos-emprestito'),

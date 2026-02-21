@@ -2323,364 +2323,8 @@ async def get_unidades_proyecto_init_360(request: Request):
             detail=f"Error procesando consulta init-360: {str(e)}"
         )
 
-# ============================================================================
-# ENDPOINTS ARTEFACTO DE CAPTURA DAGMA
-# ============================================================================
-
-@app.get("/init/parques", tags=["Artefacto de Captura DAGMA"], summary="🔵 GET | Inicialización de Parques")
-@optional_rate_limit("60/minute")
-async def get_init_parques(request: Request):
-    """
-    ## 🔵 GET | Inicialización de Parques para DAGMA
-    
-    **Propósito**: Obtener datos iniciales de parques para el artefacto de captura DAGMA.
-    
-    ### ✅ Respuesta
-    Retorna información de parques y zonas verdes del sistema.
-    
-    ### 📝 Ejemplo de uso:
-    ```javascript
-    const response = await fetch('/init/parques');
-    const data = await response.json();
-    ```
-    """
-    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
-    
-    try:
-        # Conectar a Firestore
-        db = get_firestore_client()
-        if db is None:
-            raise HTTPException(
-                status_code=503,
-                detail="No se pudo conectar a Firestore"
-            )
-        
-        # Consultar parques - filtrar por tipo_equipamiento = "Parques y zonas verdes"
-        query = db.collection('unidades_proyecto').where('tipo_equipamiento', '==', 'Parques y zonas verdes')
-        docs = query.stream()
-        
-        # Procesar documentos
-        parques = []
-        for doc in docs:
-            doc_data = doc.to_dict()
-            parques.append(doc_data)
-        
-        # Preparar respuesta
-        response_data = {
-            "success": True,
-            "data": parques,
-            "count": len(parques),
-            "timestamp": datetime.now().isoformat(),
-            "message": f"Se obtuvieron {len(parques)} parques"
-        }
-        
-        return create_utf8_response(response_data)
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error obteniendo parques: {str(e)}"
-        )
 
 
-@app.post("/grupo-operativo/reconocimiento", tags=["Artefacto de Captura DAGMA"], summary="🟢 POST | Registrar Reconocimiento")
-@optional_rate_limit("30/minute")
-async def post_reconocimiento(
-    request: Request,
-    # Datos de la intervención
-    tipo_intervencion: str = Form(..., min_length=1, description="Tipo de intervención"),
-    descripcion_intervencion: str = Form(..., min_length=1, description="Descripción de la intervención"),
-    direccion: str = Form(..., min_length=1, description="Dirección del lugar"),
-    observaciones: Optional[str] = Form(None, description="Observaciones adicionales (opcional)"),
-    
-    # Coordenadas GPS (formato JSON)
-    coordinates_type: str = Form(..., min_length=1, description="Tipo de geometría (Point, LineString, Polygon, etc.)"),
-    coordinates_data: str = Form(..., description="Coordenadas en formato JSON array. Ejemplo: [-76.5225, 3.4516]"),
-    
-    # Fotos (archivos)
-    photos: List[UploadFile] = File(..., description="Lista de archivos de fotos a subir a S3")
-):
-    """
-    ## 🟢 POST | Registrar Reconocimiento del Grupo Operativo DAGMA
-    
-    **Propósito**: Registrar un reconocimiento realizado por el grupo operativo DAGMA,
-    incluyendo captura de coordenadas GPS y subida de fotos a Amazon S3.
-    
-    ### ✅ Campos requeridos:
-    - **tipo_intervencion**: Tipo de intervención realizada
-    - **descripcion_intervencion**: Descripción detallada de la intervención
-    - **direccion**: Dirección del lugar intervenido
-    - **observaciones**: Observaciones adicionales (opcional)
-    - **coordinates_type**: Tipo de geometría (Point, LineString, Polygon)
-    - **coordinates_data**: Coordenadas GPS en formato JSON array
-    - **photos**: Archivos de fotos (multipart/form-data)
-    
-    ### 📸 Almacenamiento de Fotos:
-    Las fotos se subirán al bucket **360-dagma-photos** en Amazon S3 con la siguiente estructura:
-    ```
-    360-dagma-photos/
-    └── reconocimientos/
-        └── {id_reconocimiento}/
-            └── {timestamp}_{filename}
-    ```
-    
-    ### 📍 Coordenadas GPS:
-    Basado en la lógica del endpoint `/unidades-proyecto/captura-estado-360`:
-    - Se capturan las coordenadas del dispositivo GPS
-    - Formato JSON: `[-76.5225, 3.4516]` para Point
-    - Soporta diferentes tipos de geometría
-    
-    ### 📝 Ejemplo de uso con FormData:
-    ```javascript
-    const formData = new FormData();
-    formData.append('tipo_intervencion', 'Mantenimiento');
-    formData.append('descripcion_intervencion', 'Poda de árboles');
-    formData.append('direccion', 'Calle 5 #10-20');
-    formData.append('observaciones', 'Trabajo completado satisfactoriamente');
-    formData.append('coordinates_type', 'Point');
-    formData.append('coordinates_data', '[-76.5225, 3.4516]');
-    
-    // Agregar fotos
-    formData.append('photos', file1);
-    formData.append('photos', file2);
-    
-    const response = await fetch('/grupo-operativo/reconocimiento', {
-        method: 'POST',
-        body: formData
-    });
-    ```
-    
-    ### ✅ Respuesta exitosa:
-    ```json
-    {
-        "success": true,
-        "id": "uuid-generado",
-        "message": "Reconocimiento registrado exitosamente",
-        "coordinates": {
-            "type": "Point",
-            "coordinates": [-76.5225, 3.4516]
-        },
-        "photosUrl": [
-            "https://360-dagma-photos.s3.amazonaws.com/reconocimientos/uuid/foto1.jpg",
-            "https://360-dagma-photos.s3.amazonaws.com/reconocimientos/uuid/foto2.jpg"
-        ],
-        "photos_uploaded": 2,
-        "timestamp": "2026-01-24T10:30:00Z"
-    }
-    ```
-    """
-    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
-    
-    try:
-        # 1️⃣ Validar coordenadas GPS (reciclado de captura-estado-360)
-        try:
-            coords = json.loads(coordinates_data)
-            if not isinstance(coords, list) or len(coords) < 2:
-                raise ValueError("Coordenadas deben ser un array JSON con al menos 2 números")
-            # Validar que sean números
-            if not all(isinstance(c, (int, float)) for c in coords):
-                raise ValueError("Todos los elementos de coordenadas deben ser números")
-        except (json.JSONDecodeError, ValueError) as e:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Coordenadas inválidas: {str(e)}. Ejemplo válido: [-76.5225, 3.4516]"
-            )
-        
-        coordinates_gps = {
-            "type": coordinates_type,
-            "coordinates": coords
-        }
-        
-        # 2️⃣ Generar ID único y timestamp
-        reconocimiento_id = str(uuid.uuid4())
-        timestamp = datetime.now().isoformat()
-        
-        # 3️⃣ Subir fotos a S3 (bucket: 360-dagma-photos)
-        photos_urls = []
-        photos_failed = []
-        
-        # Intentar importar S3DocumentManager
-        try:
-            from api.utils.s3_document_manager import S3DocumentManager, BOTO3_AVAILABLE
-            
-            if not BOTO3_AVAILABLE:
-                logger.warning("⚠️ boto3 no disponible, las fotos no se subirán a S3")
-                raise ImportError("boto3 no disponible")
-            
-            # Inicializar S3DocumentManager con bucket específico para DAGMA
-            s3_manager = S3DocumentManager()
-            
-            # Cambiar bucket a 360-dagma-photos
-            s3_manager.bucket_name = '360-dagma-photos'
-            
-            logger.info(f"📸 Subiendo {len(photos)} fotos a S3 bucket: {s3_manager.bucket_name}")
-            
-            for idx, photo in enumerate(photos):
-                try:
-                    # Leer contenido del archivo
-                    file_content = await photo.read()
-                    
-                    # Determinar content type
-                    content_type = photo.content_type or 'image/jpeg'
-                    
-                    # Generar nombre de archivo seguro
-                    timestamp_str = datetime.now().strftime('%Y%m%d_%H%M%S')
-                    safe_filename = f"{timestamp_str}_{idx}_{photo.filename}"
-                    
-                    # Estructura de carpetas: reconocimientos/{id}/
-                    s3_key = f"reconocimientos/{reconocimiento_id}/{safe_filename}"
-                    
-                    # Subir a S3
-                    s3_manager.s3_client.put_object(
-                        Bucket=s3_manager.bucket_name,
-                        Key=s3_key,
-                        Body=file_content,
-                        ContentType=content_type,
-                        Metadata={
-                            'reconocimiento_id': reconocimiento_id,
-                            'tipo_intervencion': tipo_intervencion,
-                            'fecha_subida': timestamp
-                        }
-                    )
-                    
-                    # Generar URL de la foto
-                    photo_url = f"https://{s3_manager.bucket_name}.s3.amazonaws.com/{s3_key}"
-                    photos_urls.append(photo_url)
-                    
-                    logger.info(f"✅ Foto {idx + 1} subida: {safe_filename}")
-                    
-                except Exception as e:
-                    logger.error(f"❌ Error subiendo foto {idx + 1}: {str(e)}")
-                    photos_failed.append({
-                        'filename': photo.filename,
-                        'error': str(e)
-                    })
-            
-        except ImportError as e:
-            logger.warning(f"⚠️ No se pudo cargar S3DocumentManager: {e}")
-            logger.warning("⚠️ Las fotos se registrarán pero no se subirán a S3")
-        
-        # 4️⃣ Conectar a Firestore
-        db = get_firestore_client()
-        if db is None:
-            raise HTTPException(
-                status_code=503,
-                detail="No se pudo conectar a Firestore"
-            )
-        
-        # 5️⃣ Preparar datos del reconocimiento
-        reconocimiento_data = {
-            'id': reconocimiento_id,
-            'tipo_intervencion': tipo_intervencion,
-            'descripcion_intervencion': descripcion_intervencion,
-            'direccion': direccion,
-            'observaciones': observaciones,
-            'coordinates': coordinates_gps,
-            'photosUrl': photos_urls,
-            'photos_uploaded_count': len(photos_urls),
-            'photos_failed_count': len(photos_failed),
-            'photos_failed': photos_failed if photos_failed else None,
-            'timestamp': timestamp,
-            'created_at': timestamp
-        }
-        
-        # 6️⃣ Guardar en colección de reconocimientos DAGMA
-        doc_ref = db.collection('reconocimientos_dagma').document(reconocimiento_id)
-        doc_ref.set(reconocimiento_data)
-        
-        logger.info(f"✅ Reconocimiento DAGMA guardado: {reconocimiento_id}")
-        
-        # 7️⃣ Preparar respuesta
-        response_data = {
-            "success": True,
-            "id": reconocimiento_id,
-            "message": "Reconocimiento registrado exitosamente",
-            "tipo_intervencion": tipo_intervencion,
-            "descripcion_intervencion": descripcion_intervencion,
-            "direccion": direccion,
-            "coordinates": coordinates_gps,
-            "photosUrl": photos_urls,
-            "photos_uploaded": len(photos_urls),
-            "photos_failed": len(photos_failed),
-            "timestamp": timestamp
-        }
-        
-        # Agregar advertencia si hubo fotos fallidas
-        if photos_failed:
-            response_data["warning"] = f"{len(photos_failed)} foto(s) no se pudieron subir"
-            response_data["failed_photos"] = photos_failed
-        
-        return create_utf8_response(response_data)
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"❌ Error registrando reconocimiento DAGMA: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error registrando reconocimiento: {str(e)}"
-        )
-
-
-@app.get("/grupo-operativo/reportes", tags=["Artefacto de Captura DAGMA"], summary="🔵 GET | Obtener Reportes")
-@optional_rate_limit("60/minute")
-async def get_reportes(request: Request):
-    """
-    ## 🔵 GET | Obtener Reportes del Grupo Operativo
-    
-    **Propósito**: Consultar todos los reportes registrados por el grupo operativo.
-    
-    ### ✅ Respuesta
-    Retorna lista de reportes con sus detalles.
-    
-    ### 📝 Ejemplo de uso:
-    ```javascript
-    const response = await fetch('/grupo-operativo/reportes');
-    const reportes = await response.json();
-    ```
-    """
-    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
-    
-    try:
-        # Conectar a Firestore
-        db = get_firestore_client()
-        if db is None:
-            raise HTTPException(
-                status_code=503,
-                detail="No se pudo conectar a Firestore"
-            )
-        
-        # Consultar reconocimientos
-        query = db.collection('reconocimientos_dagma')
-        docs = query.stream()
-        
-        reportes = []
-        for doc in docs:
-            doc_data = doc.to_dict()
-            reportes.append(doc_data)
-        
-        response_data = {
-            "success": True,
-            "data": reportes,
-            "count": len(reportes),
-            "timestamp": datetime.now().isoformat(),
-            "message": f"Se obtuvieron {len(reportes)} reportes"
-        }
-        
-        return create_utf8_response(response_data)
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error obteniendo reportes: {str(e)}"
-        )
 
 
 @app.delete("/grupo-operativo/eliminar-reporte", tags=["Artefacto de Captura DAGMA"], summary="🔴 DELETE | Eliminar Reporte")
@@ -3030,7 +2674,6 @@ async def get_intervenciones_filtradas_endpoint(
             "count": len(data),
             "filters": filters_payload
         })
-        
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -3038,150 +2681,817 @@ async def get_intervenciones_filtradas_endpoint(
         )
 
 
-@app.get("/frentes-activos", tags=["Unidades de Proyecto"], summary="🔵 GET | Frentes Activos")
+@app.get("/avances_unidades_proyecto", tags=["Unidades de Proyecto"], summary="🔵 GET | Leer avances de Unidades de Proyecto")
 @optional_rate_limit("60/minute")
-async def get_frentes_activos_endpoint():
-    """
-    ## 🔵 GET | Obtener Frentes Activos
-    
-    **Propósito**: Retornar conteos de frentes activos usando datos reales
-    de `unidades_proyecto` y `intervenciones_unidades_proyecto`.
-    
-    ### Estructura de Respuesta
-    
-    Respuesta con conteos:
-    - **total_frentes_activos**: Conteo total de intervenciones con frente activo
-    - **total_unidades_con_frentes**: Número de unidades que tienen frentes activos
-    - **total_por_intervencion**: Diccionario con el conteo de registros por tipo de intervención
-    
-    ### Ejemplo de Uso
-    
-    ```javascript
-    const response = await fetch('/frentes-activos');
-    const data = await response.json();
-    
-    console.log(data.total_frentes_activos); // Total de frentes activos
-    console.log(data.total_unidades_con_frentes); // Unidades con frentes
-    console.log(data.total_por_intervencion); // {"Tipo 1": 5, "Tipo 2": 10, ...}
-    
-    // Renderizar en mapa con icono especial
-    data.features.forEach(feature => {
-      const marker = L.marker([...], {
-        icon: iconFrenteActivo
-      });
-      marker.addTo(map);
-    });
-    ```
-    
-    ### Aplicaciones
-    
-    - Visualización de frentes activos en mapa
-    - Dashboard de seguimiento de obras activas
-    - Alertas y notificaciones sobre frentes activos
-    - Reportes de avance de obra
-    - Estadísticas por tipo de intervención
-    """
-    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Firebase not available")
-    
-    try:
-        from api.scripts.unidades_proyecto import get_frentes_activos
-        
-        result = await get_frentes_activos()
-        
-        return create_utf8_response(result)
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error obteniendo frentes activos: {str(e)}"
-        )
-
-
-@app.get("/unidades-proyecto/calidad-datos", tags=["Unidades de Proyecto"], summary="🔵 GET | Calidad de Datos")
-@optional_rate_limit("30/minute")
-async def get_calidad_datos_unidades_proyecto_endpoint():
-    """
-    ## 🔵 GET | Calidad de Datos
-
-    **Propósito**: Generar y devolver métricas unificadas de calidad de datos
-    para `unidades_proyecto` e `intervenciones_unidades_proyecto`.
-
-    **Frecuencia**: La respuesta se calcula una vez al día y se almacena con
-    historial para analizar el progreso de calidad.
-    """
+async def get_avances_unidades_proyecto(
+    intervencion_id: Optional[str] = Query(None, description="Filtrar por intervencion_id"),
+    doc_id: Optional[str] = Query(None, description="ID exacto del documento en Firestore")
+):
     if not FIREBASE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Firebase not available")
 
     try:
-        from api.scripts.unidades_proyecto_quality_metrics import get_unidades_proyecto_quality_metrics
+        db = get_firestore_client()
+        if db is None:
+            raise HTTPException(status_code=503, detail="No se pudo conectar a Firestore")
 
-        result = await get_unidades_proyecto_quality_metrics()
-        return create_utf8_response(result)
+        collection_ref = db.collection('avances_unidades_proyecto')
 
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error obteniendo métricas de calidad: {str(e)}"
-        )
+        should_convert = FIREBASE_TYPES_AVAILABLE
+        datetime_type = DatetimeWithNanoseconds
 
+        def normalize_value(value):
+            if should_convert and isinstance(value, datetime_type):
+                return value.isoformat()
+            if isinstance(value, dict):
+                for inner_key, inner_value in value.items():
+                    value[inner_key] = normalize_value(inner_value)
+                return value
+            if isinstance(value, list):
+                return [normalize_value(item) for item in value]
+            return value
 
+        if doc_id:
+            doc = collection_ref.document(doc_id).get()
+            if not doc.exists:
+                raise HTTPException(status_code=404, detail=f"No existe avance con id: {doc_id}")
 
+            doc_data = doc.to_dict() or {}
+            if should_convert:
+                doc_data = normalize_value(doc_data)
+            doc_data['id'] = doc.id
 
-# ============================================================================
-# ENDPOINTS DE INTEROPERABILIDAD CON ARTEFACTO DE SEGUIMIENTO
-# ============================================================================
+            return create_utf8_response({
+                "data": [doc_data],
+                "count": 1,
+                "filters": {
+                    "doc_id": doc_id,
+                    "intervencion_id": intervencion_id
+                }
+            })
 
-@app.get("/contratos/init_contratos_seguimiento", tags=["Interoperabilidad con Artefacto de Seguimiento"])
-@async_cache(ttl_seconds=300)  # Cache de 5 minutos para contratos
-async def init_contratos_seguimiento(
-    referencia_contrato: Optional[str] = Query(None, description="Referencia del contrato (búsqueda parcial)"),
-    nombre_centro_gestor: Optional[str] = Query(None, description="Centro gestor responsable (exacto)")
-):
-    """
-    ## Inicialización de Contratos para Seguimiento
-    
-    Obtiene datos combinados desde las colecciones `contratos_emprestito`, `ordenes_compra_emprestito` 
-    y `convenios_transferencias_emprestito` con filtros optimizados.
-    
-    **Colecciones incluidas**:
-    - `contratos_emprestito`: Contratos de empréstito
-    - `ordenes_compra_emprestito`: Órdenes de compra TVEC
-    - `convenios_transferencias_emprestito`: Convenios de transferencia
-    
-    **Campos retornados**: bpin, banco, nombre_centro_gestor, estado_contrato, referencia_contrato, 
-    referencia_proceso, nombre_resumido_proceso, objeto_contrato, modalidad_contratacion, fecha_inicio_contrato, fecha_firma, 
-    fecha_fin_contrato, _source (indica la colección de origen)
-    
-    **Filtros**:
-    - `referencia_contrato`: Textbox - búsqueda parcial
-    - `nombre_centro_gestor`: Dropdown - selección exacta
-    
-    Sin filtros retorna todos los datos disponibles de las tres colecciones.
-    """
-    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
-        return {"success": False, "error": "Firebase no disponible", "data": [], "count": 0}
-    
-    try:
-        filters = {}
-        if referencia_contrato:
-            filters["referencia_contrato"] = referencia_contrato
-        if nombre_centro_gestor:
-            filters["nombre_centro_gestor"] = nombre_centro_gestor
-        
-        result = await get_contratos_init_data(filters)
-        
-        if not result["success"]:
-            raise HTTPException(status_code=500, detail=result.get('error', 'Error obteniendo contratos'))
-        
-        return result
-        
+        query = collection_ref
+        if intervencion_id:
+            query = query.where('intervencion_id', '==', intervencion_id)
+        docs = query.stream()
+
+        data = []
+        for doc in docs:
+            doc_data = doc.to_dict() or {}
+            if should_convert:
+                doc_data = normalize_value(doc_data)
+            doc_data['id'] = doc.id
+            data.append(doc_data)
+
+        return create_utf8_response({
+            "data": data,
+            "count": len(data),
+            "filters": {
+                "doc_id": doc_id,
+                "intervencion_id": intervencion_id
+            }
+        })
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error procesando contratos: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error leyendo avances de unidades de proyecto: {str(e)}"
+        )
 
-@app.post("/reportes_contratos/", tags=["Interoperabilidad con Artefacto de Seguimiento"])
+
+@app.post("/solicitudes_cambios_unidad_proyecto", tags=["Unidades de Proyecto"], summary="🟢 POST | Solicitud de cambios en Unidad de Proyecto")
+@optional_rate_limit("30/minute")
+async def crear_solicitud_cambio_unidad_proyecto(
+    request: Request,
+    upid: Optional[str] = Body(None, description="ID específico de unidad (ej: UNP-1000)"),
+    nombre_centro_gestor: Optional[str] = Body(None, description="Centro gestor responsable"),
+    tipo_intervencion: Optional[str] = Body(None, description="Tipo de intervención"),
+    estado: Optional[str] = Body(None, description="Estado del proyecto"),
+    clase_up: Optional[str] = Body(None, description="Clase de la unidad de proyecto"),
+    tipo_equipamiento: Optional[str] = Body(None, description="Tipo de equipamiento"),
+    comuna_corregimiento: Optional[str] = Body(None, description="Comuna o corregimiento"),
+    barrio_vereda: Optional[str] = Body(None, description="Barrio o vereda"),
+    frente_activo: Optional[str] = Body(None, description="Frente activo"),
+    fuente_financiacion: Optional[str] = Body(None, description="Fuente de financiación"),
+    ano: Optional[int] = Body(None, description="Año de ejecución")
+):
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase not available")
+
+    try:
+        db = get_firestore_client()
+        if db is None:
+            raise HTTPException(status_code=503, detail="No se pudo conectar a Firestore")
+
+        now_iso = datetime.now().isoformat()
+        solicitud_payload = {
+            "upid": upid,
+            "nombre_centro_gestor": nombre_centro_gestor,
+            "tipo_intervencion": tipo_intervencion,
+            "estado": estado,
+            "clase_up": clase_up,
+            "tipo_equipamiento": tipo_equipamiento,
+            "comuna_corregimiento": comuna_corregimiento,
+            "barrio_vereda": barrio_vereda,
+            "frente_activo": frente_activo,
+            "fuente_financiacion": fuente_financiacion,
+            "ano": ano,
+            "created_at": now_iso,
+            "updated_at": now_iso
+        }
+        solicitud_payload = {key: value for key, value in solicitud_payload.items() if value is not None}
+
+        doc_id = str(uuid.uuid4())
+        db.collection('solicitudes_cambios_unidades_proyecto').document(doc_id).set(solicitud_payload)
+
+        return create_utf8_response({
+            "id": doc_id,
+            "collection": "solicitudes_cambios_unidades_proyecto",
+            "data": solicitud_payload
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error registrando solicitud de cambio de unidad de proyecto: {str(e)}"
+        )
+
+
+@app.post("/solicitudes_cambios_intervencion", tags=["Unidades de Proyecto"], summary="🟢 POST | Solicitud de cambios en Intervención")
+@optional_rate_limit("30/minute")
+async def crear_solicitud_cambio_intervencion(
+    request: Request,
+    avance_obra: Optional[float] = Body(None, description="Avance de obra"),
+    bpin: Optional[int] = Body(None, description="BPIN"),
+    cantidad: Optional[int] = Body(None, description="Cantidad"),
+    clase_up: Optional[str] = Body(None, description="Clase UP"),
+    estado: Optional[str] = Body(None, description="Estado de la intervención"),
+    fecha_fin: Optional[str] = Body(None, description="Fecha fin (string)"),
+    fecha_inicio: Optional[str] = Body(None, description="Fecha inicio (string)"),
+    fuente_financiacion: Optional[str] = Body(None, description="Fuente de financiación"),
+    identificador: Optional[str] = Body(None, description="Identificador"),
+    intervencion_id: Optional[str] = Body(None, description="ID de la intervención"),
+    nombre_centro_gestor: Optional[str] = Body(None, description="Nombre centro gestor"),
+    presupuesto_base: Optional[float] = Body(None, description="Presupuesto base"),
+    referencia_contrato: Optional[str] = Body(None, description="Referencia contrato"),
+    referencia_proceso: Optional[str] = Body(None, description="Referencia proceso"),
+    tipo_intervencion: Optional[str] = Body(None, description="Tipo de intervención"),
+    unidad: Optional[str] = Body(None, description="Unidad"),
+    upid: Optional[str] = Body(None, description="UPID"),
+    url_proceso: Optional[str] = Body(None, description="URL proceso")
+):
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase not available")
+
+    try:
+        db = get_firestore_client()
+        if db is None:
+            raise HTTPException(status_code=503, detail="No se pudo conectar a Firestore")
+
+        now_iso = datetime.now().isoformat()
+        solicitud_payload = {
+            "avance_obra": avance_obra,
+            "bpin": bpin,
+            "cantidad": cantidad,
+            "clase_up": clase_up,
+            "estado": estado,
+            "fecha_fin": fecha_fin,
+            "fecha_inicio": fecha_inicio,
+            "fuente_financiacion": fuente_financiacion,
+            "identificador": identificador,
+            "intervencion_id": intervencion_id,
+            "nombre_centro_gestor": nombre_centro_gestor,
+            "presupuesto_base": presupuesto_base,
+            "referencia_contrato": referencia_contrato,
+            "referencia_proceso": referencia_proceso,
+            "tipo_intervencion": tipo_intervencion,
+            "unidad": unidad,
+            "upid": upid,
+            "url_proceso": url_proceso,
+            "created_at": now_iso,
+            "updated_at": now_iso
+        }
+        solicitud_payload = {key: value for key, value in solicitud_payload.items() if value is not None}
+
+        doc_id = str(uuid.uuid4())
+        db.collection('solicitudes_cambios_intervenciones').document(doc_id).set(solicitud_payload)
+
+        return create_utf8_response({
+            "id": doc_id,
+            "collection": "solicitudes_cambios_intervenciones",
+            "data": solicitud_payload
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error registrando solicitud de cambio de intervención: {str(e)}"
+        )
+
+
+@app.post("/crear_unidad_proyecto", tags=["Unidades de Proyecto"], summary="🟢 POST | Crear Unidad de Proyecto")
+@optional_rate_limit("30/minute")
+async def crear_unidad_proyecto(
+    request: Request,
+    nombre_up: Optional[str] = Body(None, description="Nombre de la unidad de proyecto"),
+    nombre_up_detalle: Optional[str] = Body(None, description="Detalle del nombre de la unidad"),
+    estado: Optional[str] = Body(None, description="Estado del proyecto"),
+    tipo_intervencion: Optional[str] = Body(None, description="Tipo de intervención"),
+    tipo_equipamiento: Optional[str] = Body(None, description="Tipo de equipamiento"),
+    clase_up: Optional[str] = Body(None, description="Clase UP"),
+    nombre_centro_gestor: Optional[str] = Body(None, description="Nombre del centro gestor"),
+    comuna_corregimiento: Optional[str] = Body(None, description="Comuna o corregimiento"),
+    barrio_vereda: Optional[str] = Body(None, description="Barrio o vereda"),
+    frente_activo: Optional[str] = Body(None, description="Frente activo"),
+    fuente_financiacion: Optional[str] = Body(None, description="Fuente de financiación"),
+    direccion: Optional[str] = Body(None, description="Dirección"),
+    ano: Optional[int] = Body(None, description="Año"),
+    avance_obra: Optional[float] = Body(None, description="Avance de obra"),
+    presupuesto_base: Optional[float] = Body(None, description="Presupuesto base"),
+    geometry: Optional[Dict[str, Any]] = Body(None, description="Geometría GeoJSON")
+):
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase not available")
+
+    try:
+        db = get_firestore_client()
+        if db is None:
+            raise HTTPException(status_code=503, detail="No se pudo conectar a Firestore")
+
+        def extract_upid_number(upid_value: Any) -> Optional[int]:
+            if upid_value is None:
+                return None
+            match = re.match(r"^UNP-(\d+)$", str(upid_value).strip(), re.IGNORECASE)
+            if not match:
+                return None
+            return int(match.group(1))
+
+        max_upid_number = 0
+        collections_to_scan = ["unidades_proyecto", "unidades_precto"]
+
+        for collection_name in collections_to_scan:
+            docs = db.collection(collection_name).select(["upid"]).stream()
+            for doc in docs:
+                doc_data = doc.to_dict() or {}
+                upid_number = extract_upid_number(doc_data.get("upid"))
+                if upid_number is not None:
+                    max_upid_number = max(max_upid_number, upid_number)
+
+        new_upid = f"UNP-{max_upid_number + 1}"
+        now_iso = datetime.now().isoformat()
+
+        unidad_payload = {
+            "nombre_up": nombre_up,
+            "nombre_up_detalle": nombre_up_detalle,
+            "estado": estado,
+            "tipo_intervencion": tipo_intervencion,
+            "tipo_equipamiento": tipo_equipamiento,
+            "clase_up": clase_up,
+            "nombre_centro_gestor": nombre_centro_gestor,
+            "comuna_corregimiento": comuna_corregimiento,
+            "barrio_vereda": barrio_vereda,
+            "frente_activo": frente_activo,
+            "fuente_financiacion": fuente_financiacion,
+            "direccion": direccion,
+            "ano": ano,
+            "avance_obra": avance_obra,
+            "presupuesto_base": presupuesto_base,
+            "geometry": geometry
+        }
+        unidad_payload = {key: value for key, value in unidad_payload.items() if value is not None}
+        unidad_payload["upid"] = new_upid
+        unidad_payload["created_at"] = now_iso
+        unidad_payload["updated_at"] = now_iso
+
+        doc_id = str(uuid.uuid4())
+        db.collection("unidades_precto").document(doc_id).set(unidad_payload)
+
+        return create_utf8_response({
+            "id": doc_id,
+            "collection": "unidades_precto",
+            "data": unidad_payload
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error creando unidad de proyecto: {str(e)}"
+        )
+
+
+@app.post("/crear_intervencion", tags=["Unidades de Proyecto"], summary="🟢 POST | Crear Intervención")
+@optional_rate_limit("30/minute")
+async def crear_intervencion(
+    request: Request,
+    upid: str = Body(..., description="UPID válido existente en unidades_proyecto"),
+    avance_obra: Optional[float] = Body(None, description="Avance de obra"),
+    bpin: Optional[int] = Body(None, description="BPIN"),
+    cantidad: Optional[int] = Body(None, description="Cantidad"),
+    clase_up: Optional[str] = Body(None, description="Clase UP"),
+    estado: Optional[str] = Body(None, description="Estado de la intervención"),
+    fecha_fin: Optional[str] = Body(None, description="Fecha fin (string)"),
+    fecha_inicio: Optional[str] = Body(None, description="Fecha inicio (string)"),
+    fuente_financiacion: Optional[str] = Body(None, description="Fuente de financiación"),
+    identificador: Optional[str] = Body(None, description="Identificador"),
+    nombre_centro_gestor: Optional[str] = Body(None, description="Nombre centro gestor"),
+    presupuesto_base: Optional[float] = Body(None, description="Presupuesto base"),
+    referencia_contrato: Optional[str] = Body(None, description="Referencia contrato"),
+    referencia_proceso: Optional[str] = Body(None, description="Referencia proceso"),
+    tipo_intervencion: Optional[str] = Body(None, description="Tipo de intervención"),
+    unidad: Optional[str] = Body(None, description="Unidad"),
+    url_proceso: Optional[str] = Body(None, description="URL proceso"),
+    descripcion_intervencion: Optional[str] = Body(None, description="Descripción de la intervención")
+):
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase not available")
+
+    try:
+        db = get_firestore_client()
+        if db is None:
+            raise HTTPException(status_code=503, detail="No se pudo conectar a Firestore")
+
+        upid_value = str(upid).strip()
+        if not upid_value:
+            raise HTTPException(status_code=400, detail="El campo upid es obligatorio para crear una intervención")
+
+        upid_docs = list(db.collection("unidades_proyecto").where("upid", "==", upid_value).limit(1).stream())
+        if not upid_docs:
+            raise HTTPException(status_code=400, detail=f"El upid {upid_value} no existe en unidades_proyecto")
+
+        def extract_intervencion_number(intervencion_value: Any, upid_base: str) -> Optional[int]:
+            if intervencion_value is None:
+                return None
+            pattern = rf"^{re.escape(upid_base)}-INT-(\d+)$"
+            match = re.match(pattern, str(intervencion_value).strip(), re.IGNORECASE)
+            if not match:
+                return None
+            return int(match.group(1))
+
+        max_intervencion_number = 0
+        collections_to_scan = ["intervenciones_unidades_proyecto", "unidades_proyecto_intervenciones"]
+
+        for collection_name in collections_to_scan:
+            docs = db.collection(collection_name).where("upid", "==", upid_value).stream()
+            for doc in docs:
+                doc_data = doc.to_dict() or {}
+                intervencion_number = extract_intervencion_number(doc_data.get("intervencion_id"), upid_value)
+                if intervencion_number is None:
+                    intervencion_number = extract_intervencion_number(doc.id, upid_value)
+                if intervencion_number is not None:
+                    max_intervencion_number = max(max_intervencion_number, intervencion_number)
+
+        new_intervencion_id = f"{upid_value}-INT-{max_intervencion_number + 1}"
+        now_iso = datetime.now().isoformat()
+
+        intervencion_payload = {
+            "avance_obra": avance_obra,
+            "bpin": bpin,
+            "cantidad": cantidad,
+            "clase_up": clase_up,
+            "estado": estado,
+            "fecha_fin": fecha_fin,
+            "fecha_inicio": fecha_inicio,
+            "fuente_financiacion": fuente_financiacion,
+            "identificador": identificador,
+            "nombre_centro_gestor": nombre_centro_gestor,
+            "presupuesto_base": presupuesto_base,
+            "referencia_contrato": referencia_contrato,
+            "referencia_proceso": referencia_proceso,
+            "tipo_intervencion": tipo_intervencion,
+            "unidad": unidad,
+            "url_proceso": url_proceso,
+            "descripcion_intervencion": descripcion_intervencion
+        }
+        intervencion_payload = {key: value for key, value in intervencion_payload.items() if value is not None}
+        intervencion_payload["upid"] = upid_value
+        intervencion_payload["intervencion_id"] = new_intervencion_id
+        intervencion_payload["created_at"] = now_iso
+        intervencion_payload["updated_at"] = now_iso
+
+        doc_id = str(uuid.uuid4())
+        db.collection("unidades_proyecto_intervenciones").document(doc_id).set(intervencion_payload)
+
+        return create_utf8_response({
+            "id": doc_id,
+            "collection": "unidades_proyecto_intervenciones",
+            "data": intervencion_payload
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error creando intervención: {str(e)}"
+        )
+
+
+@app.put("/modificar/unidad_proyecto", tags=["Unidades de Proyecto"], summary="🟠 PUT | Modificar Unidad de Proyecto")
+@optional_rate_limit("30/minute")
+async def modificar_unidad_proyecto(
+    request: Request,
+    payload: Optional[Dict[str, Any]] = Body(None, description="Datos a modificar. Debe incluir upid")
+):
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase not available")
+
+    try:
+        db = get_firestore_client()
+        if db is None:
+            raise HTTPException(status_code=503, detail="No se pudo conectar a Firestore")
+
+        body = dict(payload or {})
+        upid_value = str(body.get("upid", "")).strip()
+        if not upid_value:
+            raise HTTPException(status_code=400, detail="Debe enviar upid para modificar la unidad de proyecto")
+
+        docs = list(db.collection("unidades_proyecto").where("upid", "==", upid_value).limit(1).stream())
+        if not docs:
+            raise HTTPException(status_code=404, detail=f"No existe unidad_proyecto con upid: {upid_value}")
+
+        changes = {key: value for key, value in body.items() if key != "upid"}
+        if not changes:
+            raise HTTPException(status_code=400, detail="No se enviaron campos a modificar")
+
+        now_iso = datetime.now().isoformat()
+        changes["updated_at"] = now_iso
+
+        doc = docs[0]
+        doc.reference.update(changes)
+
+        updated_data = doc.to_dict() or {}
+        updated_data.update(changes)
+
+        return create_utf8_response({
+            "id": doc.id,
+            "collection": "unidades_proyecto",
+            "upid": upid_value,
+            "data": updated_data
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error modificando unidad de proyecto: {str(e)}"
+        )
+
+
+@app.put("/modificar/intervencion", tags=["Unidades de Proyecto"], summary="🟠 PUT | Modificar Intervención")
+@optional_rate_limit("30/minute")
+async def modificar_intervencion(
+    request: Request,
+    payload: Optional[Dict[str, Any]] = Body(None, description="Datos a modificar. Debe incluir intervencion_id")
+):
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase not available")
+
+    try:
+        db = get_firestore_client()
+        if db is None:
+            raise HTTPException(status_code=503, detail="No se pudo conectar a Firestore")
+
+        body = dict(payload or {})
+        intervencion_id_value = str(body.get("intervencion_id", "")).strip()
+        if not intervencion_id_value:
+            raise HTTPException(status_code=400, detail="Debe enviar intervencion_id para modificar la intervención")
+
+        docs = list(
+            db.collection("intervenciones_unidades_proyecto")
+            .where("intervencion_id", "==", intervencion_id_value)
+            .limit(1)
+            .stream()
+        )
+        if not docs:
+            raise HTTPException(status_code=404, detail=f"No existe intervención con intervencion_id: {intervencion_id_value}")
+
+        changes = {key: value for key, value in body.items() if key != "intervencion_id"}
+        if not changes:
+            raise HTTPException(status_code=400, detail="No se enviaron campos a modificar")
+
+        now_iso = datetime.now().isoformat()
+        changes["updated_at"] = now_iso
+
+        doc = docs[0]
+        doc.reference.update(changes)
+
+        updated_data = doc.to_dict() or {}
+        updated_data.update(changes)
+
+        return create_utf8_response({
+            "id": doc.id,
+            "collection": "intervenciones_unidades_proyecto",
+            "intervencion_id": intervencion_id_value,
+            "data": updated_data
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error modificando intervención: {str(e)}"
+        )
+
+
+@app.delete("/eliminar_unidad_proyecto", tags=["Unidades de Proyecto"], summary="🔴 DELETE | Eliminar Unidad de Proyecto")
+@optional_rate_limit("30/minute")
+async def eliminar_unidad_proyecto(
+    request: Request,
+    upid: str = Query(..., description="UPID de la unidad de proyecto a eliminar")
+):
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase not available")
+
+    try:
+        db = get_firestore_client()
+        if db is None:
+            raise HTTPException(status_code=503, detail="No se pudo conectar a Firestore")
+
+        docs = list(db.collection("unidades_proyecto").where("upid", "==", upid).stream())
+        if not docs:
+            raise HTTPException(status_code=404, detail=f"No existe unidad_proyecto con upid: {upid}")
+
+        deleted_count = 0
+        for doc in docs:
+            doc.reference.delete()
+            deleted_count += 1
+
+        return create_utf8_response({
+            "deleted": True,
+            "collection": "unidades_proyecto",
+            "upid": upid,
+            "deleted_count": deleted_count
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error eliminando unidad de proyecto: {str(e)}"
+        )
+
+
+@app.delete("/eliminar_intervencion", tags=["Unidades de Proyecto"], summary="🔴 DELETE | Eliminar Intervención")
+@optional_rate_limit("30/minute")
+async def eliminar_intervencion(
+    request: Request,
+    intervencion_id: str = Query(..., description="ID de la intervención a eliminar")
+):
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase not available")
+
+    try:
+        db = get_firestore_client()
+        if db is None:
+            raise HTTPException(status_code=503, detail="No se pudo conectar a Firestore")
+
+        docs = list(
+            db.collection("intervenciones_unidades_proyecto")
+            .where("intervencion_id", "==", intervencion_id)
+            .stream()
+        )
+        if not docs:
+            raise HTTPException(status_code=404, detail=f"No existe intervención con intervencion_id: {intervencion_id}")
+
+        deleted_count = 0
+        for doc in docs:
+            doc.reference.delete()
+            deleted_count += 1
+
+        return create_utf8_response({
+            "deleted": True,
+            "collection": "intervenciones_unidades_proyecto",
+            "intervencion_id": intervencion_id,
+            "deleted_count": deleted_count
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error eliminando intervención: {str(e)}"
+        )
+
+
+@app.post("/registrar_avance_up", tags=["Unidades de Proyecto"], summary="🟢 POST | Registrar Avance UP")
+@optional_rate_limit("30/minute")
+async def registrar_avance_up(
+    request: Request,
+    avance_obra: float = Form(..., description="Avance de obra (admite decimales)"),
+    observaciones: str = Form(..., description="Observaciones del avance"),
+    intervencion_id: str = Form(..., min_length=1, description="ID de la intervención"),
+    registro_fotografico: List[UploadFile] = File(..., description="Uno o más archivos de imagen")
+):
+    """
+    ## 🟢 POST | Registrar avance de unidad de proyecto
+
+    - Comprime imágenes para optimización web
+    - Guarda imágenes en S3 bajo folder por `intervencion_id`
+    - Persiste el avance y urls en Firestore
+    """
+    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
+
+    if not registro_fotografico:
+        raise HTTPException(status_code=400, detail="Debe adjuntar al menos una imagen en registro_fotografico")
+
+    try:
+        import io
+        import unicodedata
+        from PIL import Image, UnidentifiedImageError
+        from api.utils.s3_document_manager import S3DocumentManager, BOTO3_AVAILABLE
+
+        if not BOTO3_AVAILABLE:
+            raise HTTPException(status_code=500, detail="boto3 no disponible para subida a S3")
+
+        credentials_path = os.getenv('AWS_CREDENTIALS_FILE_UNIDADES_PROYECTO', 'credentials/aws_credentials.json')
+        bucket_unidades_proyecto = os.getenv('S3_BUCKET_UNIDADES_PROYECTO', 'unidades-proyecto-documents')
+        fotos_prefix = os.getenv('S3_PREFIX_UNIDADES_PROYECTO', 'unidades_proyecto_photos').strip('/')
+
+        try:
+            s3_manager = S3DocumentManager(credentials_path=credentials_path)
+            # Para este endpoint se usa explícitamente el bucket de unidades de proyecto
+            s3_manager.bucket_name = bucket_unidades_proyecto
+            s3_client = s3_manager.s3_client
+            aws_profile_usado = f"archivo:{credentials_path}"
+
+            try:
+                s3_client.head_bucket(Bucket=bucket_unidades_proyecto)
+            except Exception:
+                fallback_bucket = s3_manager.credentials.get('bucket_name', 'unidades-proyecto-documents')
+                if fallback_bucket and fallback_bucket != bucket_unidades_proyecto:
+                    try:
+                        s3_client.head_bucket(Bucket=fallback_bucket)
+                        bucket_unidades_proyecto = fallback_bucket
+                        s3_manager.bucket_name = fallback_bucket
+                    except Exception as fallback_error:
+                        raise HTTPException(
+                            status_code=500,
+                            detail=(
+                                f"Bucket S3 inválido/configurado incorrectamente ({bucket_unidades_proyecto}) "
+                                f"y fallback ({fallback_bucket}) no accesible: {str(fallback_error)}"
+                            )
+                        )
+                else:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=(
+                            f"Bucket S3 inválido/configurado incorrectamente: {bucket_unidades_proyecto}"
+                        )
+                    )
+        except HTTPException:
+            raise
+        except Exception as s3_setup_error:
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    f"No se pudo inicializar S3 para registrar_avance_up con {credentials_path}: {str(s3_setup_error)}"
+                )
+            )
+
+        folder_key = f"{fotos_prefix}/registro_avance/{intervencion_id}/"
+
+        folder_exists = False
+        try:
+            check_response = s3_client.list_objects_v2(
+                Bucket=bucket_unidades_proyecto,
+                Prefix=folder_key,
+                MaxKeys=1
+            )
+            folder_exists = bool(check_response.get('Contents'))
+        except Exception:
+            folder_exists = False
+
+        if not folder_exists:
+            try:
+                s3_client.put_object(
+                    Bucket=bucket_unidades_proyecto,
+                    Key=folder_key,
+                    Body=b''
+                )
+            except Exception as folder_error:
+                raise HTTPException(
+                    status_code=500,
+                    detail=(
+                        f"No se pudo crear/verificar folder en S3 ({bucket_unidades_proyecto}) "
+                        f"usando perfil {aws_profile_usado}: {str(folder_error)}"
+                    )
+                )
+
+        uploaded_urls = []
+        failed_files = []
+
+        def to_ascii_s3_metadata(value: Any, default: str = "") -> str:
+            text = str(value) if value is not None else default
+            text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+            text = "".join(ch for ch in text if 32 <= ord(ch) <= 126)
+            text = text.strip()
+            if not text:
+                return default
+            return text[:200]
+
+        for idx, photo in enumerate(registro_fotografico):
+            try:
+                file_bytes = await photo.read()
+                if not file_bytes:
+                    raise ValueError("archivo vacío")
+
+                image = Image.open(io.BytesIO(file_bytes))
+
+                if image.mode not in ("RGB", "L"):
+                    image = image.convert("RGB")
+                elif image.mode == "L":
+                    image = image.convert("RGB")
+
+                max_dimension = 1920
+                image.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
+
+                compressed_buffer = io.BytesIO()
+                image.save(
+                    compressed_buffer,
+                    format='JPEG',
+                    quality=78,
+                    optimize=True,
+                    progressive=True
+                )
+                compressed_buffer.seek(0)
+
+                timestamp_human = datetime.now().strftime('%d/%m/%Y - %H:%M:%S')
+                timestamp_safe = timestamp_human.replace('/', '-').replace(':', '-')
+                file_name = f"{intervencion_id} - {timestamp_safe} - {idx + 1}.jpg"
+                s3_key = f"{folder_key}{file_name}"
+
+                s3_client.put_object(
+                    Bucket=bucket_unidades_proyecto,
+                    Key=s3_key,
+                    Body=compressed_buffer.getvalue(),
+                    ContentType='image/jpeg',
+                    Metadata={
+                        'intervencion_id': to_ascii_s3_metadata(intervencion_id, default='sin_intervencion'),
+                        'timestamp_human': to_ascii_s3_metadata(timestamp_human, default='sin_timestamp'),
+                        'original_filename': to_ascii_s3_metadata(photo.filename or 'sin_nombre', default='sin_nombre')
+                    }
+                )
+
+                uploaded_urls.append(f"https://{bucket_unidades_proyecto}.s3.amazonaws.com/{s3_key}")
+
+            except (UnidentifiedImageError, ValueError) as image_error:
+                failed_files.append({
+                    "filename": photo.filename,
+                    "error": f"Archivo no válido como imagen: {str(image_error)}"
+                })
+            except Exception as upload_error:
+                failed_files.append({
+                    "filename": photo.filename,
+                    "error": str(upload_error)
+                })
+
+        db = get_firestore_client()
+        if db is None:
+            raise HTTPException(status_code=503, detail="No se pudo conectar a Firestore")
+
+        now_iso = datetime.now().isoformat()
+        avance_payload = {
+            "avance_obra": avance_obra,
+            "observaciones": observaciones,
+            "intervencion_id": intervencion_id,
+            "registro_fotografico_urls": uploaded_urls,
+            "total_fotos": len(registro_fotografico),
+            "fotos_subidas": len(uploaded_urls),
+            "fotos_fallidas": len(failed_files),
+            "created_at": now_iso,
+            "updated_at": now_iso
+        }
+
+        doc_id = str(uuid.uuid4())
+        db.collection('avances_unidades_proyecto').document(doc_id).set(avance_payload)
+
+        response_payload = {
+            "id": doc_id,
+            "intervencion_id": intervencion_id,
+            "avance_obra": avance_obra,
+            "observaciones": observaciones,
+            "registro_fotografico_urls": uploaded_urls,
+            "fotos_subidas": len(uploaded_urls),
+            "fotos_fallidas": len(failed_files),
+            "timestamp": now_iso
+        }
+
+        return create_utf8_response(response_payload)
+
+    except HTTPException:
+        raise
+    except ImportError as import_error:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Dependencia faltante para compresión/subida de imágenes: {str(import_error)}"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error registrando avance UP: {str(e)}")
+
 async def crear_reporte_contrato(
     # Información básica del reporte
     referencia_contrato: str = Form(..., min_length=1, description="Referencia del contrato"),
