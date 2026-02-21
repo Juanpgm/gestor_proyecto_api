@@ -25,6 +25,7 @@ email-validator==2.3.0
 
 # Manejo de formularios y archivos
 python-multipart==0.0.9
+Pillow==11.1.0
 
 # Autenticación y seguridad
 PyJWT>=2.10.1
