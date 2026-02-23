@@ -5,9 +5,27 @@ $ErrorActionPreference = "Continue"
 
 Write-Host "🔐 Configurando secrets en GitHub..." -ForegroundColor Cyan
 
+function Get-DefaultApiUrl {
+    if ($env:API_BASE_URL -and $env:API_BASE_URL.Trim() -ne "") {
+        return $env:API_BASE_URL.Trim().TrimEnd('/')
+    }
+
+    $defaultUrlFile = Join-Path $PSScriptRoot "config\api_base_url.txt"
+    if (Test-Path $defaultUrlFile) {
+        $fileUrl = (Get-Content $defaultUrlFile -Raw).Trim().TrimEnd('/')
+        if ($fileUrl -ne "") {
+            return $fileUrl
+        }
+    }
+
+    return "https://tu-api.railway.app"
+}
+
 # Valores
-$API_URL = "https://gestorproyectoapi-production.up.railway.app"
+$API_URL = Get-DefaultApiUrl
 $FIREBASE_UID = "0WGJbRl09nVjf5jN9iO7O9dW5p52"
+
+Write-Host "🌐 API_BASE_URL por defecto: $API_URL" -ForegroundColor DarkCyan
 
 # Obtener owner y repo del token
 Write-Host "`n📋 Obteniendo información del repositorio..." -ForegroundColor Yellow

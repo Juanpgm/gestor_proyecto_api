@@ -225,8 +225,9 @@ def main():
         print("4. Both endpoints should now return consistent results")
         
         print("\\n📝 Test Commands:")
-        print('curl "https://gestorproyectoapi-production.up.railway.app/unidades-proyecto/geometry?comuna_corregimiento=COMUNA%2002&limit=25"')
-        print('curl "https://gestorproyectoapi-production.up.railway.app/unidades-proyecto/attributes?comuna_corregimiento=COMUNA%2002&limit=25"')
+        api_base_url = os.getenv("API_BASE_URL", "http://localhost:8000").rstrip('/')
+        print(f'curl "{api_base_url}/unidades-proyecto/geometry?comuna_corregimiento=COMUNA%2002&limit=25"')
+        print(f'curl "{api_base_url}/unidades-proyecto/attributes?comuna_corregimiento=COMUNA%2002&limit=25"')
         
         return True
     else:

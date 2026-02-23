@@ -7,7 +7,24 @@ Usa GitHub CLI y Firebase Admin SDK
 import subprocess
 import sys
 import json
+import os
 from pathlib import Path
+
+DEFAULT_API_URL_FILE = Path(__file__).resolve().parent / "config" / "api_base_url.txt"
+
+
+def get_default_api_url():
+    """Obtener URL base por defecto desde variable de entorno o archivo central."""
+    env_url = os.getenv("API_BASE_URL", "").strip().rstrip('/')
+    if env_url:
+        return env_url
+
+    if DEFAULT_API_URL_FILE.exists():
+        file_url = DEFAULT_API_URL_FILE.read_text(encoding='utf-8').strip().rstrip('/')
+        if file_url:
+            return file_url
+
+    return "https://tu-api.railway.app"
 
 def run_command(cmd, capture=True):
     """Ejecutar comando y retornar resultado"""
@@ -211,11 +228,14 @@ def main():
         opcion = input("\nSelecciona una opción (1-8): ").strip()
         
         if opcion == "1":
-            url = input("\n📝 Ingresa la URL de tu API (ej: https://tu-api.railway.app): ").strip()
-            if url:
-                # Remover trailing slash si existe
-                url = url.rstrip('/')
-                set_secret("API_BASE_URL", url)
+            default_url = get_default_api_url()
+            url = input(f"\n📝 Ingresa la URL de tu API (default: {default_url}): ").strip()
+            if not url:
+                url = default_url
+
+            # Remover trailing slash si existe
+            url = url.rstrip('/')
+            set_secret("API_BASE_URL", url)
         
         elif opcion == "2":
             uid = get_firebase_uid()

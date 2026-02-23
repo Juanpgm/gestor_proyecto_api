@@ -36,7 +36,7 @@ El servidor está optimizado con:
 
 ```bash
 # Con curl
-curl -I --http2 https://gestorproyectoapi-production.up.railway.app/
+curl -I --http2 ${API_BASE_URL}/
 
 # Con browser DevTools
 # Network tab → Protocol column debe mostrar "h2"

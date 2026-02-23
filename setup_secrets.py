@@ -3,6 +3,24 @@
 
 import subprocess
 import sys
+import os
+from pathlib import Path
+
+DEFAULT_API_URL_FILE = Path(__file__).resolve().parent / "config" / "api_base_url.txt"
+
+
+def get_default_api_url():
+    """Obtener URL base por defecto desde variable de entorno o archivo central."""
+    env_url = os.getenv("API_BASE_URL", "").strip().rstrip('/')
+    if env_url:
+        return env_url
+
+    if DEFAULT_API_URL_FILE.exists():
+        file_url = DEFAULT_API_URL_FILE.read_text(encoding='utf-8').strip().rstrip('/')
+        if file_url:
+            return file_url
+
+    return "https://tu-api.railway.app"
 
 def run_cmd(cmd):
     """Ejecutar comando"""
@@ -70,13 +88,14 @@ if not uid:
         sys.exit(1)
 
 # 2. Configurar API_BASE_URL
+default_api_url = get_default_api_url()
 print("\n📝 Configurando API_BASE_URL...")
-print("💡 Ingresa la URL de tu API (ej: https://gestorproyectoapi-production.up.railway.app)")
+print(f"💡 Ingresa la URL de tu API (default: {default_api_url})")
 api_url = input("URL: ").strip()
 
 if not api_url:
-    print("⚠️ Usando URL por defecto de Railway...")
-    api_url = "https://gestorproyectoapi-production.up.railway.app"
+    print("⚠️ Usando URL por defecto centralizada...")
+    api_url = default_api_url
 
 api_url = api_url.rstrip('/')
 
