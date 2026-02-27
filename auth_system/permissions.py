@@ -8,6 +8,23 @@ from datetime import datetime, timezone
 from .constants import ROLES, ROLE_HIERARCHY, FIREBASE_COLLECTIONS
 
 
+def _normalize_roles(raw_roles) -> List[str]:
+    if raw_roles is None:
+        return []
+    if isinstance(raw_roles, str):
+        value = raw_roles.strip()
+        return [value] if value else []
+    if isinstance(raw_roles, (list, tuple, set)):
+        normalized = []
+        for role in raw_roles:
+            role_str = str(role).strip()
+            if role_str:
+                normalized.append(role_str)
+        return normalized
+    role_str = str(raw_roles).strip()
+    return [role_str] if role_str else []
+
+
 def get_user_permissions(user_uid: str, db_client=None) -> List[str]:
     """
     Obtiene todos los permisos de un usuario basándose en sus roles
@@ -31,7 +48,10 @@ def get_user_permissions(user_uid: str, db_client=None) -> List[str]:
             return []
         
         user_data = user_doc.to_dict()
-        user_roles = user_data.get('roles', [])
+        user_roles = _normalize_roles(user_data.get('roles', []))
+
+        if "super_admin" in user_roles:
+            return ["*"]
         
         # Recolectar permisos de todos los roles
         all_permissions = set()
