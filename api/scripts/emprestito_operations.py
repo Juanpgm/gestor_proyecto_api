@@ -3844,7 +3844,7 @@ async def leer_proyecciones_emprestito() -> Dict[str, Any]:
         
         # Ordenar por fecha de carga (más recientes primero)
         proyecciones_data.sort(key=lambda x: x.get('fecha_carga', ''), reverse=True)
-        
+
         return {
             "success": True,
             "data": proyecciones_data,
@@ -4384,6 +4384,66 @@ async def actualizar_orden_compra_por_numero(numero_orden: str, campos_actualiza
 
     except Exception as e:
         logger.error(f"Error actualizando orden de compra: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+async def eliminar_orden_compra_por_numero(numero_orden: str) -> Dict[str, Any]:
+    """
+    Eliminar una orden de compra existente en la colección ordenes_compra_emprestito
+    usando numero_orden como identificador de búsqueda.
+    """
+    if not FIRESTORE_AVAILABLE:
+        return {
+            "success": False,
+            "error": "Firebase no disponible"
+        }
+
+    try:
+        numero_orden_limpio = (numero_orden or "").strip()
+        if not numero_orden_limpio:
+            return {
+                "success": False,
+                "error": "El parámetro 'numero_orden' es obligatorio"
+            }
+
+        db_client = get_firestore_client()
+        if not db_client:
+            return {
+                "success": False,
+                "error": "Error obteniendo cliente Firestore"
+            }
+
+        ordenes_ref = db_client.collection('ordenes_compra_emprestito')
+        query_resultado = ordenes_ref.where('numero_orden', '==', numero_orden_limpio).get()
+
+        if len(query_resultado) == 0:
+            return {
+                "success": False,
+                "error": f"No se encontró ninguna orden de compra con numero_orden: {numero_orden_limpio}",
+                "not_found": True,
+                "numero_orden": numero_orden_limpio
+            }
+
+        doc = query_resultado[0]
+        datos_previos = serialize_datetime_objects(doc.to_dict())
+        doc.reference.delete()
+
+        logger.info(f"Orden de compra eliminada exitosamente por numero_orden: {numero_orden_limpio}")
+
+        return {
+            "success": True,
+            "message": f"Orden de compra {numero_orden_limpio} eliminada exitosamente",
+            "numero_orden": numero_orden_limpio,
+            "doc_id": doc.id,
+            "deleted_data": datos_previos,
+            "coleccion": "ordenes_compra_emprestito"
+        }
+
+    except Exception as e:
+        logger.error(f"Error eliminando orden de compra por numero_orden: {e}")
         return {
             "success": False,
             "error": str(e)

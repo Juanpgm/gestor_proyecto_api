@@ -293,7 +293,7 @@ async def create_user_account(
 ) -> Dict[str, Any]:
     """
     Crear nueva cuenta de usuario con validaciones completas.
-    El rol por defecto será 'viewer' y puede ser modificado posteriormente por un administrador.
+    El rol por defecto será 'publico' y puede ser modificado posteriormente por un administrador.
     """
     try:
         # Validaciones con soporte UTF-8
@@ -328,7 +328,7 @@ async def create_user_account(
             
             # Establecer custom claims básicos
             custom_claims = {
-                "role": "viewer",  # rol por defecto
+                "role": "publico",  # rol por defecto
                 "centro_gestor": nombre_centro_gestor,
                 "created_at": datetime.now().isoformat()
             }
@@ -343,7 +343,7 @@ async def create_user_account(
                 "fullname": fullname_validation["normalized"],
                 "cellphone": phone_validation["normalized"],
                 "nombre_centro_gestor": nombre_centro_gestor,
-                "roles": "Visualizador",
+                "roles": "Publico",
                 "created_at": datetime.now(),
                 "updated_at": datetime.now(),
                 "email_verified": False,

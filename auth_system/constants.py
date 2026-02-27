@@ -5,7 +5,7 @@ Define roles, permisos y configuraciones por defecto
 
 # ROL POR DEFECTO
 # Rol asignado automáticamente a todos los usuarios nuevos (excepto super_admin)
-DEFAULT_USER_ROLE = "visualizador"
+DEFAULT_USER_ROLE = "publico"
 
 # JERARQUÍA DE ROLES
 # Nivel 0 = máximo privilegio, Nivel 6 = mínimo privilegio

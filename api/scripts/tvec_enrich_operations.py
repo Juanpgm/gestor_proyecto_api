@@ -46,10 +46,12 @@ def serialize_datetime_objects(obj):
         return obj
 
 
-async def obtener_ordenes_compra_tvec_enriquecidas() -> Dict[str, Any]:
+async def obtener_ordenes_compra_tvec_enriquecidas(numero_orden: Optional[str] = None) -> Dict[str, Any]:
     """
-    Obtiene todas las órdenes de compra de la colección 'ordenes_compra_emprestito',
+    Obtiene órdenes de compra de la colección 'ordenes_compra_emprestito',
     las enriquece con datos de la API de TVEC, y actualiza los registros con la información adicional.
+
+    Si se proporciona `numero_orden`, solo procesa esa orden específica.
     
     El proceso:
     1. Obtiene todas las órdenes de compra existentes
@@ -77,9 +79,16 @@ async def obtener_ordenes_compra_tvec_enriquecidas() -> Dict[str, Any]:
                 "count": 0
             }
         
-        # 1. Obtener todas las órdenes de compra existentes
+        # 1. Obtener órdenes de compra existentes (todas o filtradas por numero_orden)
         ordenes_ref = db_client.collection('ordenes_compra_emprestito')
-        ordenes_docs = list(ordenes_ref.stream())
+        numero_orden_filter = str(numero_orden).strip() if numero_orden is not None else None
+
+        if numero_orden_filter:
+            ordenes_docs = list(
+                ordenes_ref.where('numero_orden', '==', numero_orden_filter).stream()
+            )
+        else:
+            ordenes_docs = list(ordenes_ref.stream())
         
         if not ordenes_docs:
             return {
@@ -87,10 +96,16 @@ async def obtener_ordenes_compra_tvec_enriquecidas() -> Dict[str, Any]:
                 "message": "No se encontraron órdenes de compra para enriquecer",
                 "data": [],
                 "count": 0,
+                "filters": {
+                    "numero_orden": numero_orden_filter
+                },
                 "timestamp": datetime.now().isoformat()
             }
         
-        logger.info(f"📊 Encontradas {len(ordenes_docs)} órdenes de compra para enriquecer")
+        if numero_orden_filter:
+            logger.info(f"📊 Encontradas {len(ordenes_docs)} órdenes para numero_orden={numero_orden_filter}")
+        else:
+            logger.info(f"📊 Encontradas {len(ordenes_docs)} órdenes de compra para enriquecer")
         
         # 2. Extraer números de orden de Firebase para búsqueda específica
         numeros_orden_firebase = []
@@ -317,6 +332,9 @@ async def obtener_ordenes_compra_tvec_enriquecidas() -> Dict[str, Any]:
         return {
             "success": True,
             "message": f"Enriquecimiento completado: {ordenes_enriquecidas}/{total_ordenes} órdenes enriquecidas",
+            "filters": {
+                "numero_orden": numero_orden_filter
+            },
             "resumen": {
                 "total_ordenes_procesadas": total_ordenes,
                 "ordenes_enriquecidas": ordenes_enriquecidas,

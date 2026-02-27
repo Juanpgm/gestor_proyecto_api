@@ -61,6 +61,14 @@ except ImportError as e:
     UNIDADES_PROYECTO_AVAILABLE = False
 
 try:
+    from .unidades_proyecto_quality_metrics import get_unidades_proyecto_quality_metrics
+except ImportError as e:
+    print(f"Warning: Unidades proyecto quality metrics not available: {e}")
+
+    async def get_unidades_proyecto_quality_metrics(nombre_centro_gestor: Optional[str] = None, history_limit: int = 30):
+        return {"success": False, "error": "Unidades proyecto quality metrics not available"}
+
+try:
     from .contratos_operations import (
         get_contratos_init_data,
         get_contratos_emprestito_all,
@@ -158,6 +166,7 @@ try:
         actualizar_proyeccion_emprestito,
         # Nuevas funciones para actualizar valores en colecciones de empréstito
         actualizar_orden_compra_por_numero,
+        eliminar_orden_compra_por_numero,
         actualizar_convenio_por_referencia,
         actualizar_contrato_secop_por_referencia,
         actualizar_proceso_secop_por_referencia,
@@ -270,6 +279,9 @@ except ImportError as e:
         return {"success": False, "error": "Emprestito operations not available"}
     
     async def cargar_convenio_transferencia(datos_convenio):
+        return {"success": False, "error": "Emprestito operations not available"}
+
+    async def eliminar_orden_compra_por_numero(numero_orden: str):
         return {"success": False, "error": "Emprestito operations not available"}
     
     async def modificar_convenio_transferencia(doc_id: str, campos_actualizar: dict):
@@ -428,7 +440,7 @@ except ImportError as e:
     TVEC_ENRICH_OPERATIONS_AVAILABLE = False
     
     # Crear funciones dummy para TVEC enrich
-    async def obtener_ordenes_compra_tvec_enriquecidas():
+    async def obtener_ordenes_compra_tvec_enriquecidas(numero_orden: Optional[str] = None):
         return {"success": False, "error": "TVEC enrich operations not available"}
     
     def get_tvec_enrich_status():
@@ -537,6 +549,7 @@ __all__ = [
     "get_filter_options",
     "get_unidades_proyecto_summary",
     "validate_unidades_proyecto_collection",
+    "get_unidades_proyecto_quality_metrics",
     
     # Contratos operations
     "get_contratos_init_data",
@@ -575,6 +588,7 @@ __all__ = [
     "leer_proyecciones_no_guardadas",
     "get_proyecciones_sin_proceso",
     "actualizar_proyeccion_emprestito",
+    "eliminar_orden_compra_por_numero",
     # Funciones optimizadas de empréstito
     "get_procesos_emprestito_optimized",
     "get_contratos_emprestito_optimized",

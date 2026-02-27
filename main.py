@@ -95,7 +95,7 @@ except ImportError as e:
     print(f"⚠️ Warning: Auth system not available: {e}")
     AUTH_SYSTEM_AVAILABLE = False
     ROLES = {}
-    DEFAULT_USER_ROLE = "visualizador"
+    DEFAULT_USER_ROLE = "publico"
     ROLE_HIERARCHY = {}
     AUTH_PUBLIC_PATHS = []
 
@@ -207,6 +207,7 @@ try:
         get_unidades_proyecto_attributes,
         get_filter_options,
         validate_unidades_proyecto_collection,
+        get_unidades_proyecto_quality_metrics,
         # Contratos operations
         get_contratos_init_data,
         get_contratos_emprestito_all,
@@ -2153,6 +2154,60 @@ async def consultar_unidades_proyecto(
         raise HTTPException(
             status_code=500,
             detail=f"Error consultando colección: {str(e)}"
+        )
+
+# ============================================================================
+# ENDPOINT DE CALIDAD DE DATOS (UNIDADES DE PROYECTO)
+# ============================================================================
+
+@app.get("/unidades-proyecto/calidad-datos", tags=["Unidades de Proyecto"], summary="🔵 Métricas de Calidad de Datos (ISO/DAMA)")
+@optional_rate_limit("30/minute")
+async def get_unidades_proyecto_calidad_datos(
+    request: Request,
+    nombre_centro_gestor: Optional[str] = Query(None, description="Filtrar clasificación por centro gestor"),
+    history_limit: int = Query(30, ge=1, le=365, description="Cantidad máxima de snapshots en historial")
+):
+    """
+    ## 🔵 Métricas de Calidad de Datos de Unidades de Proyecto
+
+    Evalúa calidad de datos sobre `unidades_proyecto` e `intervenciones_unidades_proyecto`
+    con marco alineado a ISO 8000, ISO/IEC 25012 y DAMA-DMBOK.
+
+    Incluye:
+    - Reglas por dimensión (completitud, validez, consistencia, unicidad, oportunidad)
+    - Clasificación de gravedad (S1-S4)
+    - Priorización (P1-P5) según matriz gravedad x volumen
+    - Data Quality Score (DQS) ponderado 0-100
+    - Clasificación por `nombre_centro_gestor`
+    - Secciones de `resumen`, `registros`, `historial`, `metadatos` y `estadisticas_globales`
+    """
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(
+            status_code=503,
+            detail="Firebase no disponible - verifica las credenciales"
+        )
+
+    try:
+        result = await get_unidades_proyecto_quality_metrics(
+            nombre_centro_gestor=nombre_centro_gestor,
+            history_limit=history_limit
+        )
+
+        if not result.get("success"):
+            raise HTTPException(
+                status_code=500,
+                detail=result.get("error", "No fue posible calcular métricas de calidad")
+            )
+
+        return create_utf8_response(result)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error en métricas de calidad de unidades_proyecto: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error generando métricas de calidad: {str(e)}"
         )
 
 # ============================================================================
@@ -4806,6 +4861,7 @@ try:
         cargar_convenio_transferencia,
         modificar_convenio_transferencia,
         actualizar_orden_compra_por_numero,
+        eliminar_orden_compra_por_numero,
         actualizar_convenio_por_referencia,
         actualizar_contrato_secop_por_referencia,
         actualizar_proceso_secop_por_referencia,
@@ -5374,6 +5430,80 @@ async def cargar_convenio_transferencia_emprestito(
         raise
     except Exception as e:
         logger.error(f"Error en endpoint de convenio de transferencia: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "success": False,
+                "error": "Error interno del servidor",
+                "message": "Por favor, inténtelo de nuevo más tarde",
+                "code": "INTERNAL_SERVER_ERROR"
+            }
+        )
+
+
+@app.delete(
+    "/emprestito/eliminar-orden-compra/{numero_orden}",
+    tags=["Gestión de Empréstito"],
+    summary="🔴 Eliminar Orden de Compra"
+)
+async def eliminar_orden_compra_emprestito(
+    numero_orden: str = Path(..., description="Número de orden a eliminar")
+):
+    """
+    ## 🗑️ DELETE | 📥 Gestión de Datos | Eliminar Orden de Compra de Empréstito
+
+    Elimina un registro de la colección `ordenes_compra_emprestito` usando `numero_orden`
+    como criterio de búsqueda.
+    """
+    try:
+        check_emprestito_availability()
+
+        resultado = await eliminar_orden_compra_por_numero(numero_orden)
+
+        if not resultado.get("success"):
+            if resultado.get("not_found"):
+                return JSONResponse(
+                    content={
+                        "success": False,
+                        "error": resultado.get("error"),
+                        "numero_orden": numero_orden,
+                        "message": "No existe una orden de compra con ese número",
+                        "timestamp": datetime.now().isoformat()
+                    },
+                    status_code=404,
+                    headers={"Content-Type": "application/json; charset=utf-8"}
+                )
+
+            return JSONResponse(
+                content={
+                    "success": False,
+                    "error": resultado.get("error"),
+                    "numero_orden": numero_orden,
+                    "message": "Error al eliminar la orden de compra",
+                    "timestamp": datetime.now().isoformat()
+                },
+                status_code=400,
+                headers={"Content-Type": "application/json; charset=utf-8"}
+            )
+
+        return JSONResponse(
+            content={
+                "success": True,
+                "message": resultado.get("message"),
+                "numero_orden": resultado.get("numero_orden"),
+                "doc_id": resultado.get("doc_id"),
+                "deleted_data": resultado.get("deleted_data"),
+                "coleccion": resultado.get("coleccion"),
+                "timestamp": datetime.now().isoformat()
+            },
+            status_code=200,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en endpoint eliminar orden de compra: {e}")
         raise HTTPException(
             status_code=500,
             detail={
@@ -8462,7 +8592,9 @@ async def get_ordenes_compra_todas():
         )
 
 @app.post("/emprestito/obtener-ordenes-compra-TVEC", tags=["Gestión de Empréstito"])
-async def obtener_ordenes_compra_tvec_endpoint():
+async def obtener_ordenes_compra_tvec_endpoint(
+    numero_orden: Optional[str] = Query(None, description="Filtrar ejecución a una única orden de compra")
+):
     """
     ## 🛒 Obtener y Enriquecer Órdenes de Compra con Datos de TVEC
     
@@ -8475,12 +8607,13 @@ async def obtener_ordenes_compra_tvec_endpoint():
     - **Datos adicionales**: Agrega campos con prefijo `tvec_` para datos de la tienda virtual
     - **API Integration**: Usa la API oficial de datos abiertos de Colombia (rgxm-mmea)
     
-    ### 📝 No requiere parámetros:
-    Este endpoint procesa automáticamente todas las órdenes existentes en `ordenes_compra_emprestito`.
+    ### 📝 Parámetros opcionales:
+    - `numero_orden`: Si se envía, procesa únicamente esa orden.
     
     ### 📤 Envío:
     ```http
     POST /emprestito/obtener-ordenes-compra-TVEC
+    POST /emprestito/obtener-ordenes-compra-TVEC?numero_orden=OC-2024-001
     ```
     **No es necesario enviar ningún cuerpo JSON**.
     
@@ -8625,7 +8758,7 @@ async def obtener_ordenes_compra_tvec_endpoint():
     
     try:
         # Ejecutar enriquecimiento de órdenes de compra con datos de TVEC
-        resultado = await obtener_ordenes_compra_tvec_enriquecidas()
+        resultado = await obtener_ordenes_compra_tvec_enriquecidas(numero_orden=numero_orden)
         
         # Determinar código de estado basado en el resultado
         status_code = 200 if resultado.get("success") else 500
