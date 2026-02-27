@@ -2736,6 +2736,167 @@ async def get_intervenciones_filtradas_endpoint(
         )
 
 
+@app.get(
+    "/unidades-proyecto/intervenciones/export-xlsx",
+    tags=["Unidades de Proyecto"],
+    summary="📥 Exportar Intervenciones a XLSX"
+)
+async def exportar_intervenciones_xlsx(
+    avance_obra: Optional[float] = Query(None, description="Avance de obra"),
+    bpin: Optional[int] = Query(None, description="BPIN"),
+    cantidad: Optional[int] = Query(None, description="Cantidad"),
+    clase_up: Optional[str] = Query(None, description="Clase UP"),
+    estado: Optional[str] = Query(None, description="Estado de la intervención"),
+    fecha_fin: Optional[str] = Query(None, description="Fecha fin (string)"),
+    fecha_inicio: Optional[str] = Query(None, description="Fecha inicio (string)"),
+    fuente_financiacion: Optional[str] = Query(None, description="Fuente de financiacion"),
+    identificador: Optional[str] = Query(None, description="Identificador"),
+    intervencion_id: Optional[str] = Query(None, description="ID de la intervencion"),
+    nombre_centro_gestor: Optional[str] = Query(None, description="Nombre centro gestor"),
+    presupuesto_base: Optional[float] = Query(None, description="Presupuesto base"),
+    referencia_contrato: Optional[str] = Query(None, description="Referencia contrato"),
+    referencia_proceso: Optional[str] = Query(None, description="Referencia proceso"),
+    tipo_intervencion: Optional[str] = Query(None, description="Tipo de intervencion"),
+    unidad: Optional[str] = Query(None, description="Unidad"),
+    upid: Optional[str] = Query(None, description="UPID"),
+    url_proceso: Optional[str] = Query(None, description="URL proceso")
+):
+    """
+    Exporta `intervenciones_unidades_proyecto` a XLSX excluyendo campos definidos
+    y agregando `comuna_corregimiento` y `barrio_vereda` desde `unidades_proyecto` por `upid`.
+    """
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase not available")
+
+    excluded_fields = {
+        "referencia_proceso",
+        "referencia_contrato",
+        "url_proceso",
+        "identificador",
+        "cantidad",
+        "unidad",
+        "bpin",
+        "avance_obra"
+    }
+
+    try:
+        from io import BytesIO
+        import pandas as pd
+
+        db = get_firestore_client()
+        if db is None:
+            raise HTTPException(status_code=503, detail="No se pudo conectar a Firestore")
+
+        upid_location_map = {}
+        for unidad_doc in db.collection('unidades_proyecto').stream():
+            unidad_data = unidad_doc.to_dict() or {}
+            props = unidad_data.get('properties', {}) if isinstance(unidad_data.get('properties'), dict) else {}
+
+            upid_value = unidad_data.get('upid') or props.get('upid')
+            if not upid_value:
+                continue
+
+            comuna = unidad_data.get('comuna_corregimiento')
+            if comuna is None:
+                comuna = props.get('comuna_corregimiento')
+
+            barrio = unidad_data.get('barrio_vereda')
+            if barrio is None:
+                barrio = props.get('barrio_vereda')
+
+            upid_location_map[str(upid_value)] = {
+                "comuna_corregimiento": comuna,
+                "barrio_vereda": barrio
+            }
+
+        def normalize_for_excel(value):
+            if FIREBASE_TYPES_AVAILABLE and isinstance(value, DatetimeWithNanoseconds):
+                return value.isoformat()
+            if isinstance(value, datetime):
+                return value.isoformat()
+            if isinstance(value, dict):
+                return {k: normalize_for_excel(v) for k, v in value.items()}
+            if isinstance(value, list):
+                return [normalize_for_excel(v) for v in value]
+            return value
+
+        interv_query = db.collection('intervenciones_unidades_proyecto')
+        if avance_obra is not None:
+            interv_query = interv_query.where('avance_obra', '==', avance_obra)
+        if bpin is not None:
+            interv_query = interv_query.where('bpin', '==', bpin)
+        if cantidad is not None:
+            interv_query = interv_query.where('cantidad', '==', cantidad)
+        if clase_up:
+            interv_query = interv_query.where('clase_up', '==', clase_up)
+        if estado:
+            interv_query = interv_query.where('estado', '==', estado)
+        if fecha_fin:
+            interv_query = interv_query.where('fecha_fin', '==', fecha_fin)
+        if fecha_inicio:
+            interv_query = interv_query.where('fecha_inicio', '==', fecha_inicio)
+        if fuente_financiacion:
+            interv_query = interv_query.where('fuente_financiacion', '==', fuente_financiacion)
+        if identificador:
+            interv_query = interv_query.where('identificador', '==', identificador)
+        if intervencion_id:
+            interv_query = interv_query.where('intervencion_id', '==', intervencion_id)
+        if nombre_centro_gestor:
+            interv_query = interv_query.where('nombre_centro_gestor', '==', nombre_centro_gestor)
+        if presupuesto_base is not None:
+            interv_query = interv_query.where('presupuesto_base', '==', presupuesto_base)
+        if referencia_contrato:
+            interv_query = interv_query.where('referencia_contrato', '==', referencia_contrato)
+        if referencia_proceso:
+            interv_query = interv_query.where('referencia_proceso', '==', referencia_proceso)
+        if tipo_intervencion:
+            interv_query = interv_query.where('tipo_intervencion', '==', tipo_intervencion)
+        if unidad:
+            interv_query = interv_query.where('unidad', '==', unidad)
+        if upid:
+            interv_query = interv_query.where('upid', '==', upid)
+        if url_proceso:
+            interv_query = interv_query.where('url_proceso', '==', url_proceso)
+
+        export_rows = []
+        for interv_doc in interv_query.stream():
+            interv_data = interv_doc.to_dict() or {}
+            normalized_data = {k: normalize_for_excel(v) for k, v in interv_data.items()}
+
+            row = {
+                key: value
+                for key, value in normalized_data.items()
+                if key not in excluded_fields
+            }
+
+            upid_value = str(interv_data.get('upid') or '')
+            location = upid_location_map.get(upid_value, {})
+            row["comuna_corregimiento"] = location.get("comuna_corregimiento")
+            row["barrio_vereda"] = location.get("barrio_vereda")
+
+            export_rows.append(row)
+
+        df = pd.DataFrame(export_rows)
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name="intervenciones")
+        output.seek(0)
+
+        filename = f"intervenciones_unidades_proyecto_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error exportando XLSX de intervenciones: {str(e)}"
+        )
+
+
 @app.get("/avances_unidades_proyecto", tags=["Unidades de Proyecto"], summary="🔵 GET | Leer avances de Unidades de Proyecto")
 @optional_rate_limit("60/minute")
 async def get_avances_unidades_proyecto(
@@ -4777,12 +4938,33 @@ async def list_system_users(
     try:
         # 🔐 VERIFICAR AUTENTICACIÓN FIREBASE
         current_user = await verify_firebase_token(request)
+
+        from auth_system.permissions import get_user_permissions
+        from database.firebase_config import get_firestore_client
+
+        firestore_client = get_firestore_client()
+        if firestore_client is None:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "success": False,
+                    "error": "No se pudo conectar a Firestore",
+                    "code": "FIRESTORE_UNAVAILABLE"
+                }
+            )
+
+        current_permissions = get_user_permissions(current_user["uid"], firestore_client)
+        if "manage:users" not in current_permissions:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "success": False,
+                    "error": "Permiso denegado",
+                    "code": "INSUFFICIENT_PERMISSIONS"
+                }
+            )
         
         check_user_management_availability()
-        
-        from database.firebase_config import get_firestore_client
-        
-        firestore_client = get_firestore_client()
         
         # Consultar la colección "users" directamente
         users_ref = firestore_client.collection('users')

@@ -56,7 +56,7 @@ async def list_users(
         raise HTTPException(status_code=403, detail="Permiso denegado")
     
     try:
-        db = get_firestore_client()
+        db = _get_db_or_raise()
         
         # Obtener usuarios con paginación
         query = db.collection(FIREBASE_COLLECTIONS["users"]).limit(limit).offset(offset)
@@ -88,15 +88,19 @@ async def list_users(
 
 @router.get("/users/super-admins", response_model=dict)
 async def list_super_admin_users(
+    current_user: dict = Depends(get_current_user),
     limit: Optional[int] = Query(100, ge=1, le=500),
     offset: Optional[int] = Query(0, ge=0)
 ):
     """
     Listar todos los usuarios con rol super_admin.
-    Endpoint público sin autenticación requerida.
+    Requiere permisos de gestión o lectura de usuarios.
     """
+    if not _has_any_permission(current_user, ["manage:users", "view:users"]):
+        raise HTTPException(status_code=403, detail="Permiso denegado")
+
     try:
-        db = get_firestore_client()
+        db = _get_db_or_raise()
         
         # Filtrar usuarios que tienen el rol super_admin
         query = db.collection(FIREBASE_COLLECTIONS["users"]).where('roles', 'array_contains', 'super_admin')
@@ -511,7 +515,7 @@ async def revoke_temporary_permission(
         temp_perms = user_data.get('temporary_permissions', [])
         
         # Filtrar el permiso a revocar
-        updated_perms = [p for p in temp_perms if p['permission'] != permission]
+        updated_perms = [p for p in temp_perms if p.get('permission') != permission]
         
         if len(updated_perms) == len(temp_perms):
             raise HTTPException(status_code=404, detail="Permiso temporal no encontrado")
