@@ -4862,6 +4862,7 @@ try:
         modificar_convenio_transferencia,
         actualizar_orden_compra_por_numero,
         eliminar_orden_compra_por_numero,
+        eliminar_convenio_transferencia_por_referencia,
         actualizar_convenio_por_referencia,
         actualizar_contrato_secop_por_referencia,
         actualizar_proceso_secop_por_referencia,
@@ -5504,6 +5505,80 @@ async def eliminar_orden_compra_emprestito(
         raise
     except Exception as e:
         logger.error(f"Error en endpoint eliminar orden de compra: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "success": False,
+                "error": "Error interno del servidor",
+                "message": "Por favor, inténtelo de nuevo más tarde",
+                "code": "INTERNAL_SERVER_ERROR"
+            }
+        )
+
+
+@app.delete(
+    "/emprestito/eliminar-convenio-transferencia/{referencia_contrato}",
+    tags=["Gestión de Empréstito"],
+    summary="🔴 Eliminar Convenio de Transferencia"
+)
+async def eliminar_convenio_transferencia_emprestito(
+    referencia_contrato: str = Path(..., description="Referencia de contrato del convenio a eliminar")
+):
+    """
+    ## 🗑️ DELETE | 📥 Gestión de Datos | Eliminar Convenio de Transferencia de Empréstito
+
+    Elimina un registro de la colección `convenios_transferencias_emprestito`
+    usando `referencia_contrato` como criterio de búsqueda.
+    """
+    try:
+        check_emprestito_availability()
+
+        resultado = await eliminar_convenio_transferencia_por_referencia(referencia_contrato)
+
+        if not resultado.get("success"):
+            if resultado.get("not_found"):
+                return JSONResponse(
+                    content={
+                        "success": False,
+                        "error": resultado.get("error"),
+                        "referencia_contrato": referencia_contrato,
+                        "message": "No existe un convenio de transferencia con esa referencia",
+                        "timestamp": datetime.now().isoformat()
+                    },
+                    status_code=404,
+                    headers={"Content-Type": "application/json; charset=utf-8"}
+                )
+
+            return JSONResponse(
+                content={
+                    "success": False,
+                    "error": resultado.get("error"),
+                    "referencia_contrato": referencia_contrato,
+                    "message": "Error al eliminar el convenio de transferencia",
+                    "timestamp": datetime.now().isoformat()
+                },
+                status_code=400,
+                headers={"Content-Type": "application/json; charset=utf-8"}
+            )
+
+        return JSONResponse(
+            content={
+                "success": True,
+                "message": resultado.get("message"),
+                "referencia_contrato": resultado.get("referencia_contrato"),
+                "doc_id": resultado.get("doc_id"),
+                "deleted_data": resultado.get("deleted_data"),
+                "coleccion": resultado.get("coleccion"),
+                "timestamp": datetime.now().isoformat()
+            },
+            status_code=200,
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en endpoint eliminar convenio de transferencia: {e}")
         raise HTTPException(
             status_code=500,
             detail={

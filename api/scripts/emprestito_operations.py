@@ -4449,6 +4449,66 @@ async def eliminar_orden_compra_por_numero(numero_orden: str) -> Dict[str, Any]:
             "error": str(e)
         }
 
+
+async def eliminar_convenio_transferencia_por_referencia(referencia_contrato: str) -> Dict[str, Any]:
+    """
+    Eliminar un convenio de transferencia existente en la colección
+    convenios_transferencias_emprestito usando referencia_contrato como identificador.
+    """
+    if not FIRESTORE_AVAILABLE:
+        return {
+            "success": False,
+            "error": "Firebase no disponible"
+        }
+
+    try:
+        referencia_limpia = (referencia_contrato or "").strip()
+        if not referencia_limpia:
+            return {
+                "success": False,
+                "error": "El parámetro 'referencia_contrato' es obligatorio"
+            }
+
+        db_client = get_firestore_client()
+        if not db_client:
+            return {
+                "success": False,
+                "error": "Error obteniendo cliente Firestore"
+            }
+
+        convenios_ref = db_client.collection('convenios_transferencias_emprestito')
+        query_resultado = convenios_ref.where('referencia_contrato', '==', referencia_limpia).get()
+
+        if len(query_resultado) == 0:
+            return {
+                "success": False,
+                "error": f"No se encontró ningún convenio con referencia_contrato: {referencia_limpia}",
+                "not_found": True,
+                "referencia_contrato": referencia_limpia
+            }
+
+        doc = query_resultado[0]
+        datos_previos = serialize_datetime_objects(doc.to_dict())
+        doc.reference.delete()
+
+        logger.info(f"Convenio eliminado exitosamente por referencia_contrato: {referencia_limpia}")
+
+        return {
+            "success": True,
+            "message": f"Convenio {referencia_limpia} eliminado exitosamente",
+            "referencia_contrato": referencia_limpia,
+            "doc_id": doc.id,
+            "deleted_data": datos_previos,
+            "coleccion": "convenios_transferencias_emprestito"
+        }
+
+    except Exception as e:
+        logger.error(f"Error eliminando convenio por referencia_contrato: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
 async def actualizar_convenio_por_referencia(referencia_contrato: str, campos_actualizar: Dict[str, Any]) -> Dict[str, Any]:
     """
     Actualizar un convenio de transferencia existente en convenios_transferencias_emprestito por referencia_contrato

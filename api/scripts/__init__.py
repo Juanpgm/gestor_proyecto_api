@@ -167,6 +167,7 @@ try:
         # Nuevas funciones para actualizar valores en colecciones de empréstito
         actualizar_orden_compra_por_numero,
         eliminar_orden_compra_por_numero,
+        eliminar_convenio_transferencia_por_referencia,
         actualizar_convenio_por_referencia,
         actualizar_contrato_secop_por_referencia,
         actualizar_proceso_secop_por_referencia,
@@ -282,6 +283,9 @@ except ImportError as e:
         return {"success": False, "error": "Emprestito operations not available"}
 
     async def eliminar_orden_compra_por_numero(numero_orden: str):
+        return {"success": False, "error": "Emprestito operations not available"}
+
+    async def eliminar_convenio_transferencia_por_referencia(referencia_contrato: str):
         return {"success": False, "error": "Emprestito operations not available"}
     
     async def modificar_convenio_transferencia(doc_id: str, campos_actualizar: dict):
@@ -589,6 +593,7 @@ __all__ = [
     "get_proyecciones_sin_proceso",
     "actualizar_proyeccion_emprestito",
     "eliminar_orden_compra_por_numero",
+    "eliminar_convenio_transferencia_por_referencia",
     # Funciones optimizadas de empréstito
     "get_procesos_emprestito_optimized",
     "get_contratos_emprestito_optimized",

@@ -23,6 +23,20 @@ from database.firebase_config import get_firestore_client
 router = APIRouter(prefix="/auth/admin", tags=["Administración y Control de Accesos"])
 
 
+def _has_any_permission(current_user: dict, permissions: List[str]) -> bool:
+    user_permissions = current_user.get("permissions", [])
+    if not isinstance(user_permissions, list):
+        return False
+    return any(permission in user_permissions for permission in permissions)
+
+
+def _get_db_or_raise():
+    db = get_firestore_client()
+    if db is None:
+        raise HTTPException(status_code=503, detail="No se pudo conectar a Firestore")
+    return db
+
+
 # ========== GESTIÓN DE USUARIOS ==========
 
 @router.get("/users", response_model=dict)
@@ -342,6 +356,71 @@ async def assign_roles_to_user(
         raise HTTPException(status_code=500, detail=f"Error asignando roles: {str(e)}")
 
 
+@router.put("/change_users_rol/{uid}", response_model=dict)
+async def change_users_role_by_uid(
+    uid: str,
+    request: AssignRolesRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Cambiar la variable `roles` en la colección `users` de Firebase usando `uid`.
+
+    Requiere permiso: manage:users
+    """
+    if not _has_any_permission(current_user, ["manage:users"]):
+        raise HTTPException(status_code=403, detail="Permiso denegado")
+
+    if not validate_role_assignment(current_user.get('uid', ''), uid, request.roles):
+        raise HTTPException(
+            status_code=403,
+            detail="No puedes asignarte el rol super_admin a ti mismo"
+        )
+
+    try:
+        db = _get_db_or_raise()
+        user_ref = db.collection(FIREBASE_COLLECTIONS["users"]).document(uid)
+        user_doc = user_ref.get()
+
+        if not user_doc.exists:
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+        for role in request.roles:
+            if role not in ROLES:
+                raise HTTPException(status_code=400, detail=f"El rol '{role}' no existe")
+
+        old_roles = user_doc.to_dict().get('roles', [])
+
+        user_ref.update({
+            'roles': request.roles,
+            'updated_at': datetime.now(timezone.utc),
+            'updated_by': current_user.get('uid')
+        })
+
+        db.collection(FIREBASE_COLLECTIONS["audit_logs"]).add({
+            'timestamp': datetime.now(timezone.utc),
+            'action': 'change_users_rol',
+            'user_uid': current_user.get('uid'),
+            'user_email': current_user.get('email'),
+            'target_user_uid': uid,
+            'old_roles': old_roles,
+            'new_roles': request.roles,
+            'reason': request.reason
+        })
+
+        return {
+            "success": True,
+            "message": f"Roles actualizados exitosamente para {uid}",
+            "uid": uid,
+            "collection": FIREBASE_COLLECTIONS["users"],
+            "roles": request.roles,
+            "previous_roles": old_roles
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error actualizando roles del usuario: {str(e)}")
+
+
 @router.post("/users/{uid}/temporary-permissions", response_model=dict)
 async def grant_temporary_permission(
     uid: str,
@@ -464,10 +543,31 @@ async def list_roles(
     
     Requiere permiso: manage:roles
     """
-    if "manage:roles" not in current_user.get('permissions', []):
+    if not _has_any_permission(current_user, ["manage:roles", "view:roles"]):
         raise HTTPException(status_code=403, detail="Permiso denegado")
     
     try:
+        db = _get_db_or_raise()
+
+        users_collection_name = FIREBASE_COLLECTIONS["users"]
+        users_docs = list(db.collection(users_collection_name).stream())
+
+        roles_usage = {role_id: 0 for role_id in ROLES.keys()}
+        unknown_roles = {}
+
+        for user_doc in users_docs:
+            user_data = user_doc.to_dict() or {}
+            user_roles = user_data.get("roles", [])
+            if not isinstance(user_roles, list):
+                continue
+
+            for role in user_roles:
+                role_str = str(role)
+                if role_str in roles_usage:
+                    roles_usage[role_str] += 1
+                else:
+                    unknown_roles[role_str] = unknown_roles.get(role_str, 0) + 1
+
         roles_list = []
         for role_id, role_data in ROLES.items():
             roles_list.append({
@@ -475,7 +575,8 @@ async def list_roles(
                 "name": role_data["name"],
                 "level": role_data["level"],
                 "description": role_data["description"],
-                "permissions_count": len(role_data["permissions"])
+                "permissions_count": len(role_data["permissions"]),
+                "assigned_users": roles_usage.get(role_id, 0)
             })
         
         # Ordenar por nivel
@@ -484,7 +585,13 @@ async def list_roles(
         return {
             "success": True,
             "data": roles_list,
-            "count": len(roles_list)
+            "count": len(roles_list),
+            "verification": {
+                "users_collection": users_collection_name,
+                "users_scanned": len(users_docs),
+                "roles_detected_in_users": len([r for r, c in roles_usage.items() if c > 0]),
+                "unknown_roles_in_users": unknown_roles
+            }
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error obteniendo roles: {str(e)}")
@@ -501,12 +608,26 @@ async def get_role_details(
     
     Requiere permiso: manage:roles
     """
-    if "manage:roles" not in current_user.get('permissions', []):
+    if not _has_any_permission(current_user, ["manage:roles", "view:roles"]):
         raise HTTPException(status_code=403, detail="Permiso denegado")
     
     if role_id not in ROLES:
         raise HTTPException(status_code=404, detail="Rol no encontrado")
     
+    try:
+        db = _get_db_or_raise()
+        users_docs = list(db.collection(FIREBASE_COLLECTIONS["users"]).stream())
+        assigned_users = 0
+        for user_doc in users_docs:
+            user_data = user_doc.to_dict() or {}
+            user_roles = user_data.get("roles", [])
+            if isinstance(user_roles, list) and role_id in user_roles:
+                assigned_users += 1
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error verificando rol en users: {str(e)}")
+
     role_data = ROLES[role_id]
     
     return {
@@ -516,7 +637,10 @@ async def get_role_details(
             "name": role_data["name"],
             "level": role_data["level"],
             "description": role_data["description"],
-            "permissions": role_data["permissions"]
+            "permissions": role_data["permissions"],
+            "permissions_count": len(role_data["permissions"]),
+            "assigned_users": assigned_users,
+            "users_collection": FIREBASE_COLLECTIONS["users"]
         }
     }
 
@@ -536,20 +660,20 @@ async def get_audit_logs(
     
     Requiere permiso: view:audit_logs
     """
-    if "view:audit_logs" not in current_user.get('permissions', []):
+    if not _has_any_permission(current_user, ["view:audit_logs"]):
         raise HTTPException(status_code=403, detail="Permiso denegado")
     
     try:
-        db = get_firestore_client()
-        query = db.collection(FIREBASE_COLLECTIONS["audit_logs"]).order_by(
-            'timestamp', direction='DESCENDING'
-        ).limit(limit)
+        db = _get_db_or_raise()
+        query = db.collection(FIREBASE_COLLECTIONS["audit_logs"])
         
         # Aplicar filtros opcionales
         if user_uid:
             query = query.where('user_uid', '==', user_uid)
         if action:
             query = query.where('action', '==', action)
+
+        query = query.order_by('timestamp', direction='DESCENDING').limit(limit)
         
         logs = []
         for log_doc in query.stream():
@@ -559,6 +683,12 @@ async def get_audit_logs(
             # Convertir timestamp
             if 'timestamp' in log_data and hasattr(log_data['timestamp'], 'isoformat'):
                 log_data['timestamp'] = log_data['timestamp'].isoformat()
+
+            if 'granted_at' in log_data and hasattr(log_data['granted_at'], 'isoformat'):
+                log_data['granted_at'] = log_data['granted_at'].isoformat()
+
+            if 'expires_at' in log_data and hasattr(log_data['expires_at'], 'isoformat'):
+                log_data['expires_at'] = log_data['expires_at'].isoformat()
             
             logs.append(log_data)
         
@@ -576,7 +706,10 @@ async def get_audit_logs(
 
 @router.get("/system/stats", response_model=dict)
 async def get_system_stats(
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    include_users: bool = Query(False, description="Incluir datos de la colección users en la respuesta"),
+    users_limit: int = Query(50, ge=1, le=500, description="Límite de usuarios cuando include_users=true"),
+    users_offset: int = Query(0, ge=0, description="Offset de usuarios cuando include_users=true")
 ):
     """
     Obtener estadísticas del sistema de autorización.
@@ -584,35 +717,65 @@ async def get_system_stats(
     
     Requiere permiso: manage:users
     """
-    if "manage:users" not in current_user.get('permissions', []):
+    if not _has_any_permission(current_user, ["manage:users"]):
         raise HTTPException(status_code=403, detail="Permiso denegado")
     
     try:
-        db = get_firestore_client()
-        
-        # Contar usuarios
-        users_count = len(list(db.collection(FIREBASE_COLLECTIONS["users"]).stream()))
+        db = _get_db_or_raise()
+
+        users_docs = list(db.collection(FIREBASE_COLLECTIONS["users"]).stream())
+        users_count = len(users_docs)
         
         # Contar por rol
         users_by_role = {}
-        for user_doc in db.collection(FIREBASE_COLLECTIONS["users"]).stream():
-            user_data = user_doc.to_dict()
+        users_without_roles = 0
+        unknown_roles = {}
+        users_data_for_response = []
+        for user_doc in users_docs:
+            user_data = user_doc.to_dict() or {}
+            user_data["uid"] = user_doc.id
+
+            if include_users:
+                users_data_for_response.append(sanitize_user_data(user_data))
+
             roles = user_data.get('roles', [])
+            if not isinstance(roles, list) or len(roles) == 0:
+                users_without_roles += 1
+                continue
             for role in roles:
-                users_by_role[role] = users_by_role.get(role, 0) + 1
+                role_str = str(role)
+                if role_str in ROLES:
+                    users_by_role[role_str] = users_by_role.get(role_str, 0) + 1
+                else:
+                    unknown_roles[role_str] = unknown_roles.get(role_str, 0) + 1
         
         # Contar logs de auditoría
         logs_count = len(list(db.collection(FIREBASE_COLLECTIONS["audit_logs"]).stream()))
         
+        response_data = {
+            "total_users": users_count,
+            "total_roles": len(ROLES),
+            "users_by_role": users_by_role,
+            "users_without_roles": users_without_roles,
+            "unknown_roles_in_users": unknown_roles,
+            "total_audit_logs": logs_count,
+            "default_role": DEFAULT_USER_ROLE
+        }
+
+        if include_users:
+            paginated_users = users_data_for_response[users_offset:users_offset + users_limit]
+            response_data["users_collection"] = {
+                "collection": FIREBASE_COLLECTIONS["users"],
+                "total": users_count,
+                "count": len(paginated_users),
+                "limit": users_limit,
+                "offset": users_offset,
+                "data": paginated_users
+            }
+
         return {
             "success": True,
-            "data": {
-                "total_users": users_count,
-                "total_roles": len(ROLES),
-                "users_by_role": users_by_role,
-                "total_audit_logs": logs_count,
-                "default_role": DEFAULT_USER_ROLE
-            }
+            "data": response_data
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error obteniendo estadísticas: {str(e)}")
