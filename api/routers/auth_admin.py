@@ -98,7 +98,7 @@ async def list_users(
     Requiere permiso: manage:users
     """
     # Verificar permiso
-    if "manage:users" not in current_user.get('permissions', []):
+    if not _has_any_permission(current_user, ["manage:users"]):
         raise HTTPException(status_code=403, detail="Permiso denegado")
     
     try:
@@ -188,7 +188,7 @@ async def get_user_details(
     
     Requiere permiso: manage:users
     """
-    if "manage:users" not in current_user.get('permissions', []):
+    if not _has_any_permission(current_user, ["manage:users"]):
         raise HTTPException(status_code=403, detail="Permiso denegado")
     
     try:
@@ -235,7 +235,7 @@ async def update_user_info(
     - phone_verified: Estado de verificación de teléfono
     - is_active: Estado activo del usuario
     """
-    if "manage:users" not in current_user.get('permissions', []):
+    if not _has_any_permission(current_user, ["manage:users"]):
         raise HTTPException(status_code=403, detail="Permiso denegado")
     
     try:
@@ -349,7 +349,7 @@ async def assign_roles_to_user(
     
     Requiere permiso: manage:users
     """
-    if "manage:users" not in current_user.get('permissions', []):
+    if not _has_any_permission(current_user, ["manage:users"]):
         raise HTTPException(status_code=403, detail="Permiso denegado")
     
     # Validar asignación de roles
@@ -483,7 +483,7 @@ async def grant_temporary_permission(
     
     Requiere permiso: manage:users
     """
-    if "manage:users" not in current_user.get('permissions', []):
+    if not _has_any_permission(current_user, ["manage:users"]):
         raise HTTPException(status_code=403, detail="Permiso denegado")
     
     try:
@@ -546,7 +546,7 @@ async def revoke_temporary_permission(
     
     Requiere permiso: manage:users
     """
-    if "manage:users" not in current_user.get('permissions', []):
+    if not _has_any_permission(current_user, ["manage:users"]):
         raise HTTPException(status_code=403, detail="Permiso denegado")
     
     try:

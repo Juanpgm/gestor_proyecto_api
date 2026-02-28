@@ -4954,7 +4954,7 @@ async def list_system_users(
             )
 
         current_permissions = get_user_permissions(current_user["uid"], firestore_client)
-        if "manage:users" not in current_permissions:
+        if "*" not in current_permissions and "manage:users" not in current_permissions:
             raise HTTPException(
                 status_code=403,
                 detail={
