@@ -2,19 +2,39 @@
 Modelos Pydantic para el Sistema de Autenticación y Autorización
 """
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import List, Optional
 from datetime import datetime, timezone
 
 
 class AssignRolesRequest(BaseModel):
     """Request para asignar roles a un usuario"""
-    role: str = Field(..., description="Rol único activo a asignar")
+    role: Optional[str] = Field(None, description="Rol único activo a asignar")
+    roles: Optional[List[str]] = Field(None, description="Compatibilidad legacy: lista con un solo rol")
     reason: Optional[str] = Field(None, description="Razón para el cambio de roles")
+
+    @model_validator(mode='after')
+    def normalize_role_payload(self):
+        if self.role is not None and self.role.strip():
+            self.role = self.role.strip()
+            return self
+
+        if self.roles is not None:
+            normalized_roles = [str(role).strip() for role in self.roles if str(role).strip()]
+            if len(normalized_roles) == 0:
+                raise ValueError("Debe proporcionar un rol")
+            if len(normalized_roles) > 1:
+                raise ValueError("Solo se permite un rol activo por usuario")
+            self.role = normalized_roles[0]
+            return self
+
+        raise ValueError("Debe proporcionar un rol")
     
     @field_validator('role')
     @classmethod
     def validate_role(cls, v):
+        if v is None:
+            return v
         role = v.strip() if isinstance(v, str) else ""
         if not role:
             raise ValueError("Debe proporcionar un rol")
