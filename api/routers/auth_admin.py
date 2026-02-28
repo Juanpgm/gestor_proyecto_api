@@ -8,6 +8,7 @@ from typing import Optional, List
 from datetime import datetime, timezone
 
 from auth_system.decorators import require_permission, require_role, get_current_user
+from auth_system.permissions import get_user_permissions
 from auth_system.models import (
     AssignRolesRequest, 
     GrantTemporaryPermissionRequest,
@@ -27,6 +28,8 @@ def _has_any_permission(current_user: dict, permissions: List[str]) -> bool:
     user_permissions = current_user.get("permissions", [])
     if not isinstance(user_permissions, list):
         return False
+    if "*" in user_permissions:
+        return True
     return any(permission in user_permissions for permission in permissions)
 
 
@@ -35,6 +38,49 @@ def _get_db_or_raise():
     if db is None:
         raise HTTPException(status_code=503, detail="No se pudo conectar a Firestore")
     return db
+
+
+def _normalize_roles(raw_roles) -> List[str]:
+    if raw_roles is None:
+        return []
+    if isinstance(raw_roles, str):
+        role = raw_roles.strip()
+        return [role] if role else []
+    if isinstance(raw_roles, (list, tuple, set)):
+        normalized_roles: List[str] = []
+        for role in raw_roles:
+            role_str = str(role).strip()
+            if role_str:
+                normalized_roles.append(role_str)
+        return normalized_roles
+    role = str(raw_roles).strip()
+    return [role] if role else []
+
+
+def _build_user_roles_payload(user_uid: str, user_data: dict, db) -> dict:
+    user_roles = _normalize_roles(user_data.get("roles", []))
+    user_permissions = get_user_permissions(user_uid, db)
+    role_details = []
+    for role_id in user_roles:
+        if role_id in ROLES:
+            role_details.append({
+                "role_id": role_id,
+                "name": ROLES[role_id]["name"],
+                "level": ROLES[role_id]["level"],
+                "description": ROLES[role_id]["description"],
+                "permissions": ROLES[role_id]["permissions"]
+            })
+
+    role_details.sort(key=lambda x: x["level"])
+
+    return {
+        "uid": user_uid,
+        "roles": user_roles,
+        "roles_count": len(user_roles),
+        "permissions": user_permissions,
+        "permissions_count": len(user_permissions),
+        "role_details": role_details
+    }
 
 
 # ========== GESTIÓN DE USUARIOS ==========
@@ -539,6 +585,7 @@ async def revoke_temporary_permission(
 
 @router.get("/roles", response_model=dict)
 async def list_roles(
+    uid: Optional[str] = Query(None, description="UID del usuario a consultar. Si no se envía, retorna roles/permisos de todos los usuarios"),
     current_user: dict = Depends(get_current_user)
 ):
     """
@@ -561,9 +608,7 @@ async def list_roles(
 
         for user_doc in users_docs:
             user_data = user_doc.to_dict() or {}
-            user_roles = user_data.get("roles", [])
-            if not isinstance(user_roles, list):
-                continue
+            user_roles = _normalize_roles(user_data.get("roles", []))
 
             for role in user_roles:
                 role_str = str(role)
@@ -579,17 +624,44 @@ async def list_roles(
                 "name": role_data["name"],
                 "level": role_data["level"],
                 "description": role_data["description"],
+                "permissions": role_data["permissions"],
                 "permissions_count": len(role_data["permissions"]),
                 "assigned_users": roles_usage.get(role_id, 0)
             })
-        
-        # Ordenar por nivel
+
         roles_list.sort(key=lambda x: x["level"])
-        
+
+        if uid:
+            target_uid = current_user.get("uid") if uid == "me" else uid
+            user_doc = db.collection(users_collection_name).document(target_uid).get()
+            if not user_doc.exists:
+                raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+            user_payload = _build_user_roles_payload(target_uid, user_doc.to_dict() or {}, db)
+
+            return {
+                "success": True,
+                "data": user_payload,
+                "count": 1,
+                "scope": "single_user",
+                "requested_uid": target_uid,
+                "connected_uid": current_user.get("uid"),
+                "roles_catalog": roles_list
+            }
+
+        users_roles_permissions = []
+        for user_doc in users_docs:
+            user_uid = user_doc.id
+            user_data = user_doc.to_dict() or {}
+            users_roles_permissions.append(_build_user_roles_payload(user_uid, user_data, db))
+
         return {
             "success": True,
-            "data": roles_list,
-            "count": len(roles_list),
+            "data": users_roles_permissions,
+            "count": len(users_roles_permissions),
+            "scope": "all_users",
+            "connected_uid": current_user.get("uid"),
+            "roles_catalog": roles_list,
             "verification": {
                 "users_collection": users_collection_name,
                 "users_scanned": len(users_docs),
@@ -597,6 +669,8 @@ async def list_roles(
                 "unknown_roles_in_users": unknown_roles
             }
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error obteniendo roles: {str(e)}")
 
@@ -604,6 +678,7 @@ async def list_roles(
 @router.get("/roles/{role_id}", response_model=dict)
 async def get_role_details(
     role_id: str,
+    uid: Optional[str] = Query(None, description="UID del usuario a validar para este rol. Si no se envía, retorna usuarios asignados al rol con sus permisos"),
     current_user: dict = Depends(get_current_user)
 ):
     """
@@ -621,31 +696,57 @@ async def get_role_details(
     try:
         db = _get_db_or_raise()
         users_docs = list(db.collection(FIREBASE_COLLECTIONS["users"]).stream())
-        assigned_users = 0
+        users_with_role = []
+
         for user_doc in users_docs:
             user_data = user_doc.to_dict() or {}
-            user_roles = user_data.get("roles", [])
-            if isinstance(user_roles, list) and role_id in user_roles:
-                assigned_users += 1
+            user_roles = _normalize_roles(user_data.get("roles", []))
+            if role_id in user_roles:
+                users_with_role.append(_build_user_roles_payload(user_doc.id, user_data, db))
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error verificando rol en users: {str(e)}")
 
     role_data = ROLES[role_id]
-    
+    role_details_data = {
+        "role_id": role_id,
+        "name": role_data["name"],
+        "level": role_data["level"],
+        "description": role_data["description"],
+        "permissions": role_data["permissions"],
+        "permissions_count": len(role_data["permissions"]),
+        "assigned_users": len(users_with_role),
+        "users_collection": FIREBASE_COLLECTIONS["users"]
+    }
+
+    if uid:
+        target_uid = current_user.get("uid") if uid == "me" else uid
+        target_doc = db.collection(FIREBASE_COLLECTIONS["users"]).document(target_uid).get()
+        if not target_doc.exists:
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+        target_data = target_doc.to_dict() or {}
+        target_roles = _normalize_roles(target_data.get("roles", []))
+
+        return {
+            "success": True,
+            "data": role_details_data,
+            "scope": "single_user",
+            "requested_uid": target_uid,
+            "connected_uid": current_user.get("uid"),
+            "user_has_role": role_id in target_roles,
+            "user_permissions": get_user_permissions(target_uid, db),
+            "user_roles": target_roles
+        }
+
     return {
         "success": True,
-        "data": {
-            "role_id": role_id,
-            "name": role_data["name"],
-            "level": role_data["level"],
-            "description": role_data["description"],
-            "permissions": role_data["permissions"],
-            "permissions_count": len(role_data["permissions"]),
-            "assigned_users": assigned_users,
-            "users_collection": FIREBASE_COLLECTIONS["users"]
-        }
+        "data": role_details_data,
+        "scope": "all_assigned_users",
+        "connected_uid": current_user.get("uid"),
+        "assigned_users_details": users_with_role,
+        "count": len(users_with_role)
     }
 
 

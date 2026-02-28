@@ -135,6 +135,10 @@ DELETE /auth/admin/users/{uid}/temporary-permissions/{permission}
 ```http
 GET /auth/admin/roles
 GET /auth/admin/roles/{role_id}
+
+# Opcional: consultar por UID específico
+GET /auth/admin/roles?uid={uid}
+GET /auth/admin/roles/{role_id}?uid={uid}
 ```
 
 ### Auditoría
@@ -221,19 +225,16 @@ app.add_middleware(
 ### Nuevo Usuario
 
 1. **Registro**: `POST /auth/register`
-
    - Usuario se registra con email/password
    - **Se asigna automáticamente rol `visualizador`**
    - Se crea documento en Firestore
 
 2. **Login**: `POST /auth/login`
-
    - Usuario inicia sesión
    - Obtiene token de Firebase
    - Token incluye permisos del rol asignado
 
 3. **Acceso**: Usuario puede:
-
    - Ver datos básicos (permisos de visualizador)
    - NO puede crear, editar o eliminar
    - NO puede exportar datos
