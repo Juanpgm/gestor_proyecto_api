@@ -83,6 +83,13 @@ def _build_user_roles_payload(user_uid: str, user_data: dict, db) -> dict:
     }
 
 
+def _extract_single_role(role: str) -> str:
+    normalized_roles = _normalize_roles(role)
+    if len(normalized_roles) == 0:
+        raise HTTPException(status_code=400, detail="Debe proporcionar un rol")
+    return normalized_roles[0]
+
+
 # ========== GESTIÓN DE USUARIOS ==========
 
 @router.get("/users", response_model=dict)
@@ -147,17 +154,15 @@ async def list_super_admin_users(
 
     try:
         db = _get_db_or_raise()
-        
-        # Filtrar usuarios que tienen el rol super_admin
-        query = db.collection(FIREBASE_COLLECTIONS["users"]).where('roles', 'array_contains', 'super_admin')
+        users_collection = db.collection(FIREBASE_COLLECTIONS["users"])
+        query = users_collection.where('roles', '==', 'super_admin')
         users_ref = query.stream()
-        
+
         all_super_admins = []
         for user_doc in users_ref:
-            user_data = user_doc.to_dict()
+            user_data = user_doc.to_dict() or {}
             user_data['uid'] = user_doc.id
-            
-            # Sanitizar datos sensibles
+
             sanitized = sanitize_user_data(user_data)
             all_super_admins.append(sanitized)
         
@@ -352,8 +357,10 @@ async def assign_roles_to_user(
     if not _has_any_permission(current_user, ["manage:users"]):
         raise HTTPException(status_code=403, detail="Permiso denegado")
     
+    single_role = _extract_single_role(request.role)
+
     # Validar asignación de roles
-    if not validate_role_assignment(current_user['uid'], uid, request.roles):
+    if not validate_role_assignment(current_user['uid'], uid, [single_role]):
         raise HTTPException(
             status_code=403,
             detail="No puedes asignarte el rol super_admin a ti mismo"
@@ -367,17 +374,16 @@ async def assign_roles_to_user(
         if not user_doc.exists:
             raise HTTPException(status_code=404, detail="Usuario no encontrado")
         
-        # Validar que los roles existen
-        for role in request.roles:
-            if role not in ROLES:
-                raise HTTPException(status_code=400, detail=f"El rol '{role}' no existe")
+        # Validar que el rol existe
+        if single_role not in ROLES:
+            raise HTTPException(status_code=400, detail=f"El rol '{single_role}' no existe")
         
         # Obtener roles anteriores
-        old_roles = user_doc.to_dict().get('roles', [])
+        old_roles = _normalize_roles(user_doc.to_dict().get('roles', []))
         
         # Actualizar roles
         user_ref.update({
-            'roles': request.roles,
+            'roles': single_role,
             'updated_at': datetime.now(timezone.utc),
             'updated_by': current_user['uid']
         })
@@ -390,14 +396,14 @@ async def assign_roles_to_user(
             'user_email': current_user.get('email'),
             'target_user_uid': uid,
             'old_roles': old_roles,
-            'new_roles': request.roles,
+            'new_roles': [single_role],
             'reason': request.reason
         })
         
         return {
             "success": True,
             "message": f"Roles asignados exitosamente a {uid}",
-            "roles": request.roles,
+            "role": single_role,
             "previous_roles": old_roles
         }
     except HTTPException:
@@ -420,7 +426,9 @@ async def change_users_role_by_uid(
     if not _has_any_permission(current_user, ["manage:users"]):
         raise HTTPException(status_code=403, detail="Permiso denegado")
 
-    if not validate_role_assignment(current_user.get('uid', ''), uid, request.roles):
+    single_role = _extract_single_role(request.role)
+
+    if not validate_role_assignment(current_user.get('uid', ''), uid, [single_role]):
         raise HTTPException(
             status_code=403,
             detail="No puedes asignarte el rol super_admin a ti mismo"
@@ -434,14 +442,13 @@ async def change_users_role_by_uid(
         if not user_doc.exists:
             raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
-        for role in request.roles:
-            if role not in ROLES:
-                raise HTTPException(status_code=400, detail=f"El rol '{role}' no existe")
+        if single_role not in ROLES:
+            raise HTTPException(status_code=400, detail=f"El rol '{single_role}' no existe")
 
-        old_roles = user_doc.to_dict().get('roles', [])
+        old_roles = _normalize_roles(user_doc.to_dict().get('roles', []))
 
         user_ref.update({
-            'roles': request.roles,
+            'roles': single_role,
             'updated_at': datetime.now(timezone.utc),
             'updated_by': current_user.get('uid')
         })
@@ -453,7 +460,7 @@ async def change_users_role_by_uid(
             'user_email': current_user.get('email'),
             'target_user_uid': uid,
             'old_roles': old_roles,
-            'new_roles': request.roles,
+            'new_roles': [single_role],
             'reason': request.reason
         })
 
@@ -462,7 +469,7 @@ async def change_users_role_by_uid(
             "message": f"Roles actualizados exitosamente para {uid}",
             "uid": uid,
             "collection": FIREBASE_COLLECTIONS["users"],
-            "roles": request.roles,
+            "role": single_role,
             "previous_roles": old_roles
         }
     except HTTPException:
@@ -843,8 +850,8 @@ async def get_system_stats(
             if include_users:
                 users_data_for_response.append(sanitize_user_data(user_data))
 
-            roles = user_data.get('roles', [])
-            if not isinstance(roles, list) or len(roles) == 0:
+            roles = _normalize_roles(user_data.get('roles', []))
+            if len(roles) == 0:
                 users_without_roles += 1
                 continue
             for role in roles:

@@ -9,15 +9,16 @@ from datetime import datetime, timezone
 
 class AssignRolesRequest(BaseModel):
     """Request para asignar roles a un usuario"""
-    roles: List[str] = Field(..., description="Lista de roles a asignar")
+    role: str = Field(..., description="Rol único activo a asignar")
     reason: Optional[str] = Field(None, description="Razón para el cambio de roles")
     
-    @field_validator('roles')
+    @field_validator('role')
     @classmethod
-    def validate_roles(cls, v):
-        if not v or len(v) == 0:
-            raise ValueError("Debe proporcionar al menos un rol")
-        return v
+    def validate_role(cls, v):
+        role = v.strip() if isinstance(v, str) else ""
+        if not role:
+            raise ValueError("Debe proporcionar un rol")
+        return role
 
 
 class GrantTemporaryPermissionRequest(BaseModel):
