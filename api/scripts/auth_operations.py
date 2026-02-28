@@ -22,6 +22,74 @@ from .user_management import (
 )
 
 logger = logging.getLogger(__name__)
+DEFAULT_SESSION_ROLE = "publico"
+
+
+def _normalize_roles(raw_roles: Any) -> list[str]:
+    if raw_roles is None:
+        return []
+    if isinstance(raw_roles, str):
+        role = raw_roles.strip().lower()
+        return [role] if role else []
+    if isinstance(raw_roles, (list, tuple, set)):
+        normalized_roles: list[str] = []
+        for role in raw_roles:
+            role_text = str(role).strip().lower()
+            if role_text:
+                normalized_roles.append(role_text)
+        return normalized_roles
+    role_text = str(raw_roles).strip().lower()
+    return [role_text] if role_text else []
+
+
+def _resolve_roles(firestore_data: Dict[str, Any], custom_claims: Dict[str, Any]) -> tuple[list[str], str]:
+    roles = _normalize_roles(firestore_data.get("roles"))
+    role_source = "firestore"
+
+    if not roles:
+        claim_role = str(custom_claims.get("role", "")).strip().lower()
+        if claim_role:
+            roles = [claim_role]
+            role_source = "custom_claims"
+
+    if not roles:
+        roles = [DEFAULT_SESSION_ROLE]
+        role_source = "default"
+
+    return roles, role_source
+
+
+def _build_user_payload(user_record, firestore_data: Dict[str, Any]) -> Dict[str, Any]:
+    custom_claims = user_record.custom_claims or {}
+    roles, role_source = _resolve_roles(firestore_data, custom_claims)
+
+    hydrated_firestore_data = dict(firestore_data or {})
+    hydrated_firestore_data["roles"] = roles
+    hydrated_firestore_data["primary_role"] = roles[0]
+
+    fullname = hydrated_firestore_data.get("fullname") or user_record.display_name
+    centro_gestor = hydrated_firestore_data.get("nombre_centro_gestor")
+    cellphone = hydrated_firestore_data.get("cellphone") or user_record.phone_number
+
+    profile_complete = bool(fullname and centro_gestor and cellphone)
+
+    return {
+        "uid": user_record.uid,
+        "email": user_record.email,
+        "display_name": user_record.display_name,
+        "fullname": fullname,
+        "nombre_centro_gestor": centro_gestor,
+        "cellphone": cellphone,
+        "email_verified": user_record.email_verified,
+        "phone_number": user_record.phone_number,
+        "custom_claims": custom_claims,
+        "providers": [provider.provider_id for provider in user_record.provider_data],
+        "firestore_data": hydrated_firestore_data,
+        "roles": roles,
+        "primary_role": roles[0],
+        "roles_source": role_source,
+        "profile_complete": profile_complete
+    }
 
 # ============================================================================
 # CONFIGURACIÓN DE FIREBASE REST API
@@ -236,18 +304,23 @@ async def authenticate_email_password(email: str, password: str) -> Dict[str, An
         await update_user_login_stats(user_record.uid, "password")
         
         # PASO 4: Retornar información completa del usuario autenticado
+        user_payload = _build_user_payload(user_record, firestore_data)
+
+        logger.info(
+            "auth.login.hydration uid=%s firestore_doc=%s roles=%s source=%s profile_complete=%s",
+            user_record.uid,
+            bool(user_doc.exists),
+            user_payload.get("roles", []),
+            user_payload.get("roles_source"),
+            user_payload.get("profile_complete")
+        )
+
         return {
             "success": True,
             "user": {
-                "uid": user_record.uid,
-                "email": user_record.email,
-                "display_name": user_record.display_name,
-                "email_verified": user_record.email_verified,
-                "phone_number": user_record.phone_number,
-                "custom_claims": user_record.custom_claims or {},
+                **user_payload,
                 "creation_time": user_record.user_metadata.creation_timestamp.isoformat() if user_record.user_metadata.creation_timestamp and hasattr(user_record.user_metadata.creation_timestamp, 'isoformat') else None,
-                "last_sign_in": user_record.user_metadata.last_sign_in_timestamp.isoformat() if user_record.user_metadata.last_sign_in_timestamp and hasattr(user_record.user_metadata.last_sign_in_timestamp, 'isoformat') else None,
-                "firestore_data": firestore_data
+                "last_sign_in": user_record.user_metadata.last_sign_in_timestamp.isoformat() if user_record.user_metadata.last_sign_in_timestamp and hasattr(user_record.user_metadata.last_sign_in_timestamp, 'isoformat') else None
             },
             "auth_method": "email_password",
             "credentials_validated": True,
@@ -464,26 +537,57 @@ async def validate_user_session(id_token: str) -> Dict[str, Any]:
         firestore_data = {}
         if user_doc.exists:
             firestore_data = user_doc.to_dict()
-            
+
             if not firestore_data.get('is_active', True):
                 return {
                     "valid": False,
                     "error": "Cuenta desactivada",
                     "code": "ACCOUNT_INACTIVE"
                 }
+
+        user_payload = _build_user_payload(user_record, firestore_data)
+
+        if not user_doc.exists:
+            try:
+                firestore_client.collection('users').document(uid).set({
+                    "uid": uid,
+                    "email": user_record.email,
+                    "fullname": user_payload.get("fullname"),
+                    "cellphone": user_payload.get("cellphone"),
+                    "nombre_centro_gestor": user_payload.get("nombre_centro_gestor"),
+                    "roles": user_payload.get("roles", [DEFAULT_SESSION_ROLE]),
+                    "created_at": datetime.now(),
+                    "updated_at": datetime.now(),
+                    "email_verified": user_record.email_verified,
+                    "is_active": True,
+                    "auth_providers": [provider.provider_id for provider in user_record.provider_data]
+                }, merge=True)
+            except Exception as persist_error:
+                logger.warning(f"auth.validate_session could not persist default profile for uid={uid}: {persist_error}")
+        else:
+            try:
+                existing_roles = firestore_data.get("roles")
+                normalized_existing = _normalize_roles(existing_roles)
+                if normalized_existing != user_payload.get("roles", []):
+                    firestore_client.collection('users').document(uid).update({
+                        "roles": user_payload.get("roles", [DEFAULT_SESSION_ROLE]),
+                        "updated_at": datetime.now()
+                    })
+            except Exception as sync_error:
+                logger.warning(f"auth.validate_session could not sync roles for uid={uid}: {sync_error}")
+
+        logger.info(
+            "auth.validate_session.hydration uid=%s firestore_doc=%s roles=%s source=%s profile_complete=%s",
+            uid,
+            bool(user_doc.exists),
+            user_payload.get("roles", []),
+            user_payload.get("roles_source"),
+            user_payload.get("profile_complete")
+        )
         
         return {
             "valid": True,
-            "user": {
-                "uid": uid,
-                "email": user_record.email,
-                "display_name": user_record.display_name,
-                "email_verified": user_record.email_verified,
-                "phone_number": user_record.phone_number,
-                "custom_claims": user_record.custom_claims or {},
-                "providers": [provider.provider_id for provider in user_record.provider_data],
-                "firestore_data": firestore_data
-            },
+            "user": user_payload,
             "token_data": {
                 "iss": decoded_token.get('iss'),
                 "aud": decoded_token.get('aud'),

@@ -4124,6 +4124,7 @@ async def validate_session(
     """
     try:
         check_user_management_availability()
+        request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
         
         # Obtener token del header Authorization o del body
         id_token = None
@@ -4170,11 +4171,22 @@ async def validate_session(
         # Limpiar datos de Firebase antes de serializar
         clean_user_data = clean_firebase_data(result.get("user", {}))
         clean_token_data = clean_firebase_data(result.get("token_data", {}))
+
+        logger.info(
+            "auth.validate_session.response request_id=%s uid=%s roles=%s source=%s profile_complete=%s firestore_doc=%s",
+            request_id,
+            clean_user_data.get("uid"),
+            clean_user_data.get("roles", []),
+            clean_user_data.get("roles_source"),
+            clean_user_data.get("profile_complete"),
+            bool(clean_user_data.get("firestore_data"))
+        )
         
         return JSONResponse(
             content={
                 "success": True,
                 "session_valid": True,
+                "request_id": request_id,
                 "user": clean_user_data,
                 "token_info": clean_token_data,
                 "verified_at": result.get("verified_at"),

@@ -343,7 +343,7 @@ async def create_user_account(
                 "fullname": fullname_validation["normalized"],
                 "cellphone": phone_validation["normalized"],
                 "nombre_centro_gestor": nombre_centro_gestor,
-                "roles": "publico",
+                "roles": ["publico"],
                 "created_at": datetime.now(),
                 "updated_at": datetime.now(),
                 "email_verified": False,
