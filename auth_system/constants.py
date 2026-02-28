@@ -283,6 +283,7 @@ AVAILABLE_PERMISSIONS = {
 FIREBASE_COLLECTIONS = {
     "users": "users",
     "roles": "roles",
+    "permissions": "permissions",
     "audit_logs": "audit_logs",
     "proyectos": "proyectos_presupuestales",
     "unidades": "unidades-proyecto",

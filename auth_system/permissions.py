@@ -25,6 +25,69 @@ def _normalize_roles(raw_roles) -> List[str]:
     return [role_str] if role_str else []
 
 
+def _normalize_permissions(raw_permissions) -> List[str]:
+    if raw_permissions is None:
+        return []
+    if isinstance(raw_permissions, str):
+        value = raw_permissions.strip()
+        return [value] if value else []
+    if isinstance(raw_permissions, (list, tuple, set)):
+        normalized = []
+        for permission in raw_permissions:
+            permission_str = str(permission).strip()
+            if permission_str:
+                normalized.append(permission_str)
+        return normalized
+    permission_str = str(raw_permissions).strip()
+    return [permission_str] if permission_str else []
+
+
+def _get_permissions_from_collection(user_uid: str, db_client) -> List[str]:
+    permissions_collection_name = FIREBASE_COLLECTIONS.get("permissions")
+    if not permissions_collection_name:
+        return []
+
+    collected_permissions = set()
+
+    try:
+        # Formato 1: permissions/{uid}
+        user_permissions_doc = (
+            db_client.collection(permissions_collection_name)
+            .document(user_uid)
+            .get()
+        )
+        if user_permissions_doc.exists:
+            user_permissions_data = user_permissions_doc.to_dict() or {}
+            collected_permissions.update(
+                _normalize_permissions(user_permissions_data.get("permissions", []))
+            )
+            collected_permissions.update(
+                _normalize_permissions(user_permissions_data.get("granted_permissions", []))
+            )
+
+        # Formato 2: documentos con campo uid y permissions/permission
+        query_docs = (
+            db_client.collection(permissions_collection_name)
+            .where("uid", "==", user_uid)
+            .stream()
+        )
+        for permission_doc in query_docs:
+            permission_data = permission_doc.to_dict() or {}
+            collected_permissions.update(
+                _normalize_permissions(permission_data.get("permissions", []))
+            )
+            collected_permissions.update(
+                _normalize_permissions(permission_data.get("granted_permissions", []))
+            )
+            collected_permissions.update(
+                _normalize_permissions(permission_data.get("permission", None))
+            )
+    except Exception as e:
+        print(f"Error leyendo colección de permisos para {user_uid}: {e}")
+
+    return list(collected_permissions)
+
+
 def get_user_permissions(user_uid: str, db_client=None) -> List[str]:
     """
     Obtiene todos los permisos de un usuario basándose en sus roles
@@ -70,6 +133,10 @@ def get_user_permissions(user_uid: str, db_client=None) -> List[str]:
             if expires_at and isinstance(expires_at, datetime):
                 if expires_at > now:
                     all_permissions.add(temp_perm['permission'])
+
+            # Agregar permisos de gobernanza desde la colección permissions
+            governance_permissions = _get_permissions_from_collection(user_uid, db_client)
+            all_permissions.update(governance_permissions)
         
         return list(all_permissions)
         
