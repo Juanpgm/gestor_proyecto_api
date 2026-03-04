@@ -2976,6 +2976,259 @@ async def get_avances_unidades_proyecto(
         )
 
 
+@app.get(
+    "/solicitudes_cambios_unidades_proyecto",
+    tags=["Unidades de Proyecto"],
+    summary="🔵 GET | Consultar Solicitudes de Cambios de Unidades de Proyecto"
+)
+@optional_rate_limit("60/minute")
+async def consultar_solicitudes_cambios_unidades_proyecto(
+    doc_id: Optional[str] = Query(None, description="ID del documento en Firestore"),
+    upid: Optional[str] = Query(None, description="Filtrar por UPID"),
+    limit: Optional[int] = Query(None, ge=1, le=10000, description="Límite de registros"),
+    offset: Optional[int] = Query(None, ge=0, description="Offset para paginación")
+):
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase not available")
+
+    try:
+        db = get_firestore_client()
+        if db is None:
+            raise HTTPException(status_code=503, detail="No se pudo conectar a Firestore")
+
+        collection_ref = db.collection('solicitudes_cambios_unidades_proyecto')
+
+        should_convert = FIREBASE_TYPES_AVAILABLE
+        datetime_type = DatetimeWithNanoseconds
+
+        def normalize_value(value):
+            if should_convert and isinstance(value, datetime_type):
+                return value.isoformat()
+            if isinstance(value, dict):
+                for inner_key, inner_value in value.items():
+                    value[inner_key] = normalize_value(inner_value)
+                return value
+            if isinstance(value, list):
+                return [normalize_value(item) for item in value]
+            return value
+
+        if doc_id:
+            doc = collection_ref.document(doc_id).get()
+            if not doc.exists:
+                raise HTTPException(status_code=404, detail=f"No existe solicitud con id: {doc_id}")
+
+            doc_data = doc.to_dict() or {}
+            if should_convert:
+                doc_data = normalize_value(doc_data)
+            doc_data['id'] = doc.id
+
+            return create_utf8_response({
+                "success": True,
+                "data": [doc_data],
+                "count": 1,
+                "collection": "solicitudes_cambios_unidades_proyecto",
+                "filters": {
+                    "doc_id": doc_id,
+                    "upid": upid,
+                    "limit": limit,
+                    "offset": offset
+                }
+            })
+
+        query = collection_ref
+        if upid:
+            query = query.where('upid', '==', upid)
+
+        order_applied = False
+        try:
+            import google.cloud.firestore
+            query = query.order_by('created_at', direction=google.cloud.firestore.Query.DESCENDING)
+            order_applied = True
+        except Exception:
+            order_applied = False
+
+        query_limit = min(limit or 100, 10000)
+        query = query.limit(query_limit)
+
+        if offset:
+            query = query.offset(offset)
+
+        try:
+            docs = query.stream()
+        except Exception as e:
+            error_text = str(e).lower()
+            if order_applied and ("failed_precondition" in error_text or "index" in error_text):
+                fallback_query = collection_ref
+                if upid:
+                    fallback_query = fallback_query.where('upid', '==', upid)
+                fallback_query = fallback_query.limit(query_limit)
+                if offset:
+                    fallback_query = fallback_query.offset(offset)
+                docs = fallback_query.stream()
+                order_applied = False
+            else:
+                raise
+
+        data = []
+        for doc in docs:
+            doc_data = doc.to_dict() or {}
+            if should_convert:
+                doc_data = normalize_value(doc_data)
+            doc_data['id'] = doc.id
+            data.append(doc_data)
+
+        return create_utf8_response({
+            "success": True,
+            "data": data,
+            "count": len(data),
+            "collection": "solicitudes_cambios_unidades_proyecto",
+            "filters": {
+                "doc_id": doc_id,
+                "upid": upid,
+                "limit": query_limit,
+                "offset": offset or 0,
+                "ordered_by": "created_at_desc" if order_applied else None
+            }
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error consultando solicitudes de cambios de unidades de proyecto: {str(e)}"
+        )
+
+
+@app.get(
+    "/solicitudes_cambios_intervenciones",
+    tags=["Unidades de Proyecto"],
+    summary="🔵 GET | Consultar Solicitudes de Cambios de Intervenciones"
+)
+@optional_rate_limit("60/minute")
+async def consultar_solicitudes_cambios_intervenciones(
+    doc_id: Optional[str] = Query(None, description="ID del documento en Firestore"),
+    intervencion_id: Optional[str] = Query(None, description="Filtrar por ID de intervención"),
+    upid: Optional[str] = Query(None, description="Filtrar por UPID"),
+    limit: Optional[int] = Query(None, ge=1, le=10000, description="Límite de registros"),
+    offset: Optional[int] = Query(None, ge=0, description="Offset para paginación")
+):
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase not available")
+
+    try:
+        db = get_firestore_client()
+        if db is None:
+            raise HTTPException(status_code=503, detail="No se pudo conectar a Firestore")
+
+        collection_ref = db.collection('solicitudes_cambios_intervenciones')
+
+        should_convert = FIREBASE_TYPES_AVAILABLE
+        datetime_type = DatetimeWithNanoseconds
+
+        def normalize_value(value):
+            if should_convert and isinstance(value, datetime_type):
+                return value.isoformat()
+            if isinstance(value, dict):
+                for inner_key, inner_value in value.items():
+                    value[inner_key] = normalize_value(inner_value)
+                return value
+            if isinstance(value, list):
+                return [normalize_value(item) for item in value]
+            return value
+
+        if doc_id:
+            doc = collection_ref.document(doc_id).get()
+            if not doc.exists:
+                raise HTTPException(status_code=404, detail=f"No existe solicitud con id: {doc_id}")
+
+            doc_data = doc.to_dict() or {}
+            if should_convert:
+                doc_data = normalize_value(doc_data)
+            doc_data['id'] = doc.id
+
+            return create_utf8_response({
+                "success": True,
+                "data": [doc_data],
+                "count": 1,
+                "collection": "solicitudes_cambios_intervenciones",
+                "filters": {
+                    "doc_id": doc_id,
+                    "intervencion_id": intervencion_id,
+                    "upid": upid,
+                    "limit": limit,
+                    "offset": offset
+                }
+            })
+
+        query = collection_ref
+        if intervencion_id:
+            query = query.where('intervencion_id', '==', intervencion_id)
+        if upid:
+            query = query.where('upid', '==', upid)
+
+        order_applied = False
+        try:
+            import google.cloud.firestore
+            query = query.order_by('created_at', direction=google.cloud.firestore.Query.DESCENDING)
+            order_applied = True
+        except Exception:
+            order_applied = False
+
+        query_limit = min(limit or 100, 10000)
+        query = query.limit(query_limit)
+
+        if offset:
+            query = query.offset(offset)
+
+        try:
+            docs = query.stream()
+        except Exception as e:
+            error_text = str(e).lower()
+            if order_applied and ("failed_precondition" in error_text or "index" in error_text):
+                fallback_query = collection_ref
+                if intervencion_id:
+                    fallback_query = fallback_query.where('intervencion_id', '==', intervencion_id)
+                if upid:
+                    fallback_query = fallback_query.where('upid', '==', upid)
+                fallback_query = fallback_query.limit(query_limit)
+                if offset:
+                    fallback_query = fallback_query.offset(offset)
+                docs = fallback_query.stream()
+                order_applied = False
+            else:
+                raise
+
+        data = []
+        for doc in docs:
+            doc_data = doc.to_dict() or {}
+            if should_convert:
+                doc_data = normalize_value(doc_data)
+            doc_data['id'] = doc.id
+            data.append(doc_data)
+
+        return create_utf8_response({
+            "success": True,
+            "data": data,
+            "count": len(data),
+            "collection": "solicitudes_cambios_intervenciones",
+            "filters": {
+                "doc_id": doc_id,
+                "intervencion_id": intervencion_id,
+                "upid": upid,
+                "limit": query_limit,
+                "offset": offset or 0,
+                "ordered_by": "created_at_desc" if order_applied else None
+            }
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error consultando solicitudes de cambios de intervenciones: {str(e)}"
+        )
+
+
 @app.post("/solicitudes_cambios_unidad_proyecto", tags=["Unidades de Proyecto"], summary="🟢 POST | Solicitud de cambios en Unidad de Proyecto")
 @optional_rate_limit("30/minute")
 async def crear_solicitud_cambio_unidad_proyecto(
