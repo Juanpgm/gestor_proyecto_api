@@ -1490,10 +1490,34 @@ async def get_firebase_collections_summary(request: Request):
 # ENDPOINTS DE PROYECTOS DE INVERSIÓN
 # ============================================================================
 
+
+def _aplicar_campos_proyectos(data: List[Dict[str, Any]], campos: Optional[str]) -> List[Dict[str, Any]]:
+    if not campos:
+        return data
+
+    selected_fields = [field.strip() for field in campos.split(',') if field.strip()]
+    if not selected_fields:
+        return data
+
+    if "id" not in selected_fields:
+        selected_fields.append("id")
+
+    filtered = []
+    for row in data:
+        if not isinstance(row, dict):
+            continue
+        filtered.append({field: row.get(field) for field in selected_fields if field in row})
+
+    return filtered
+
 @app.get("/proyectos-presupuestales/all", tags=["Proyectos de Inversión"], summary="🔵 Todos los Proyectos Presupuestales")
 @optional_rate_limit("40/minute")  # Máximo 40 requests por minuto (endpoint costoso)
-@async_cache(ttl_seconds=300)  # Cache de 5 minutos para proyectos
-async def get_proyectos_all(request: Request):
+async def get_proyectos_all(
+    request: Request,
+    limit: int = Query(200, ge=1, le=5000, description="Número máximo de registros a retornar (optimización frontend)"),
+    offset: int = Query(0, ge=0, description="Cantidad de registros a omitir (paginación)"),
+    campos: Optional[str] = Query(None, description="Campos a retornar separados por coma (ej: bpin,bp,nombre_centro_gestor)")
+):
     """
     ## 🔵 GET | 📋 Listados | Obtener Todos los Proyectos Presupuestales
     
@@ -1525,7 +1549,7 @@ async def get_proyectos_all(request: Request):
         raise HTTPException(status_code=503, detail="Firebase or scripts not available")
     
     try:
-        result = await get_proyectos_presupuestales()
+        result = await get_proyectos_presupuestales(limit=limit, offset=offset if offset > 0 else None)
         
         if not result["success"]:
             raise HTTPException(
@@ -1533,14 +1557,21 @@ async def get_proyectos_all(request: Request):
                 detail=f"Error obteniendo proyectos presupuestales: {result.get('error', 'Error desconocido')}"
             )
         
+        data_filtrada = _aplicar_campos_proyectos(result["data"], campos)
+
         return {
             "success": True,
-            "data": result["data"],
-            "count": result["count"],
+            "data": data_filtrada,
+            "count": len(data_filtrada),
             "collection": result["collection"],
             "timestamp": result["timestamp"],
+            "pagination": {
+                "limit": limit,
+                "offset": offset,
+                "returned": len(data_filtrada)
+            },
             "last_updated": "2025-10-04T00:00:00Z",  # Endpoint creation date
-            "message": f"Se obtuvieron {result['count']} proyectos presupuestales exitosamente"
+            "message": f"Se obtuvieron {len(data_filtrada)} proyectos presupuestales exitosamente"
         }
         
     except HTTPException:
@@ -1552,7 +1583,12 @@ async def get_proyectos_all(request: Request):
         )
 
 @app.get("/proyectos-presupuestales/bpin/{bpin}", tags=["Proyectos de Inversión"], summary="🔵 Proyectos por BPIN")
-async def get_proyectos_by_bpin(bpin: str):
+async def get_proyectos_by_bpin(
+    bpin: str,
+    limit: int = Query(200, ge=1, le=5000, description="Número máximo de registros a retornar"),
+    offset: int = Query(0, ge=0, description="Cantidad de registros a omitir"),
+    campos: Optional[str] = Query(None, description="Campos a retornar separados por coma")
+):
     """
     ## 🔵 GET | 🔍 Consultas | Obtener Proyectos por BPIN
     
@@ -1596,7 +1632,11 @@ async def get_proyectos_by_bpin(bpin: str):
         raise HTTPException(status_code=503, detail="Firebase or scripts not available")
     
     try:
-        result = await get_proyectos_presupuestales_by_bpin(bpin)
+        result = await get_proyectos_presupuestales_by_bpin(
+            bpin,
+            limit=limit,
+            offset=offset
+        )
         
         if not result["success"]:
             raise HTTPException(
@@ -1604,15 +1644,22 @@ async def get_proyectos_by_bpin(bpin: str):
                 detail=f"Error obteniendo proyectos por BPIN: {result.get('error', 'Error desconocido')}"
             )
         
+        data_filtrada = _aplicar_campos_proyectos(result["data"], campos)
+
         return {
             "success": True,
-            "data": result["data"],
-            "count": result["count"],
+            "data": data_filtrada,
+            "count": len(data_filtrada),
             "collection": result["collection"],
             "filter": result["filter"],
             "timestamp": result["timestamp"],
+            "pagination": result.get("pagination", {
+                "limit": limit,
+                "offset": offset,
+                "returned": len(data_filtrada)
+            }),
             "last_updated": "2025-10-04T00:00:00Z",  # Endpoint creation date
-            "message": f"Se encontraron {result['count']} proyectos con BPIN '{bpin}'"
+            "message": f"Se encontraron {len(data_filtrada)} proyectos con BPIN '{bpin}'"
         }
         
     except HTTPException:
@@ -1624,7 +1671,12 @@ async def get_proyectos_by_bpin(bpin: str):
         )
 
 @app.get("/proyectos-presupuestales/bp/{bp}", tags=["Proyectos de Inversión"])
-async def get_proyectos_by_bp(bp: str):
+async def get_proyectos_by_bp(
+    bp: str,
+    limit: int = Query(200, ge=1, le=5000, description="Número máximo de registros a retornar"),
+    offset: int = Query(0, ge=0, description="Cantidad de registros a omitir"),
+    campos: Optional[str] = Query(None, description="Campos a retornar separados por coma")
+):
     """
     ## Obtener Proyectos Presupuestales por BP
     
@@ -1669,7 +1721,11 @@ async def get_proyectos_by_bp(bp: str):
         raise HTTPException(status_code=503, detail="Firebase or scripts not available")
     
     try:
-        result = await get_proyectos_presupuestales_by_bp(bp)
+        result = await get_proyectos_presupuestales_by_bp(
+            bp,
+            limit=limit,
+            offset=offset
+        )
         
         if not result["success"]:
             raise HTTPException(
@@ -1677,15 +1733,22 @@ async def get_proyectos_by_bp(bp: str):
                 detail=f"Error obteniendo proyectos por BP: {result.get('error', 'Error desconocido')}"
             )
         
+        data_filtrada = _aplicar_campos_proyectos(result["data"], campos)
+
         return {
             "success": True,
-            "data": result["data"],
-            "count": result["count"],
+            "data": data_filtrada,
+            "count": len(data_filtrada),
             "collection": result["collection"],
             "filter": result["filter"],
             "timestamp": result["timestamp"],
+            "pagination": result.get("pagination", {
+                "limit": limit,
+                "offset": offset,
+                "returned": len(data_filtrada)
+            }),
             "last_updated": "2025-10-04T00:00:00Z",  # Endpoint creation date
-            "message": f"Se encontraron {result['count']} proyectos con BP '{bp}'"
+            "message": f"Se encontraron {len(data_filtrada)} proyectos con BP '{bp}'"
         }
         
     except HTTPException:
@@ -1697,7 +1760,12 @@ async def get_proyectos_by_bp(bp: str):
         )
 
 @app.get("/proyectos-presupuestales/centro-gestor/{nombre_centro_gestor}", tags=["Proyectos de Inversión"])
-async def get_proyectos_by_centro_gestor(nombre_centro_gestor: str):
+async def get_proyectos_by_centro_gestor(
+    nombre_centro_gestor: str,
+    limit: int = Query(200, ge=1, le=5000, description="Número máximo de registros a retornar"),
+    offset: int = Query(0, ge=0, description="Cantidad de registros a omitir"),
+    campos: Optional[str] = Query(None, description="Campos a retornar separados por coma")
+):
     """
     ## Obtener Proyectos Presupuestales por Centro Gestor
     
@@ -1747,7 +1815,11 @@ async def get_proyectos_by_centro_gestor(nombre_centro_gestor: str):
         raise HTTPException(status_code=503, detail="Firebase or scripts not available")
     
     try:
-        result = await get_proyectos_presupuestales_by_centro_gestor(nombre_centro_gestor)
+        result = await get_proyectos_presupuestales_by_centro_gestor(
+            nombre_centro_gestor,
+            limit=limit,
+            offset=offset
+        )
         
         if not result["success"]:
             raise HTTPException(
@@ -1755,15 +1827,22 @@ async def get_proyectos_by_centro_gestor(nombre_centro_gestor: str):
                 detail=f"Error obteniendo proyectos por centro gestor: {result.get('error', 'Error desconocido')}"
             )
         
+        data_filtrada = _aplicar_campos_proyectos(result["data"], campos)
+
         return {
             "success": True,
-            "data": result["data"],
-            "count": result["count"],
+            "data": data_filtrada,
+            "count": len(data_filtrada),
             "collection": result["collection"],
             "filter": result["filter"],
             "timestamp": result["timestamp"],
+            "pagination": result.get("pagination", {
+                "limit": limit,
+                "offset": offset,
+                "returned": len(data_filtrada)
+            }),
             "last_updated": "2025-10-04T00:00:00Z",  # Endpoint creation date
-            "message": f"Se encontraron {result['count']} proyectos para el centro gestor '{nombre_centro_gestor}'"
+            "message": f"Se encontraron {len(data_filtrada)} proyectos para el centro gestor '{nombre_centro_gestor}'"
         }
         
     except HTTPException:
@@ -8993,7 +9072,6 @@ async def obtener_contratos_secop_endpoint(offset: int = 0, limit: int = None):
 
 @app.get("/contratos_emprestito_all", tags=["Gestión de Empréstito"], summary="🔵 Todos los Contratos Empréstito")
 @optional_rate_limit("50/minute")  # Máximo 50 requests por minuto
-@async_cache(ttl_seconds=300)  # Cache de 5 minutos
 async def obtener_todos_contratos_emprestito(request: Request):
     """
     ## 🔵 GET | 📋 Listados | Obtener Todos los Contratos de Empréstito
@@ -9460,7 +9538,6 @@ async def obtener_ordenes_compra_tvec_endpoint(
         )
 
 @app.get("/procesos_emprestito_all", tags=["Gestión de Empréstito"])
-@async_cache(ttl_seconds=300)  # Cache de 5 minutos
 async def get_all_procesos_emprestito():
     """
     ## Obtener Todos los Procesos de Empréstito
@@ -9564,7 +9641,6 @@ async def get_all_procesos_emprestito():
         )
 
 @app.get("/emprestito/obtener-procesos-bp", tags=["Gestión de Empréstito"], summary="🔵 Obtener Procesos BP")
-@async_cache(ttl_seconds=300)  # Cache de 5 minutos
 async def obtener_procesos_bp():
     """
     ## Obtener Procesos de Empréstito - Campos Básicos BP
@@ -9601,7 +9677,6 @@ async def obtener_procesos_bp():
     ### 💡 Características:
     - **Optimizado**: Solo campos necesarios para reducir payload
     - **UTF-8**: Soporte completo para caracteres especiales
-    - **Cache**: Datos cacheados por 5 minutos para mejor performance
     """
     if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
         raise HTTPException(status_code=503, detail="Firebase or scripts not available")
@@ -9655,7 +9730,6 @@ async def obtener_procesos_bp():
         )
 
 @app.get("/emprestito/obtener-contratos-bp", tags=["Gestión de Empréstito"], summary="🔵 Obtener Contratos BP")
-@async_cache(ttl_seconds=300)  # Cache de 5 minutos
 async def obtener_contratos_bp():
     """
     ## Obtener Contratos de Empréstito - Campos Básicos BP

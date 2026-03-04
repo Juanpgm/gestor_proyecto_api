@@ -277,7 +277,7 @@ async def get_proyectos_presupuestales(limit: Optional[int] = 500, offset: Optio
             raise Exception("No se pudo conectar a Firestore")
         
         # OPTIMIZACIÓN: Aplicar límite para reducir carga
-        collection_ref = db.collection("proyectos_presupuestales")
+        collection_ref = db.collection("ejecucion_presupuestal")
         
         # Aplicar offset si se proporciona
         if offset:
@@ -300,7 +300,7 @@ async def get_proyectos_presupuestales(limit: Optional[int] = 500, offset: Optio
             "success": True,
             "data": proyectos,
             "count": len(proyectos),
-            "collection": "proyectos_presupuestales",
+            "collection": "ejecucion_presupuestal",
             "timestamp": datetime.now().isoformat(),
             "pagination": {
                 "limit": limit,
@@ -339,7 +339,7 @@ async def get_unique_nombres_centros_gestores() -> Dict[str, Any]:
             raise Exception("No se pudo conectar a Firestore")
         
         # Obtener todos los documentos de la colección
-        collection_ref = db.collection("proyectos_presupuestales")
+        collection_ref = db.collection("ejecucion_presupuestal")
         docs = collection_ref.stream()
         
         # Usar un set para almacenar valores únicos
@@ -361,7 +361,7 @@ async def get_unique_nombres_centros_gestores() -> Dict[str, Any]:
             "data": nombres_unicos,
             "count": len(nombres_unicos),
             "field": "nombre_centro_gestor",
-            "collection": "proyectos_presupuestales",
+            "collection": "ejecucion_presupuestal",
             "timestamp": datetime.now().isoformat()
         }
         
@@ -374,7 +374,11 @@ async def get_unique_nombres_centros_gestores() -> Dict[str, Any]:
         }
 
 
-async def get_proyectos_presupuestales_by_bpin(bpin: str) -> Dict[str, Any]:
+async def get_proyectos_presupuestales_by_bpin(
+    bpin: str,
+    limit: Optional[int] = 200,
+    offset: Optional[int] = 0
+) -> Dict[str, Any]:
     """
     Obtener proyectos presupuestales filtrados por BPIN
     
@@ -403,9 +407,15 @@ async def get_proyectos_presupuestales_by_bpin(bpin: str) -> Dict[str, Any]:
         except ValueError:
             raise Exception(f"BPIN '{bpin}' no es un número válido")
         
-        # Filtrar por BPIN
-        collection_ref = db.collection("proyectos_presupuestales")
+        # Filtrar por BPIN con paginación
+        collection_ref = db.collection("ejecucion_presupuestal")
         query = collection_ref.where("bpin", "==", bpin_int)
+
+        if offset and offset > 0:
+            query = query.offset(offset)
+        if limit and limit > 0:
+            query = query.limit(limit)
+
         docs = query.stream()
         
         proyectos = []
@@ -418,8 +428,13 @@ async def get_proyectos_presupuestales_by_bpin(bpin: str) -> Dict[str, Any]:
             "success": True,
             "data": proyectos,
             "count": len(proyectos),
-            "collection": "proyectos_presupuestales",
+            "collection": "ejecucion_presupuestal",
             "filter": {"field": "bpin", "value": bpin_int},
+            "pagination": {
+                "limit": limit,
+                "offset": offset or 0,
+                "returned": len(proyectos)
+            },
             "timestamp": datetime.now().isoformat()
         }
         
@@ -432,7 +447,11 @@ async def get_proyectos_presupuestales_by_bpin(bpin: str) -> Dict[str, Any]:
         }
 
 
-async def get_proyectos_presupuestales_by_bp(bp: str) -> Dict[str, Any]:
+async def get_proyectos_presupuestales_by_bp(
+    bp: str,
+    limit: Optional[int] = 200,
+    offset: Optional[int] = 0
+) -> Dict[str, Any]:
     """
     Obtener proyectos presupuestales filtrados por BP
     
@@ -455,9 +474,15 @@ async def get_proyectos_presupuestales_by_bp(bp: str) -> Dict[str, Any]:
         if db is None:
             raise Exception("No se pudo conectar a Firestore")
         
-        # Filtrar por BP
-        collection_ref = db.collection("proyectos_presupuestales")
+        # Filtrar por BP con paginación
+        collection_ref = db.collection("ejecucion_presupuestal")
         query = collection_ref.where("bp", "==", bp)
+
+        if offset and offset > 0:
+            query = query.offset(offset)
+        if limit and limit > 0:
+            query = query.limit(limit)
+
         docs = query.stream()
         
         proyectos = []
@@ -470,8 +495,13 @@ async def get_proyectos_presupuestales_by_bp(bp: str) -> Dict[str, Any]:
             "success": True,
             "data": proyectos,
             "count": len(proyectos),
-            "collection": "proyectos_presupuestales",
+            "collection": "ejecucion_presupuestal",
             "filter": {"field": "bp", "value": bp},
+            "pagination": {
+                "limit": limit,
+                "offset": offset or 0,
+                "returned": len(proyectos)
+            },
             "timestamp": datetime.now().isoformat()
         }
         
@@ -484,7 +514,11 @@ async def get_proyectos_presupuestales_by_bp(bp: str) -> Dict[str, Any]:
         }
 
 
-async def get_proyectos_presupuestales_by_centro_gestor(nombre_centro_gestor: str) -> Dict[str, Any]:
+async def get_proyectos_presupuestales_by_centro_gestor(
+    nombre_centro_gestor: str,
+    limit: Optional[int] = 200,
+    offset: Optional[int] = 0
+) -> Dict[str, Any]:
     """
     Obtener proyectos presupuestales filtrados por nombre de centro gestor
     
@@ -507,9 +541,15 @@ async def get_proyectos_presupuestales_by_centro_gestor(nombre_centro_gestor: st
         if db is None:
             raise Exception("No se pudo conectar a Firestore")
         
-        # Filtrar por nombre_centro_gestor
-        collection_ref = db.collection("proyectos_presupuestales")
+        # Filtrar por nombre_centro_gestor con paginación
+        collection_ref = db.collection("ejecucion_presupuestal")
         query = collection_ref.where("nombre_centro_gestor", "==", nombre_centro_gestor)
+
+        if offset and offset > 0:
+            query = query.offset(offset)
+        if limit and limit > 0:
+            query = query.limit(limit)
+
         docs = query.stream()
         
         proyectos = []
@@ -522,8 +562,13 @@ async def get_proyectos_presupuestales_by_centro_gestor(nombre_centro_gestor: st
             "success": True,
             "data": proyectos,
             "count": len(proyectos),
-            "collection": "proyectos_presupuestales",
+            "collection": "ejecucion_presupuestal",
             "filter": {"field": "nombre_centro_gestor", "value": nombre_centro_gestor},
+            "pagination": {
+                "limit": limit,
+                "offset": offset or 0,
+                "returned": len(proyectos)
+            },
             "timestamp": datetime.now().isoformat()
         }
         
