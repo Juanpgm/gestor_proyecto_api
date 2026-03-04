@@ -40,6 +40,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from typing import Dict, Any, Optional, Union, List
+from pydantic import BaseModel, Field
 import uvicorn
 import asyncio
 from datetime import datetime
@@ -3560,9 +3561,94 @@ async def crear_intervencion(
 
 @app.put("/modificar/unidad_proyecto", tags=["Unidades de Proyecto"], summary="🟠 PUT | Modificar Unidad de Proyecto")
 @optional_rate_limit("30/minute")
+
+
+class ModificarUnidadProyectoRequest(BaseModel):
+    upid: str = Field(..., description="UPID de la unidad a modificar")
+    aprobado: bool = Field(..., description="Si es true aplica cambios; si es false solo registra auditoría")
+    nombre_up: Optional[str] = Field(None, description="Nombre de la unidad de proyecto")
+    nombre_up_detalle: Optional[str] = Field(None, description="Detalle del nombre de la unidad")
+    estado: Optional[str] = Field(None, description="Estado de la unidad")
+    tipo_intervencion: Optional[str] = Field(None, description="Tipo de intervención")
+    tipo_equipamiento: Optional[str] = Field(None, description="Tipo de equipamiento")
+    clase_up: Optional[str] = Field(None, description="Clase UP")
+    nombre_centro_gestor: Optional[str] = Field(None, description="Nombre del centro gestor")
+    comuna_corregimiento: Optional[str] = Field(None, description="Comuna o corregimiento")
+    barrio_vereda: Optional[str] = Field(None, description="Barrio o vereda")
+    frente_activo: Optional[str] = Field(None, description="Frente activo")
+    fuente_financiacion: Optional[str] = Field(None, description="Fuente de financiación")
+    direccion: Optional[str] = Field(None, description="Dirección")
+    ano: Optional[int] = Field(None, description="Año")
+    avance_obra: Optional[float] = Field(None, description="Avance de obra")
+    presupuesto_base: Optional[float] = Field(None, description="Presupuesto base")
+    geometry: Optional[Dict[str, Any]] = Field(None, description="Geometría GeoJSON")
+    extra_data: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Campos adicionales válidos de la colección unidades_proyecto"
+    )
+
+    class Config:
+        extra = "allow"
+        schema_extra = {
+            "example": {
+                "upid": "UP-001",
+                "aprobado": True,
+                "estado": "EN EJECUCIÓN",
+                "avance_obra": 45,
+                "extra_data": {
+                    "observaciones": "Ajuste por visita técnica"
+                }
+            }
+        }
+
+
+class ModificarIntervencionRequest(BaseModel):
+    intervencion_id: str = Field(..., description="ID de intervención a modificar")
+    aprobado: bool = Field(..., description="Si es true aplica cambios; si es false solo registra auditoría")
+    upid: Optional[str] = Field(None, description="UPID asociado")
+    avance_obra: Optional[float] = Field(None, description="Avance de obra")
+    bpin: Optional[int] = Field(None, description="BPIN")
+    cantidad: Optional[int] = Field(None, description="Cantidad")
+    clase_up: Optional[str] = Field(None, description="Clase UP")
+    estado: Optional[str] = Field(None, description="Estado de la intervención")
+    fecha_fin: Optional[str] = Field(None, description="Fecha fin")
+    fecha_inicio: Optional[str] = Field(None, description="Fecha inicio")
+    fuente_financiacion: Optional[str] = Field(None, description="Fuente de financiación")
+    identificador: Optional[str] = Field(None, description="Identificador")
+    nombre_centro_gestor: Optional[str] = Field(None, description="Nombre del centro gestor")
+    presupuesto_base: Optional[float] = Field(None, description="Presupuesto base")
+    referencia_contrato: Optional[str] = Field(None, description="Referencia contrato")
+    referencia_proceso: Optional[str] = Field(None, description="Referencia proceso")
+    tipo_intervencion: Optional[str] = Field(None, description="Tipo de intervención")
+    unidad: Optional[str] = Field(None, description="Unidad")
+    url_proceso: Optional[str] = Field(None, description="URL del proceso")
+    descripcion_intervencion: Optional[str] = Field(None, description="Descripción de la intervención")
+    extra_data: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Campos adicionales válidos de la colección intervenciones_unidades_proyecto"
+    )
+
+    class Config:
+        extra = "allow"
+        schema_extra = {
+            "example": {
+                "intervencion_id": "UP-001-INT-1",
+                "aprobado": False,
+                "descripcion_intervencion": "Ajuste de alcance",
+                "cantidad": 12,
+                "extra_data": {
+                    "observaciones": "Pendiente aprobación técnica"
+                }
+            }
+        }
+
+
 async def modificar_unidad_proyecto(
     request: Request,
-    payload: Optional[Dict[str, Any]] = Body(None, description="Datos a modificar. Debe incluir upid")
+    payload: ModificarUnidadProyectoRequest = Body(
+        ...,
+        description="Datos a modificar. Incluye upid, aprobado y cualquier campo adicional a actualizar"
+    )
 ):
     if not FIREBASE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Firebase not available")
@@ -3572,32 +3658,59 @@ async def modificar_unidad_proyecto(
         if db is None:
             raise HTTPException(status_code=503, detail="No se pudo conectar a Firestore")
 
-        body = dict(payload or {})
+        body = payload.model_dump(exclude_unset=True) if hasattr(payload, "model_dump") else payload.dict(exclude_unset=True)
         upid_value = str(body.get("upid", "")).strip()
         if not upid_value:
             raise HTTPException(status_code=400, detail="Debe enviar upid para modificar la unidad de proyecto")
+
+        if "aprobado" not in body or not isinstance(body.get("aprobado"), bool):
+            raise HTTPException(status_code=400, detail="Debe enviar 'aprobado' como booleano")
+        aprobado = body.get("aprobado")
 
         docs = list(db.collection("unidades_proyecto").where("upid", "==", upid_value).limit(1).stream())
         if not docs:
             raise HTTPException(status_code=404, detail=f"No existe unidad_proyecto con upid: {upid_value}")
 
-        changes = {key: value for key, value in body.items() if key != "upid"}
+        extra_data = body.get("extra_data") or {}
+        if not isinstance(extra_data, dict):
+            raise HTTPException(status_code=400, detail="'extra_data' debe ser un objeto JSON")
+
+        changes = {key: value for key, value in body.items() if key not in {"upid", "aprobado", "extra_data"}}
+        changes.update(extra_data)
         if not changes:
             raise HTTPException(status_code=400, detail="No se enviaron campos a modificar")
 
-        now_iso = datetime.now().isoformat()
-        changes["updated_at"] = now_iso
-
         doc = docs[0]
-        doc.reference.update(changes)
+        previous_data = doc.to_dict() or {}
 
-        updated_data = doc.to_dict() or {}
-        updated_data.update(changes)
+        changes_to_apply = dict(changes)
+        if aprobado:
+            now_iso = datetime.now().isoformat()
+            changes_to_apply["updated_at"] = now_iso
+            doc.reference.update(changes_to_apply)
+
+        updated_data = dict(previous_data)
+        if aprobado:
+            updated_data.update(changes_to_apply)
+
+        db.collection("cambios_implementados_unidades_proyecto").add({
+            "timestamp": datetime.now().isoformat(),
+            "collection_origen": "unidades_proyecto",
+            "documento_origen_id": doc.id,
+            "upid": upid_value,
+            "aprobado": aprobado,
+            "ejecutado": aprobado,
+            "datos_anteriores": previous_data,
+            "datos_solicitados": changes,
+            "datos_resultantes": updated_data
+        })
 
         return create_utf8_response({
             "id": doc.id,
             "collection": "unidades_proyecto",
             "upid": upid_value,
+            "aprobado": aprobado,
+            "ejecutado": aprobado,
             "data": updated_data
         })
     except HTTPException:
@@ -3613,7 +3726,10 @@ async def modificar_unidad_proyecto(
 @optional_rate_limit("30/minute")
 async def modificar_intervencion(
     request: Request,
-    payload: Optional[Dict[str, Any]] = Body(None, description="Datos a modificar. Debe incluir intervencion_id")
+    payload: ModificarIntervencionRequest = Body(
+        ...,
+        description="Datos a modificar. Incluye intervencion_id, aprobado y cualquier campo adicional a actualizar"
+    )
 ):
     if not FIREBASE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Firebase not available")
@@ -3623,10 +3739,14 @@ async def modificar_intervencion(
         if db is None:
             raise HTTPException(status_code=503, detail="No se pudo conectar a Firestore")
 
-        body = dict(payload or {})
+        body = payload.model_dump(exclude_unset=True) if hasattr(payload, "model_dump") else payload.dict(exclude_unset=True)
         intervencion_id_value = str(body.get("intervencion_id", "")).strip()
         if not intervencion_id_value:
             raise HTTPException(status_code=400, detail="Debe enviar intervencion_id para modificar la intervención")
+
+        if "aprobado" not in body or not isinstance(body.get("aprobado"), bool):
+            raise HTTPException(status_code=400, detail="Debe enviar 'aprobado' como booleano")
+        aprobado = body.get("aprobado")
 
         docs = list(
             db.collection("intervenciones_unidades_proyecto")
@@ -3637,23 +3757,46 @@ async def modificar_intervencion(
         if not docs:
             raise HTTPException(status_code=404, detail=f"No existe intervención con intervencion_id: {intervencion_id_value}")
 
-        changes = {key: value for key, value in body.items() if key != "intervencion_id"}
+        extra_data = body.get("extra_data") or {}
+        if not isinstance(extra_data, dict):
+            raise HTTPException(status_code=400, detail="'extra_data' debe ser un objeto JSON")
+
+        changes = {key: value for key, value in body.items() if key not in {"intervencion_id", "aprobado", "extra_data"}}
+        changes.update(extra_data)
         if not changes:
             raise HTTPException(status_code=400, detail="No se enviaron campos a modificar")
 
-        now_iso = datetime.now().isoformat()
-        changes["updated_at"] = now_iso
-
         doc = docs[0]
-        doc.reference.update(changes)
+        previous_data = doc.to_dict() or {}
 
-        updated_data = doc.to_dict() or {}
-        updated_data.update(changes)
+        changes_to_apply = dict(changes)
+        if aprobado:
+            now_iso = datetime.now().isoformat()
+            changes_to_apply["updated_at"] = now_iso
+            doc.reference.update(changes_to_apply)
+
+        updated_data = dict(previous_data)
+        if aprobado:
+            updated_data.update(changes_to_apply)
+
+        db.collection("cambios_implementados_intervenciones").add({
+            "timestamp": datetime.now().isoformat(),
+            "collection_origen": "intervenciones_unidades_proyecto",
+            "documento_origen_id": doc.id,
+            "intervencion_id": intervencion_id_value,
+            "aprobado": aprobado,
+            "ejecutado": aprobado,
+            "datos_anteriores": previous_data,
+            "datos_solicitados": changes,
+            "datos_resultantes": updated_data
+        })
 
         return create_utf8_response({
             "id": doc.id,
             "collection": "intervenciones_unidades_proyecto",
             "intervencion_id": intervencion_id_value,
+            "aprobado": aprobado,
+            "ejecutado": aprobado,
             "data": updated_data
         })
     except HTTPException:
