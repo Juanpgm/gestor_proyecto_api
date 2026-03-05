@@ -3282,7 +3282,6 @@ async def crear_unidad_proyecto(
     nombre_up: Optional[str] = Body(None, description="Nombre de la unidad de proyecto", example="Parque Lineal Río Cali"),
     nombre_up_detalle: Optional[str] = Body(None, description="Detalle del nombre de la unidad", example="Tramo 3 - Sector Norte"),
     tipo_equipamiento: Optional[str] = Body(None, description="Tipo de equipamiento", example="Parque"),
-    clase_up: Optional[str] = Body(None, description="Clase UP", example="Espacio Público"),
     direccion: Optional[str] = Body(None, description="Dirección", example="Calle 25 Norte #6N-45"),
     geometry: Optional[Dict[str, Any]] = Body(
         None,
@@ -3347,7 +3346,6 @@ async def crear_unidad_proyecto(
             "nombre_up": nombre_up,
             "nombre_up_detalle": nombre_up_detalle,
             "tipo_equipamiento": tipo_equipamiento,
-            "clase_up": clase_up,
             "comuna_corregimiento": comuna_corregimiento,
             "barrio_vereda": barrio_vereda,
             "direccion": direccion,
