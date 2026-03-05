@@ -3240,7 +3240,7 @@ async def crear_unidad_proyecto(
     geometry: Optional[Dict[str, Any]] = Body(
         None,
         description="Geometría GeoJSON tipo Point con coordenadas [longitud, latitud]",
-        example={"type": "Point", "coordinates": [-76.48375265767082, 3.42663160588219]}
+        example={"type": "Point", "coordinates": [0.0, 0.0]}
     )
 ):
     if not FIREBASE_AVAILABLE:
@@ -3434,45 +3434,27 @@ async def crear_intervencion(
         )
 
 
-@app.put("/modificar/unidad_proyecto", tags=["Unidades de Proyecto"], summary="🟠 PUT | Modificar Unidad de Proyecto")
-@optional_rate_limit("30/minute")
-
-
 class ModificarUnidadProyectoRequest(BaseModel):
-    upid: str = Field(..., description="UPID de la unidad a modificar")
+    upid: str = Field(..., description="UPID de la unidad a modificar (ej: UNP-1)")
     aprobado: bool = Field(..., description="Si es true aplica cambios; si es false solo registra auditoría")
     nombre_up: Optional[str] = Field(None, description="Nombre de la unidad de proyecto")
     nombre_up_detalle: Optional[str] = Field(None, description="Detalle del nombre de la unidad")
-    estado: Optional[str] = Field(None, description="Estado de la unidad")
-    tipo_intervencion: Optional[str] = Field(None, description="Tipo de intervención")
     tipo_equipamiento: Optional[str] = Field(None, description="Tipo de equipamiento")
     clase_up: Optional[str] = Field(None, description="Clase UP")
-    nombre_centro_gestor: Optional[str] = Field(None, description="Nombre del centro gestor")
-    comuna_corregimiento: Optional[str] = Field(None, description="Comuna o corregimiento")
-    barrio_vereda: Optional[str] = Field(None, description="Barrio o vereda")
-    frente_activo: Optional[str] = Field(None, description="Frente activo")
-    fuente_financiacion: Optional[str] = Field(None, description="Fuente de financiación")
     direccion: Optional[str] = Field(None, description="Dirección")
-    ano: Optional[int] = Field(None, description="Año")
-    avance_obra: Optional[float] = Field(None, description="Avance de obra")
-    presupuesto_base: Optional[float] = Field(None, description="Presupuesto base")
-    geometry: Optional[Dict[str, Any]] = Field(None, description="Geometría GeoJSON")
-    extra_data: Optional[Dict[str, Any]] = Field(
+    geometry: Optional[Dict[str, Any]] = Field(
         None,
-        description="Campos adicionales válidos de la colección unidades_proyecto"
+        description="Geometría GeoJSON Point enviada desde el frontend. Si se envía, recalcula automáticamente comuna_corregimiento, barrio_vereda y proyectos_estrategicos"
     )
 
     class Config:
         extra = "allow"
         schema_extra = {
             "example": {
-                "upid": "UP-001",
+                "upid": "UNP-1",
                 "aprobado": True,
-                "estado": "EN EJECUCIÓN",
-                "avance_obra": 45,
-                "extra_data": {
-                    "observaciones": "Ajuste por visita técnica"
-                }
+                "nombre_up": "Nombre unidad",
+                "geometry": {"type": "Point", "coordinates": [0.0, 0.0]}
             }
         }
 
@@ -3518,6 +3500,8 @@ class ModificarIntervencionRequest(BaseModel):
         }
 
 
+@app.put("/modificar/unidad_proyecto", tags=["Unidades de Proyecto"], summary="🟠 PUT | Modificar Unidad de Proyecto")
+@optional_rate_limit("30/minute")
 async def modificar_unidad_proyecto(
     request: Request,
     payload: ModificarUnidadProyectoRequest = Body(
@@ -3542,27 +3526,43 @@ async def modificar_unidad_proyecto(
             raise HTTPException(status_code=400, detail="Debe enviar 'aprobado' como booleano")
         aprobado = body.get("aprobado")
 
-        docs = list(db.collection("unidades_proyecto").where("upid", "==", upid_value).limit(1).stream())
-        if not docs:
+        doc_ref = db.collection("unidades_proyecto").document(upid_value)
+        doc_snap = doc_ref.get()
+        if not doc_snap.exists:
             raise HTTPException(status_code=404, detail=f"No existe unidad_proyecto con upid: {upid_value}")
 
-        extra_data = body.get("extra_data") or {}
-        if not isinstance(extra_data, dict):
-            raise HTTPException(status_code=400, detail="'extra_data' debe ser un objeto JSON")
+        changes = {key: value for key, value in body.items() if key not in {"upid", "aprobado"}}
 
-        changes = {key: value for key, value in body.items() if key not in {"upid", "aprobado", "extra_data"}}
-        changes.update(extra_data)
+        # --- Auto-detectar comuna, barrio y proyectos desde geometry ---
+        geometry_val = changes.get("geometry")
+        if geometry_val and geometry_val.get("type") == "Point" and geometry_val.get("coordinates"):
+            coords = geometry_val["coordinates"]
+            basemaps_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "basemaps")
+            comuna = _buscar_en_geojson(
+                os.path.join(basemaps_dir, "comunas_corregimientos.geojson"),
+                "comuna_corregimiento", coords
+            )
+            barrio = _buscar_en_geojson(
+                os.path.join(basemaps_dir, "barrios_veredas.geojson"),
+                "barrio_vereda", coords
+            )
+            proyectos = _buscar_proyectos_estrategicos(coords)
+            if comuna:
+                changes["comuna_corregimiento"] = comuna
+            if barrio:
+                changes["barrio_vereda"] = barrio
+            changes["proyectos_estrategicos"] = proyectos
+
         if not changes:
             raise HTTPException(status_code=400, detail="No se enviaron campos a modificar")
 
-        doc = docs[0]
-        previous_data = doc.to_dict() or {}
+        previous_data = doc_snap.to_dict() or {}
 
         changes_to_apply = dict(changes)
         if aprobado:
             now_iso = datetime.now().isoformat()
             changes_to_apply["updated_at"] = now_iso
-            doc.reference.update(changes_to_apply)
+            doc_ref.update(changes_to_apply)
 
         updated_data = dict(previous_data)
         if aprobado:
@@ -3571,7 +3571,7 @@ async def modificar_unidad_proyecto(
         db.collection("cambios_implementados_unidades_proyecto").add({
             "timestamp": datetime.now().isoformat(),
             "collection_origen": "unidades_proyecto",
-            "documento_origen_id": doc.id,
+            "documento_origen_id": upid_value,
             "upid": upid_value,
             "aprobado": aprobado,
             "ejecutado": aprobado,
@@ -3581,7 +3581,7 @@ async def modificar_unidad_proyecto(
         })
 
         return create_utf8_response({
-            "id": doc.id,
+            "id": upid_value,
             "collection": "unidades_proyecto",
             "upid": upid_value,
             "aprobado": aprobado,
