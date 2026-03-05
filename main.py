@@ -47,6 +47,7 @@ from datetime import datetime
 import json
 import re
 import uuid
+from shapely.geometry import shape as shapely_shape, Point as ShapelyPoint
 
 # Rate limiting (opcional, con fallback)
 try:
@@ -950,8 +951,7 @@ async def read_root():
                 "/proyectos-presupuestales/all",
                 "/proyectos-presupuestales/bpin/{bpin}",
                 "/proyectos-presupuestales/bp/{bp}",
-                "/proyectos-presupuestales/centro-gestor/{nombre_centro_gestor}",
-                "/proyectos-presupuestales/cargar-json (POST)"
+                "/proyectos-presupuestales/centro-gestor/{nombre_centro_gestor}"
             ],
             "unidades_proyecto": [
                 "/unidades-proyecto/geometry", 
@@ -1853,122 +1853,6 @@ async def get_proyectos_by_centro_gestor(
             detail=f"Error procesando consulta por centro gestor: {str(e)}"
         )
 
-@app.post("/proyectos-presupuestales/cargar-json", tags=["Proyectos de Inversión"], summary="🟢 Cargar JSON Proyectos")
-async def cargar_proyectos_presupuestales_json(
-    archivo_json: UploadFile = File(..., description="Archivo JSON con proyectos presupuestales"),
-    update_mode: str = Form(default="merge", description="Modo de actualización: merge, replace, append")
-):
-    """
-    ## � POST | �📊 Carga de Archivos | Cargar Proyectos desde JSON
-    
-    Endpoint POST para subir un archivo JSON con información de proyectos presupuestales 
-    y cargarlo en la colección "proyectos_presupuestales".
-    
-    ### 📁 Archivo JSON esperado:
-    ```json
-    [
-        {
-            "nombre_proyecto": "Construcción de Puente",
-            "bpin": "2023000123456",
-            "bp": "BP-2023-001", 
-            "nombre_centro_gestor": "Secretaría de Infraestructura",
-            "valor_proyecto": 500000000
-        },
-        {
-            "nombre_proyecto": "Otro Proyecto",
-            "bpin": "2023000789012"
-        }
-    ]
-    ```
-    
-    ### 🔧 Modos de actualización:
-    - **merge**: Actualiza existentes y crea nuevos (por defecto)
-    - **replace**: Reemplaza toda la colección
-    - **append**: Solo agrega nuevos
-    
-    ### 🎯 Cómo usar:
-    1. Haz clic en "Choose File" 
-    2. Selecciona tu archivo .json
-    3. Selecciona el modo de actualización
-    4. Haz clic en "Execute"
-    
-    ### ✅ Validaciones:
-    - Solo archivos .json
-    - Cada proyecto debe tener "nombre_proyecto"
-    - Tamaño máximo: 10MB
-    """
-    # Verificar disponibilidad de servicios
-    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Firebase o scripts no disponibles")
-    
-    if not PROYECTOS_PRESUPUESTALES_OPERATIONS_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Operaciones de proyectos presupuestales no disponibles")
-    
-    # Validar modo de actualización
-    if update_mode not in ["merge", "replace", "append"]:
-        raise HTTPException(status_code=400, detail="update_mode debe ser: merge, replace o append")
-    
-    # Validar tipo de archivo
-    if not archivo_json.filename.lower().endswith('.json'):
-        raise HTTPException(status_code=400, detail="Solo se permiten archivos JSON (.json)")
-    
-    # Validar tamaño del archivo (10MB máximo)
-    max_size = 10 * 1024 * 1024  # 10MB
-    if archivo_json.size and archivo_json.size > max_size:
-        raise HTTPException(status_code=400, detail="El archivo no puede exceder 10MB")
-    
-    try:
-        # Leer el contenido del archivo
-        contenido = await archivo_json.read()
-        
-        # Decodificar como JSON
-        try:
-            json_data = json.loads(contenido.decode('utf-8'))
-        except json.JSONDecodeError as e:
-            raise HTTPException(status_code=400, detail=f"Error al leer JSON: {str(e)}")
-        except UnicodeDecodeError:
-            raise HTTPException(status_code=400, detail="El archivo debe estar codificado en UTF-8")
-        
-        # Validar que sea una lista
-        if not isinstance(json_data, list):
-            raise HTTPException(status_code=400, detail="El JSON debe ser una lista de proyectos")
-        
-        if len(json_data) == 0:
-            raise HTTPException(status_code=400, detail="La lista no puede estar vacía")
-        
-        # Validar que cada proyecto tenga nombre_proyecto
-        for i, proyecto in enumerate(json_data):
-            if not isinstance(proyecto, dict):
-                raise HTTPException(status_code=400, detail=f"El elemento {i} debe ser un objeto")
-            if not proyecto.get("nombre_proyecto"):
-                raise HTTPException(status_code=400, detail=f"El proyecto {i} debe tener 'nombre_proyecto'")
-        
-        # Procesar proyectos
-        result = await process_proyectos_presupuestales_json(
-            proyectos_data=json_data,
-            update_mode=update_mode
-        )
-        
-        if not result["success"]:
-            raise HTTPException(status_code=400, detail=result.get('error', 'Error desconocido'))
-        
-        # Agregar información del archivo procesado
-        result["archivo_info"] = {
-            "nombre_archivo": archivo_json.filename,
-            "tamaño_bytes": len(contenido),
-            "proyectos_en_archivo": len(json_data),
-            "update_mode_usado": update_mode
-        }
-        
-        return create_utf8_response(result)
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
-
-
-
 # ============================================================================
 # ENDPOINT DE UNIDADES DE PROYECTO
 # ============================================================================
@@ -2245,7 +2129,7 @@ async def consultar_unidades_proyecto(
 async def get_unidades_proyecto_calidad_datos(
     request: Request,
     nombre_centro_gestor: Optional[str] = Query(None, description="Filtrar clasificación por centro gestor"),
-    history_limit: int = Query(30, ge=1, le=365, description="Cantidad máxima de snapshots en historial")
+    history_limit: Optional[int] = Query(None, ge=1, description="Cantidad máxima de snapshots en historial. Si no se envía, devuelve todo el historial disponible")
 ):
     """
     ## 🔵 Métricas de Calidad de Datos de Unidades de Proyecto
@@ -2260,6 +2144,16 @@ async def get_unidades_proyecto_calidad_datos(
     - Data Quality Score (DQS) ponderado 0-100
     - Clasificación por `nombre_centro_gestor`
     - Secciones de `resumen`, `registros`, `historial`, `metadatos` y `estadisticas_globales`
+
+        ### 📝 Ejemplos de consulta:
+        - **Sin límite (por defecto, retorna todo el historial):**
+            `/unidades-proyecto/calidad-datos`
+        - **Con límite de historial:**
+            `/unidades-proyecto/calidad-datos?history_limit=5`
+        - **Filtrado por centro gestor (sin limitar historial):**
+            `/unidades-proyecto/calidad-datos?nombre_centro_gestor=Unidad%20Administrativa%20Especial%20de%20Servicios%20Públicos`
+        - **Filtrado por centro gestor + límite de historial:**
+            `/unidades-proyecto/calidad-datos?nombre_centro_gestor=Unidad%20Administrativa%20Especial%20de%20Servicios%20Públicos&history_limit=10`
     """
     if not FIREBASE_AVAILABLE:
         raise HTTPException(
@@ -2272,13 +2166,6 @@ async def get_unidades_proyecto_calidad_datos(
             nombre_centro_gestor=nombre_centro_gestor,
             history_limit=history_limit
         )
-
-        if not result.get("success"):
-            raise HTTPException(
-                status_code=500,
-                detail=result.get("error", "No fue posible calcular métricas de calidad")
-            )
-
         return create_utf8_response(result)
 
     except HTTPException:
@@ -2460,156 +2347,6 @@ async def get_unidades_proyecto_init_360(request: Request):
 
 
 
-
-
-@app.delete("/grupo-operativo/eliminar-reporte", tags=["Artefacto de Captura DAGMA"], summary="🔴 DELETE | Eliminar Reporte")
-@optional_rate_limit("30/minute")
-async def delete_reporte(request: Request, reporte_id: str = Query(..., description="ID del reporte a eliminar")):
-    """
-    ## 🔴 DELETE | Eliminar Reporte del Grupo Operativo
-    
-    **Propósito**: Eliminar un reporte específico del sistema, incluyendo las fotos en S3.
-    
-    ### 📥 Parámetros
-    - **reporte_id**: ID único del reporte a eliminar
-    
-    ### 🗑️ Acciones realizadas:
-    1. Eliminar imágenes del bucket S3 (360-dagma-photos)
-    2. Eliminar documento de Firebase (reconocimientos_dagma)
-    
-    ### 📝 Ejemplo de uso:
-    ```javascript
-    const response = await fetch('/grupo-operativo/eliminar-reporte?reporte_id=abc-123', {
-        method: 'DELETE'
-    });
-    ```
-    
-    ### ✅ Respuesta exitosa:
-    ```json
-    {
-        "success": true,
-        "id": "abc-123",
-        "message": "Reporte y fotos eliminados exitosamente",
-        "photos_deleted": 3,
-        "timestamp": "2026-01-24T..."
-    }
-    ```
-    """
-    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Firebase or scripts not available")
-    
-    try:
-        # 1️⃣ Conectar a Firestore
-        db = get_firestore_client()
-        if db is None:
-            raise HTTPException(
-                status_code=503,
-                detail="No se pudo conectar a Firestore"
-            )
-        
-        # 2️⃣ Verificar que el documento existe y obtener sus datos
-        doc_ref = db.collection('reconocimientos_dagma').document(reporte_id)
-        doc = doc_ref.get()
-        
-        if not doc.exists:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Reporte con ID '{reporte_id}' no encontrado"
-            )
-        
-        doc_data = doc.to_dict()
-        
-        # 3️⃣ Eliminar fotos de S3 (si existen)
-        photos_deleted = 0
-        photos_failed = []
-        
-        photos_urls = doc_data.get('photosUrl', [])
-        
-        if photos_urls:
-            try:
-                from api.utils.s3_document_manager import S3DocumentManager, BOTO3_AVAILABLE
-                
-                if BOTO3_AVAILABLE:
-                    # Inicializar S3DocumentManager
-                    s3_manager = S3DocumentManager()
-                    s3_manager.bucket_name = '360-dagma-photos'
-                    
-                    logger.info(f"🗑️ Eliminando {len(photos_urls)} fotos de S3 para reporte {reporte_id}")
-                    
-                    for photo_url in photos_urls:
-                        try:
-                            # Extraer la clave S3 de la URL
-                            # URL format: https://360-dagma-photos.s3.amazonaws.com/reconocimientos/{id}/{filename}
-                            if '360-dagma-photos.s3.amazonaws.com/' in photo_url:
-                                s3_key = photo_url.split('360-dagma-photos.s3.amazonaws.com/')[-1]
-                                
-                                # Eliminar objeto de S3
-                                s3_manager.s3_client.delete_object(
-                                    Bucket=s3_manager.bucket_name,
-                                    Key=s3_key
-                                )
-                                
-                                photos_deleted += 1
-                                logger.info(f"✅ Foto eliminada de S3: {s3_key}")
-                            else:
-                                logger.warning(f"⚠️ URL no reconocida como S3: {photo_url}")
-                                
-                        except Exception as e:
-                            logger.error(f"❌ Error eliminando foto de S3: {str(e)}")
-                            photos_failed.append({
-                                'url': photo_url,
-                                'error': str(e)
-                            })
-                    
-                    # Intentar eliminar la carpeta del reconocimiento si está vacía
-                    try:
-                        folder_key = f"reconocimientos/{reporte_id}/"
-                        # Listar objetos en la carpeta
-                        response = s3_manager.s3_client.list_objects_v2(
-                            Bucket=s3_manager.bucket_name,
-                            Prefix=folder_key
-                        )
-                        
-                        # Si no hay contenido, la carpeta ya está vacía o no existe
-                        if 'Contents' not in response or len(response['Contents']) == 0:
-                            logger.info(f"✅ Carpeta S3 limpia: {folder_key}")
-                    except Exception as e:
-                        logger.warning(f"⚠️ No se pudo verificar carpeta S3: {e}")
-                        
-                else:
-                    logger.warning("⚠️ boto3 no disponible, las fotos no se eliminarán de S3")
-                    
-            except ImportError:
-                logger.warning("⚠️ S3DocumentManager no disponible, las fotos no se eliminarán de S3")
-        
-        # 4️⃣ Eliminar el documento de Firebase
-        doc_ref.delete()
-        logger.info(f"✅ Documento Firebase eliminado: {reporte_id}")
-        
-        # 5️⃣ Preparar respuesta
-        response_data = {
-            "success": True,
-            "id": reporte_id,
-            "message": "Reporte eliminado exitosamente" if photos_deleted == 0 else "Reporte y fotos eliminados exitosamente",
-            "photos_deleted": photos_deleted,
-            "timestamp": datetime.now().isoformat()
-        }
-        
-        # Agregar advertencias si hubo fotos que no se pudieron eliminar
-        if photos_failed:
-            response_data["warning"] = f"{len(photos_failed)} foto(s) no se pudieron eliminar de S3"
-            response_data["photos_failed"] = photos_failed
-        
-        return create_utf8_response(response_data)
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"❌ Error eliminando reporte: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error eliminando reporte: {str(e)}"
-        )
 
 
 @app.get("/intervenciones", tags=["Unidades de Proyecto"], summary="🔵 GET | Filtrar Intervenciones")
@@ -3441,26 +3178,70 @@ async def crear_solicitud_cambio_intervencion(
         )
 
 
-@app.post("/crear_unidad_proyecto", tags=["Unidades de Proyecto"], summary="🟢 POST | Crear Unidad de Proyecto")
+def _buscar_en_geojson(geojson_path: str, property_name: str, point_coords: list) -> Optional[str]:
+    """Cruza un punto con una capa GeoJSON y retorna la propiedad del polígono que lo contiene."""
+    try:
+        with open(geojson_path, "r", encoding="utf-8") as f:
+            geojson_data = json.load(f)
+        point = ShapelyPoint(point_coords[0], point_coords[1])
+        for feature in geojson_data.get("features", []):
+            polygon = shapely_shape(feature["geometry"])
+            if polygon.contains(point):
+                return feature.get("properties", {}).get(property_name)
+    except Exception as e:
+        logger.warning(f"Error cruzando geometría con {geojson_path}: {type(e).__name__}")
+    return None
+
+
+def _buscar_proyectos_estrategicos(point_coords: list) -> str:
+    """Intersecta un punto con todos los GeoJSON en basemaps/proyectos_estrategicos/ y retorna los Name coincidentes."""
+    nombres = []
+    estrategicos_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "basemaps", "proyectos_estrategicos")
+    if not os.path.isdir(estrategicos_dir):
+        return ""
+    try:
+        point = ShapelyPoint(point_coords[0], point_coords[1])
+        for filename in os.listdir(estrategicos_dir):
+            if not filename.lower().endswith(".geojson"):
+                continue
+            filepath = os.path.join(estrategicos_dir, filename)
+            try:
+                with open(filepath, "r", encoding="utf-8") as f:
+                    geojson_data = json.load(f)
+                for feature in geojson_data.get("features", []):
+                    polygon = shapely_shape(feature["geometry"])
+                    if polygon.intersects(point):
+                        name = feature.get("properties", {}).get("Name")
+                        if name and name not in nombres:
+                            nombres.append(name)
+            except Exception as e:
+                logger.warning(f"Error procesando {filename}: {type(e).__name__}")
+    except Exception as e:
+        logger.warning(f"Error leyendo directorio proyectos_estrategicos: {type(e).__name__}")
+    return ", ".join(nombres) if nombres else ""
+
+
+@app.post("/crear_unidad_proyecto", tags=["Unidades de Proyecto"], summary="🟢 POST | Crear Unidad de Proyecto",
+    description=(
+        "Crea una nueva Unidad de Proyecto. Variables auto-calculadas:\n\n"
+        "- **upid**: se genera automáticamente (último UNP-### + 1)\n"
+        "- **comuna_corregimiento**: se detecta cruzando geometry con basemaps/comunas_corregimientos.geojson\n"
+        "- **barrio_vereda**: se detecta cruzando geometry con basemaps/barrios_veredas.geojson\n"
+        "- **proyectos_estrategicos**: lista de nombres obtenida por intersección con basemaps/proyectos_estrategicos/*.geojson\n"
+    ))
 @optional_rate_limit("30/minute")
 async def crear_unidad_proyecto(
     request: Request,
-    nombre_up: Optional[str] = Body(None, description="Nombre de la unidad de proyecto"),
-    nombre_up_detalle: Optional[str] = Body(None, description="Detalle del nombre de la unidad"),
-    estado: Optional[str] = Body(None, description="Estado del proyecto"),
-    tipo_intervencion: Optional[str] = Body(None, description="Tipo de intervención"),
-    tipo_equipamiento: Optional[str] = Body(None, description="Tipo de equipamiento"),
-    clase_up: Optional[str] = Body(None, description="Clase UP"),
-    nombre_centro_gestor: Optional[str] = Body(None, description="Nombre del centro gestor"),
-    comuna_corregimiento: Optional[str] = Body(None, description="Comuna o corregimiento"),
-    barrio_vereda: Optional[str] = Body(None, description="Barrio o vereda"),
-    frente_activo: Optional[str] = Body(None, description="Frente activo"),
-    fuente_financiacion: Optional[str] = Body(None, description="Fuente de financiación"),
-    direccion: Optional[str] = Body(None, description="Dirección"),
-    ano: Optional[int] = Body(None, description="Año"),
-    avance_obra: Optional[float] = Body(None, description="Avance de obra"),
-    presupuesto_base: Optional[float] = Body(None, description="Presupuesto base"),
-    geometry: Optional[Dict[str, Any]] = Body(None, description="Geometría GeoJSON")
+    nombre_up: Optional[str] = Body(None, description="Nombre de la unidad de proyecto", example="Parque Lineal Río Cali"),
+    nombre_up_detalle: Optional[str] = Body(None, description="Detalle del nombre de la unidad", example="Tramo 3 - Sector Norte"),
+    tipo_equipamiento: Optional[str] = Body(None, description="Tipo de equipamiento", example="Parque"),
+    clase_up: Optional[str] = Body(None, description="Clase UP", example="Espacio Público"),
+    direccion: Optional[str] = Body(None, description="Dirección", example="Calle 25 Norte #6N-45"),
+    geometry: Optional[Dict[str, Any]] = Body(
+        None,
+        description="Geometría GeoJSON tipo Point con coordenadas [longitud, latitud]",
+        example={"type": "Point", "coordinates": [-76.48375265767082, 3.42663160588219]}
+    )
 ):
     if not FIREBASE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Firebase not available")
@@ -3470,6 +3251,7 @@ async def crear_unidad_proyecto(
         if db is None:
             raise HTTPException(status_code=503, detail="No se pudo conectar a Firestore")
 
+        # --- Auto-generar UPID (último UNP-### de unidades_proyecto + 1) ---
         def extract_upid_number(upid_value: Any) -> Optional[int]:
             if upid_value is None:
                 return None
@@ -3490,28 +3272,43 @@ async def crear_unidad_proyecto(
                     max_upid_number = max(max_upid_number, upid_number)
 
         new_upid = f"UNP-{max_upid_number + 1}"
+
+        # --- Auto-detectar comuna_corregimiento y barrio_vereda desde geometry ---
+        comuna_corregimiento = None
+        barrio_vereda = None
+        basemaps_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "basemaps")
+
+        proyectos_estrategicos = ""
+
+        if geometry and geometry.get("type") == "Point" and geometry.get("coordinates"):
+            coords = geometry["coordinates"]
+            comuna_corregimiento = _buscar_en_geojson(
+                os.path.join(basemaps_dir, "comunas_corregimientos.geojson"),
+                "comuna_corregimiento",
+                coords
+            )
+            barrio_vereda = _buscar_en_geojson(
+                os.path.join(basemaps_dir, "barrios_veredas.geojson"),
+                "barrio_vereda",
+                coords
+            )
+            proyectos_estrategicos = _buscar_proyectos_estrategicos(coords)
+
         now_iso = datetime.now().isoformat()
 
         unidad_payload = {
             "nombre_up": nombre_up,
             "nombre_up_detalle": nombre_up_detalle,
-            "estado": estado,
-            "tipo_intervencion": tipo_intervencion,
             "tipo_equipamiento": tipo_equipamiento,
             "clase_up": clase_up,
-            "nombre_centro_gestor": nombre_centro_gestor,
             "comuna_corregimiento": comuna_corregimiento,
             "barrio_vereda": barrio_vereda,
-            "frente_activo": frente_activo,
-            "fuente_financiacion": fuente_financiacion,
             "direccion": direccion,
-            "ano": ano,
-            "avance_obra": avance_obra,
-            "presupuesto_base": presupuesto_base,
-            "geometry": geometry
+            "geometry": geometry,
         }
         unidad_payload = {key: value for key, value in unidad_payload.items() if value is not None}
         unidad_payload["upid"] = new_upid
+        unidad_payload["proyectos_estrategicos"] = proyectos_estrategicos
         unidad_payload["created_at"] = now_iso
         unidad_payload["updated_at"] = now_iso
 
@@ -10800,285 +10597,6 @@ async def endpoint_proyecciones_sin_proceso():
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error procesando endpoint: {str(e)}")
-
-
-@app.put("/emprestito/proyecciones/{referencia_proceso}", tags=["Gestión de Empréstito"], summary="🟡 Actualizar Proyección")
-async def actualizar_proyeccion_emprestito_endpoint(
-    referencia_proceso: str,
-    datos_actualizacion: ProyeccionEmprestitoUpdateRequest
-):
-    """
-    ## � PUT | ✏️ Actualización | Actualizar Proyección de Empréstito
-    
-    **Propósito**: Actualiza cualquier campo de un registro específico en la colección "proyecciones_emprestito" 
-    según su "referencia_proceso".
-    
-    ### ✅ Casos de uso:
-    - Actualizar datos específicos de una proyección existente
-    - Corregir información incorrecta en proyecciones
-    - Modificar valores proyectados o información del banco
-    - Actualizar enlaces de procesos o información PAA
-    - Mantener datos sincronizados con fuentes externas
-    
-    ### 🎯 Funcionamiento:
-    1. **Busca** el registro por `referencia_proceso` (parámetro de ruta)
-    2. **Actualiza** solo los campos proporcionados en el body
-    3. **Mantiene** los campos no especificados sin cambios
-    4. **Registra** timestamp de última actualización
-    5. **Retorna** datos previos y actualizados para auditoría
-    
-    ### 📋 Campos actualizables:
-    - `item`: Número de ítem
-    - `nombre_organismo_reducido`: Nombre abreviado del organismo
-    - `nombre_banco`: Banco asociado
-    - `BP`: Código BP
-    - `nombre_generico_proyecto`: Nombre del proyecto
-    - `nombre_resumido_proceso`: Proyecto con contrato
-    - `id_paa`: ID del PAA
-    - `urlProceso`: Enlace al proceso
-    - `valor_proyectado`: Valor total del proyecto
-    
-    ### 🔒 Validaciones:
-    - **referencia_proceso**: Debe existir en la colección
-    - **valor_proyectado**: Debe ser >= 0 si se proporciona
-    - **strings**: Se limpian automáticamente de espacios
-    - **campos opcionales**: Solo se actualizan los proporcionados
-    
-    ### 📝 Ejemplo de uso:
-    ```javascript
-    const referencia = "PROC-2024-001";
-    const datosActualizar = {
-        valor_proyectado: 500000000,
-        nombre_banco: "Banco de Occidente",
-        urlProceso: "https://nuevo-enlace.com"
-    };
-    
-    const response = await fetch(`/emprestito/proyecciones/${referencia}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(datosActualizar)
-    });
-    ```
-    
-    ### ✅ Respuesta exitosa:
-    ```json
-    {
-        "success": true,
-        "message": "Proyección actualizada exitosamente",
-        "referencia_proceso": "PROC-2024-001",
-        "doc_id": "abc123",
-        "datos_previos": { ... },
-        "datos_actualizados": { ... },
-        "campos_modificados": ["valor_proyectado", "nombre_banco", "urlProceso"]
-    }
-    ```
-    
-    ### 💡 Características:
-    - **Actualización parcial**: Solo modifica campos especificados
-    - **Auditoría completa**: Guarda datos previos y nuevos
-    - **Búsqueda exacta**: Por referencia_proceso únicamente
-    - **UTF-8**: Soporte completo para caracteres especiales
-    - **Timestamp automático**: Registra fecha de modificación
-    - **Validación robusta**: Verifica existencia y tipos de datos
-    """
-    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Firebase o scripts no disponibles")
-    
-    if not EMPRESTITO_OPERATIONS_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Operaciones de empréstito no disponibles")
-    
-    try:
-        # Convertir el modelo Pydantic a diccionario, excluyendo campos None
-        datos_dict = datos_actualizacion.dict(exclude_none=True)
-        
-        # Verificar que se proporcionen al menos algunos datos para actualizar
-        if not datos_dict:
-            raise HTTPException(
-                status_code=400,
-                detail="Debe proporcionar al menos un campo para actualizar"
-            )
-        
-        # Ejecutar actualización
-        result = await actualizar_proyeccion_emprestito(referencia_proceso, datos_dict)
-        
-        if not result["success"]:
-            # Manejo específico de errores
-            if "No se encontró" in result.get('error', ''):
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"No se encontró proyección con referencia_proceso: {referencia_proceso}"
-                )
-            else:
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Error actualizando proyección: {result.get('error', 'Error desconocido')}"
-                )
-        
-        # Agregar información del endpoint
-        result["last_updated"] = "2025-10-23T00:00:00Z"
-        result["endpoint_info"] = {
-            "metodo": "PUT",
-            "operacion": "actualizacion_parcial",
-            "campos_actualizables": [
-                "item", "nombre_organismo_reducido", "nombre_banco", "BP",
-                "nombre_generico_proyecto", "nombre_resumido_proceso", 
-                "id_paa", "urlProceso", "valor_proyectado"
-            ],
-            "validaciones_aplicadas": True,
-            "auditoria_completa": True
-        }
-        
-        return create_utf8_response(result)
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error procesando actualización de proyección: {str(e)}"
-        )
-
-
-@app.post("/emprestito/registrar-proyeccion", tags=["Gestión de Empréstito"], summary="🟢 Registrar Nueva Proyección")
-async def registrar_proyeccion_emprestito_endpoint(
-    referencia_proceso: str = Form(..., description="Referencia única del proceso"),
-    nombre_centro_gestor: str = Form(..., description="Nombre del centro gestor"),
-    nombre_banco: str = Form(..., description="Nombre del banco"),
-    bp: str = Form(..., description="Código BP", alias="BP"),
-    proyecto_generico: str = Form(..., description="Proyecto genérico"),
-    estado_proyeccion: Optional[str] = Form(None, description="Estado de la proyección"),
-    nombre_resumido_proceso: Optional[str] = Form(None, description="Nombre resumido del proceso"),
-    id_paa: Optional[str] = Form(None, description="ID del PAA"),
-    valor_proyectado: Optional[float] = Form(None, ge=0, description="Valor proyectado (debe ser >= 0)"),
-    urlProceso: Optional[str] = Form(None, description="URL del proceso")
-):
-    """
-    ## 🟢 POST | ➕ Creación | Registrar Nueva Proyección de Empréstito
-    
-    **Propósito**: Crea un nuevo registro en la colección "proyecciones_emprestito" con todos los 
-    campos necesarios para el seguimiento de proyecciones de empréstito.
-    
-    ### ✅ Casos de uso:
-    - Registrar nuevas proyecciones de empréstito
-    - Crear registros preliminares antes de la formalización
-    - Documentar proyecciones en etapas tempranas
-    - Vincular proyecciones con procesos PAA
-    - Establecer valores proyectados para presupuestación
-    
-    ### ✅ Casos de uso:
-    - Registrar nuevas proyecciones de empréstito
-    - Crear registros preliminares antes de la formalización
-    - Documentar proyecciones en etapas tempranas
-    - Vincular proyecciones con procesos PAA
-    - Establecer valores proyectados para presupuestación
-    
-    ### 🎯 Funcionamiento:
-    1. **Valida** que no exista una proyección con la misma referencia_proceso
-    2. **Verifica** que todos los campos requeridos estén presentes
-    3. **Limpia** y normaliza los datos ingresados
-    4. **Crea** el registro en Firebase con timestamp
-    5. **Retorna** confirmación con ID del documento creado
-    
-    ### 📋 Campos del registro:
-    
-    #### Campos Requeridos:
-    - `referencia_proceso`: Identificador único del proceso
-    - `nombre_centro_gestor`: Nombre del centro gestor responsable
-    - `nombre_banco`: Entidad bancaria asociada
-    - `bp`: Código BP del proyecto
-    - `proyecto_generico`: Nombre genérico del proyecto
-    
-    #### Campos Opcionales:
-    - `estado_proyeccion`: Estado actual de la proyección
-    - `nombre_resumido_proceso`: Nombre resumido para identificación
-    - `id_paa`: Identificador del Plan Anual de Adquisiciones
-    - `valor_proyectado`: Monto proyectado (debe ser >= 0)
-    - `urlProceso`: URL del proceso en plataforma SECOP
-    
-    ### 🔒 Validaciones:
-    - **referencia_proceso**: No debe existir previamente en la colección
-    - **valor_proyectado**: Debe ser >= 0 si se proporciona
-    - **strings**: Se limpian automáticamente de espacios
-    - **campos requeridos**: Todos los marcados como obligatorios deben proporcionarse
-    """
-    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Firebase o scripts no disponibles")
-    
-    try:
-        # Construir diccionario con los datos del formulario
-        datos_dict = {
-            'referencia_proceso': referencia_proceso.strip() if referencia_proceso else None,
-            'nombre_centro_gestor': nombre_centro_gestor.strip() if nombre_centro_gestor else None,
-            'nombre_banco': nombre_banco.strip() if nombre_banco else None,
-            'BP': bp.strip() if bp else None,
-            'proyecto_generico': proyecto_generico.strip() if proyecto_generico else None,
-        }
-        
-        # Agregar campos opcionales solo si tienen valor
-        if estado_proyeccion:
-            datos_dict['estado_proyeccion'] = estado_proyeccion.strip()
-        if nombre_resumido_proceso:
-            datos_dict['nombre_resumido_proceso'] = nombre_resumido_proceso.strip()
-        if id_paa:
-            datos_dict['id_paa'] = id_paa.strip()
-        if valor_proyectado is not None:
-            if valor_proyectado < 0:
-                raise HTTPException(
-                    status_code=400,
-                    detail="El valor_proyectado debe ser mayor o igual a 0"
-                )
-            datos_dict['valor_proyectado'] = valor_proyectado
-        if urlProceso:
-            datos_dict['urlProceso'] = urlProceso.strip()
-        
-        # Verificar que la referencia_proceso no exista ya
-        db = firestore.Client()
-        coleccion = db.collection('proyecciones_emprestito')
-        
-        # Buscar si ya existe
-        existing_docs = coleccion.where('referencia_proceso', '==', datos_dict['referencia_proceso']).limit(1).stream()
-        
-        if any(existing_docs):
-            raise HTTPException(
-                status_code=409,
-                detail=f"Ya existe una proyección con referencia_proceso: {datos_dict['referencia_proceso']}"
-            )
-        
-        # Agregar timestamp de creación
-        from datetime import datetime
-        datos_dict['created_at'] = datetime.utcnow().isoformat()
-        datos_dict['updated_at'] = datetime.utcnow().isoformat()
-        
-        # Crear el documento
-        doc_ref = coleccion.document()
-        doc_ref.set(datos_dict)
-        
-        # Preparar respuesta exitosa
-        response = {
-            "success": True,
-            "message": "Proyección registrada exitosamente",
-            "referencia_proceso": datos_dict['referencia_proceso'],
-            "doc_id": doc_ref.id,
-            "datos_registrados": datos_dict,
-            "timestamp": datos_dict['created_at'],
-            "coleccion": "proyecciones_emprestito",
-            "endpoint_info": {
-                "metodo": "POST",
-                "operacion": "registro_nuevo",
-                "campos_registrados": list(datos_dict.keys()),
-                "validaciones_aplicadas": True
-            }
-        }
-        
-        return create_utf8_response(response)
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error registrando proyección: {str(e)}"
-        )
 
 
 # ============================================================================

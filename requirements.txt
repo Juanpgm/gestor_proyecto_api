@@ -44,6 +44,9 @@ pandas==2.2.3
 # Excel processing
 openpyxl==3.1.5
 
+# Geometría espacial para cruce con capas GeoJSON
+shapely==2.1.1
+
 # Google Sheets API para leer datos de Google Sheets
 gspread==6.0.2
 google-auth-oauthlib==1.2.0

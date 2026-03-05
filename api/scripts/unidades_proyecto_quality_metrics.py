@@ -8,7 +8,6 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from database.firebase_config import get_firestore_client
-from api.scripts.emprestito_cache import with_cache
 from api.scripts.unidades_proyecto import _convert_to_float
 
 
@@ -41,6 +40,13 @@ SEVERITY_DESCRIPTIONS = {
     "S2": "Alto",
     "S3": "Medio",
     "S4": "Bajo"
+}
+
+SEVERITY_RANK = {
+    "S1": 4,
+    "S2": 3,
+    "S3": 2,
+    "S4": 1
 }
 
 
@@ -172,8 +178,29 @@ def _save_quality_metrics(db, report: Dict[str, Any]) -> None:
     history_collection = db.collection("unidades_proyecto_quality_metrics_history")
     latest_collection = db.collection("unidades_proyecto_quality_metrics_latest")
 
-    history_collection.add(report)
-    latest_collection.document("latest").set(report)
+    compact_report = {
+        "report_id": report.get("report_id"),
+        "generated_at": report.get("generated_at"),
+        "dqs": report.get("dqs", {}),
+        "prioridades": report.get("prioridades", {}),
+        "priorities": report.get("prioridades", {}),
+        "resumen": report.get("resumen", {}),
+        "metadatos": report.get("metadatos", {}),
+        "estadisticas_globales": report.get("estadisticas_globales", {}),
+        "overall": (report.get("estadisticas_globales") or {}).get("overall", {}),
+        "diagnostico": {
+            "total_registros_evaluados": ((report.get("diagnostico") or {}).get("totales") or {}).get("registros_evaluados", 0),
+            "total_registros_con_alertas": ((report.get("diagnostico") or {}).get("totales") or {}).get("registros_con_alertas", 0),
+            "registros_por_coleccion": ((report.get("diagnostico") or {}).get("totales") or {}).get("por_coleccion", {})
+        },
+        "por_centro_gestor": {
+            "filtro_aplicado": ((report.get("por_centro_gestor") or {}).get("filtro_aplicado")),
+            "total_centros": ((report.get("por_centro_gestor") or {}).get("total_centros", 0))
+        }
+    }
+
+    history_collection.add(compact_report)
+    latest_collection.document("latest").set(compact_report)
 
 
 def _compute_dimension_stats(rules: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -201,7 +228,7 @@ def _compute_dimension_stats(rules: List[Dict[str, Any]]) -> List[Dict[str, Any]
     return sorted(stats, key=lambda item: item["avg_compliance"])
 
 
-def _extract_history(db, limit: int = 30) -> List[Dict[str, Any]]:
+def _extract_history(db, limit: Optional[int] = None) -> List[Dict[str, Any]]:
     try:
         docs = list(db.collection("unidades_proyecto_quality_metrics_history").stream())
     except Exception:
@@ -220,6 +247,8 @@ def _extract_history(db, limit: int = 30) -> List[Dict[str, Any]]:
         })
 
     snapshots.sort(key=lambda item: str(item.get("generated_at") or ""), reverse=True)
+    if limit is None:
+        return snapshots
     return snapshots[:max(limit, 1)]
 
 
@@ -360,6 +389,55 @@ def _build_rule(
     }
 
 
+def _build_record_issue(
+    *,
+    rule_id: str,
+    severity: str,
+    message: str,
+    details: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    return {
+        "rule_id": rule_id,
+        "severity": {
+            "code": severity,
+            "label": SEVERITY_DESCRIPTIONS.get(severity, severity)
+        },
+        "message": message,
+        "details": details or {}
+    }
+
+
+def _build_record_diagnosis(issues: List[Dict[str, Any]]) -> Dict[str, Any]:
+    if not issues:
+        return {
+            "estado": "ok",
+            "hallazgos_count": 0,
+            "severidad_max": None,
+            "prioridad_sugerida": {
+                "code": "P5",
+                "label": "Backlog",
+                "volume_band": "bajo"
+            },
+            "hallazgos": []
+        }
+
+    severidad_max = max(
+        (issue.get("severity", {}).get("code", "S4") for issue in issues),
+        key=lambda sev: SEVERITY_RANK.get(sev, 0)
+    )
+
+    return {
+        "estado": "con_hallazgos",
+        "hallazgos_count": len(issues),
+        "severidad_max": {
+            "code": severidad_max,
+            "label": SEVERITY_DESCRIPTIONS.get(severidad_max, severidad_max)
+        },
+        "prioridad_sugerida": _priority_from_matrix(severidad_max, "bajo"),
+        "hallazgos": issues
+    }
+
+
 def _compute_weighted_dqs(rules: List[Dict[str, Any]]) -> Dict[str, Any]:
     weighted_sum = 0.0
     total_weight = 0.0
@@ -396,10 +474,9 @@ def _compute_weighted_dqs(rules: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-@with_cache(ttl_seconds=86400)
 async def get_unidades_proyecto_quality_metrics(
     nombre_centro_gestor: Optional[str] = None,
-    history_limit: int = 30
+    history_limit: Optional[int] = None
 ) -> Dict[str, Any]:
     """Calcula métricas de calidad alineadas a ISO 25012/DAMA para unidades e intervenciones."""
     db = get_firestore_client()
@@ -418,14 +495,18 @@ async def get_unidades_proyecto_quality_metrics(
     upid_set = set()
     upid_to_centro_gestor: Dict[str, str] = {}
     duplicate_upids = 0
+    upid_counts: Dict[str, int] = {}
+    unidades_records: List[Dict[str, Any]] = []
 
     unidades_query = db.collection("unidades_proyecto")
     for doc in unidades_query.stream():
         doc_data = doc.to_dict()
         unidades_total += 1
 
-        upid = _get_field_value(doc_data, "upid")
+        upid_raw = _get_field_value(doc_data, "upid")
+        upid = _normalize_str(upid_raw)
         if upid:
+            upid_counts[upid] = upid_counts.get(upid, 0) + 1
             if upid in upid_set:
                 duplicate_upids += 1
             upid_set.add(upid)
@@ -434,6 +515,11 @@ async def get_unidades_proyecto_quality_metrics(
                 upid_to_centro_gestor[upid] = centro_unidad
 
         _update_missing_fields(doc_data, REQUIRED_UNIDADES_FIELDS, unidades_missing)
+
+        missing_fields_unidad = [
+            field for field in REQUIRED_UNIDADES_FIELDS
+            if _normalize_str(_get_field_value(doc_data, field)) is None
+        ]
 
         geometry_flags = _extract_geometry_flags(doc_data)
         if geometry_flags["has_geometry"]:
@@ -448,6 +534,15 @@ async def get_unidades_proyecto_quality_metrics(
         if _normalize_str(fecha_fin) is not None:
             unidades_with_fecha_fin += 1
 
+        centro_unidad_final = _normalize_str(_get_field_value(doc_data, "nombre_centro_gestor")) or "Sin centro gestor"
+        unidades_records.append({
+            "doc_id": doc.id,
+            "upid": upid,
+            "nombre_centro_gestor": centro_unidad_final,
+            "missing_fields": missing_fields_unidad,
+            "has_valid_coordinates": bool(geometry_flags["has_valid_coordinates"])
+        })
+
     interv_total = 0
     interv_missing = {field: 0 for field in REQUIRED_INTERV_FIELDS}
     interv_invalid_ranges = {
@@ -461,6 +556,8 @@ async def get_unidades_proyecto_quality_metrics(
     intervenciones_por_upid = {}
     interv_with_fecha_inicio = 0
     interv_with_fecha_fin = 0
+    intervencion_id_counts: Dict[str, int] = {}
+    intervenciones_records: List[Dict[str, Any]] = []
     center_stats: Dict[str, Dict[str, Any]] = {}
 
     interv_query = db.collection("intervenciones_unidades_proyecto")
@@ -470,13 +567,14 @@ async def get_unidades_proyecto_quality_metrics(
 
         _update_missing_fields(doc_data, REQUIRED_INTERV_FIELDS, interv_missing)
 
-        intervencion_id = doc_data.get("intervencion_id") or doc.id
+        intervencion_id = _normalize_str(doc_data.get("intervencion_id")) or str(doc.id)
+        intervencion_id_counts[intervencion_id] = intervencion_id_counts.get(intervencion_id, 0) + 1
         if intervencion_id in intervencion_id_set:
             interv_intervencion_id_dupes += 1
         else:
             intervencion_id_set.add(intervencion_id)
 
-        upid = _get_field_value(doc_data, "upid")
+        upid = _normalize_str(_get_field_value(doc_data, "upid"))
         if not upid or upid not in upid_set:
             interv_orphans += 1
         else:
@@ -506,6 +604,31 @@ async def get_unidades_proyecto_quality_metrics(
         if center_name is None:
             center_name = "Sin centro gestor"
 
+        missing_fields_interv = [
+            field for field in REQUIRED_INTERV_FIELDS
+            if _normalize_str(_get_field_value(doc_data, field)) is None
+        ]
+        estado_avance_inconsistente = _estado_vs_avance_inconsistente(doc_data.get("estado"), doc_data.get("avance_obra"))
+        is_orphan = not upid or upid not in upid_set
+        invalid_avance = bool(avance is not None and (avance < 0 or avance > 100))
+        invalid_presupuesto = bool(presupuesto is not None and presupuesto < 0)
+
+        intervenciones_records.append({
+            "doc_id": doc.id,
+            "intervencion_id": intervencion_id,
+            "upid": upid,
+            "nombre_centro_gestor": center_name,
+            "missing_fields": missing_fields_interv,
+            "invalid_ranges": {
+                "avance_obra": invalid_avance,
+                "presupuesto_base": invalid_presupuesto
+            },
+            "estado_avance_inconsistente": estado_avance_inconsistente,
+            "orphan_upid": is_orphan,
+            "missing_fecha_inicio": fecha_inicio_interv is None,
+            "missing_fecha_fin": fecha_fin_interv is None
+        })
+
         if center_name not in center_stats:
             center_stats[center_name] = {
                 "total": 0,
@@ -522,7 +645,7 @@ async def get_unidades_proyecto_quality_metrics(
         stats["total"] += 1
 
         for field in REQUIRED_INTERV_FIELDS:
-            if _normalize_str(_get_field_value(doc_data, field)) is None:
+            if field in missing_fields_interv:
                 stats["missing_fields"][field] += 1
 
         if avance is not None and (avance < 0 or avance > 100):
@@ -530,7 +653,7 @@ async def get_unidades_proyecto_quality_metrics(
         if presupuesto is not None and presupuesto < 0:
             stats["invalid_ranges"]["presupuesto_base"] += 1
 
-        if _estado_vs_avance_inconsistente(doc_data.get("estado"), doc_data.get("avance_obra")):
+        if estado_avance_inconsistente:
             stats["estado_avance_inconsistente"] += 1
 
         if fecha_inicio_interv is not None:
@@ -660,11 +783,147 @@ async def get_unidades_proyecto_quality_metrics(
     report_id = f"{datetime.now(timezone.utc).strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}"
 
     center_breakdown = _build_center_breakdown(center_stats)
+    centro_filtro_normalizado = _normalize_str(nombre_centro_gestor)
     if nombre_centro_gestor:
         center_breakdown = [
             center for center in center_breakdown
-            if center["nombre_centro_gestor"] == nombre_centro_gestor
+            if _normalize_str(center.get("nombre_centro_gestor")) is not None
+            and _normalize_str(center.get("nombre_centro_gestor")).lower() == centro_filtro_normalizado.lower()
         ]
+
+    def _include_by_center(center_name: Optional[str]) -> bool:
+        if not centro_filtro_normalizado:
+            return True
+        center_norm = _normalize_str(center_name)
+        if center_norm is None:
+            return False
+        return center_norm.lower() == centro_filtro_normalizado.lower()
+
+    diagnostico_registros: List[Dict[str, Any]] = []
+
+    for unidad in unidades_records:
+        if not _include_by_center(unidad.get("nombre_centro_gestor")):
+            continue
+
+        issues = []
+        if unidad["missing_fields"]:
+            issues.append(_build_record_issue(
+                rule_id="UP-COMP-001",
+                severity="S2",
+                message="Campos obligatorios faltantes en unidad de proyecto",
+                details={"missing_fields": unidad["missing_fields"]}
+            ))
+        if not unidad["has_valid_coordinates"]:
+            issues.append(_build_record_issue(
+                rule_id="UP-VAL-001",
+                severity="S2",
+                message="Coordenadas geográficas inválidas o ausentes",
+                details={"has_valid_coordinates": False}
+            ))
+
+        upid_unidad = unidad.get("upid")
+        if upid_unidad and upid_counts.get(upid_unidad, 0) > 1:
+            issues.append(_build_record_issue(
+                rule_id="UP-UNI-001",
+                severity="S1",
+                message="UPID duplicado entre unidades de proyecto",
+                details={"upid": upid_unidad, "repeticiones": upid_counts.get(upid_unidad, 0)}
+            ))
+
+        has_intervenciones = bool(upid_unidad and intervenciones_por_upid.get(upid_unidad, 0) > 0)
+        if not has_intervenciones:
+            issues.append(_build_record_issue(
+                rule_id="UP-CONS-001",
+                severity="S3",
+                message="Unidad sin intervenciones asociadas",
+                details={"upid": upid_unidad}
+            ))
+
+        diagnostico_registros.append({
+            "collection": "unidades_proyecto",
+            "record_id": unidad["doc_id"],
+            "upid": unidad.get("upid"),
+            "nombre_centro_gestor": unidad.get("nombre_centro_gestor"),
+            "diagnostico": _build_record_diagnosis(issues)
+        })
+
+    for intervencion in intervenciones_records:
+        if not _include_by_center(intervencion.get("nombre_centro_gestor")):
+            continue
+
+        issues = []
+        if intervencion["missing_fields"]:
+            issues.append(_build_record_issue(
+                rule_id="INT-COMP-001",
+                severity="S2",
+                message="Campos obligatorios faltantes en intervención",
+                details={"missing_fields": intervencion["missing_fields"]}
+            ))
+
+        invalid_fields = [
+            field for field, is_invalid in intervencion["invalid_ranges"].items()
+            if is_invalid
+        ]
+        if invalid_fields:
+            issues.append(_build_record_issue(
+                rule_id="INT-VAL-001",
+                severity="S2",
+                message="Valores numéricos fuera de rango",
+                details={"invalid_fields": invalid_fields}
+            ))
+
+        if intervencion["estado_avance_inconsistente"]:
+            issues.append(_build_record_issue(
+                rule_id="INT-CONS-001",
+                severity="S2",
+                message="Inconsistencia entre estado y avance de obra",
+                details={"estado_avance_inconsistente": True}
+            ))
+
+        intervencion_id = intervencion.get("intervencion_id")
+        if intervencion_id and intervencion_id_counts.get(intervencion_id, 0) > 1:
+            issues.append(_build_record_issue(
+                rule_id="INT-UNI-001",
+                severity="S1",
+                message="intervencion_id duplicado",
+                details={"intervencion_id": intervencion_id, "repeticiones": intervencion_id_counts.get(intervencion_id, 0)}
+            ))
+
+        if intervencion["orphan_upid"]:
+            issues.append(_build_record_issue(
+                rule_id="INT-CONS-002",
+                severity="S1",
+                message="Intervención sin unidad de proyecto asociada",
+                details={"upid": intervencion.get("upid")}
+            ))
+
+        temporal_missing = []
+        if intervencion["missing_fecha_inicio"]:
+            temporal_missing.append("fecha_inicio")
+        if intervencion["missing_fecha_fin"]:
+            temporal_missing.append("fecha_fin")
+        if temporal_missing:
+            issues.append(_build_record_issue(
+                rule_id="INT-TIME-001",
+                severity="S3",
+                message="Campos temporales faltantes para seguimiento",
+                details={"missing_fields": temporal_missing}
+            ))
+
+        diagnostico_registros.append({
+            "collection": "intervenciones_unidades_proyecto",
+            "record_id": intervencion["doc_id"],
+            "intervencion_id": intervencion.get("intervencion_id"),
+            "upid": intervencion.get("upid"),
+            "nombre_centro_gestor": intervencion.get("nombre_centro_gestor"),
+            "diagnostico": _build_record_diagnosis(issues)
+        })
+
+    total_registros_diagnosticados = len(diagnostico_registros)
+    total_con_hallazgos = sum(
+        1 for registro in diagnostico_registros
+        if registro.get("diagnostico", {}).get("hallazgos_count", 0) > 0
+    )
 
     dimension_stats = _compute_dimension_stats(rules)
     top_rules = sorted(rules, key=lambda rule: rule["scope"]["affected_pct"], reverse=True)[:10]
@@ -753,6 +1012,22 @@ async def get_unidades_proyecto_quality_metrics(
             "rules": rules,
             "count": len(rules)
         },
+        "diagnostico_registros": {
+            "filtro_aplicado": nombre_centro_gestor,
+            "total_registros_diagnosticados": total_registros_diagnosticados,
+            "total_registros_con_hallazgos": total_con_hallazgos,
+            "por_coleccion": {
+                "unidades_proyecto": len([
+                    r for r in diagnostico_registros
+                    if r["collection"] == "unidades_proyecto"
+                ]),
+                "intervenciones_unidades_proyecto": len([
+                    r for r in diagnostico_registros
+                    if r["collection"] == "intervenciones_unidades_proyecto"
+                ])
+            },
+            "registros": diagnostico_registros
+        },
         "por_centro_gestor": {
             "filtro_aplicado": nombre_centro_gestor,
             "total_centros": len(center_breakdown),
@@ -769,8 +1044,8 @@ async def get_unidades_proyecto_quality_metrics(
                 "oportunidad_actualidad"
             ],
             "collections_evaluadas": ["unidades_proyecto", "intervenciones_unidades_proyecto"],
-            "cache_ttl_seconds": 86400,
-            "history_limit": max(history_limit, 1)
+            "history_limit": history_limit,
+            "history_unbounded": history_limit is None
         },
         "estadisticas_globales": {
             "overall": {

@@ -65,7 +65,7 @@ try:
 except ImportError as e:
     print(f"Warning: Unidades proyecto quality metrics not available: {e}")
 
-    async def get_unidades_proyecto_quality_metrics(nombre_centro_gestor: Optional[str] = None, history_limit: int = 30):
+    async def get_unidades_proyecto_quality_metrics(nombre_centro_gestor: Optional[str] = None, history_limit: Optional[int] = None):
         return {"success": False, "error": "Unidades proyecto quality metrics not available"}
 
 try:
