@@ -3465,11 +3465,11 @@ async def crear_intervencion(
         intervencion_payload["updated_at"] = now_iso
 
         doc_id = str(uuid.uuid4())
-        db.collection("unidades_proyecto_intervenciones").document(doc_id).set(intervencion_payload)
+        db.collection("intervenciones_unidades_proyecto").document(doc_id).set(intervencion_payload)
 
         return create_utf8_response({
             "id": doc_id,
-            "collection": "unidades_proyecto_intervenciones",
+            "collection": "intervenciones_unidades_proyecto",
             "data": intervencion_payload
         })
     except HTTPException:
