@@ -3261,7 +3261,7 @@ async def crear_unidad_proyecto(
             return int(match.group(1))
 
         max_upid_number = 0
-        collections_to_scan = ["unidades_proyecto", "unidades_precto"]
+        collections_to_scan = ["unidades_proyecto"]
 
         for collection_name in collections_to_scan:
             docs = db.collection(collection_name).select(["upid"]).stream()
@@ -3312,12 +3312,11 @@ async def crear_unidad_proyecto(
         unidad_payload["created_at"] = now_iso
         unidad_payload["updated_at"] = now_iso
 
-        doc_id = str(uuid.uuid4())
-        db.collection("unidades_precto").document(doc_id).set(unidad_payload)
+        db.collection("unidades_proyecto").document(new_upid).set(unidad_payload)
 
         return create_utf8_response({
-            "id": doc_id,
-            "collection": "unidades_precto",
+            "id": new_upid,
+            "collection": "unidades_proyecto",
             "data": unidad_payload
         })
     except HTTPException:
