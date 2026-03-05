@@ -3046,21 +3046,46 @@ async def consultar_solicitudes_cambios_intervenciones(
         )
 
 
+class SolicitudCambioUnidadProyectoRequest(BaseModel):
+    upid: str = Field(..., description="UPID de la unidad a modificar (ej: UNP-1)")
+    aprobado: bool = Field(..., description="Indicador de aprobación de la solicitud")
+    nombre_up: Optional[str] = Field(None, description="Nombre de la unidad de proyecto")
+    nombre_up_detalle: Optional[str] = Field(None, description="Detalle del nombre de la unidad")
+    tipo_equipamiento: Optional[str] = Field(None, description="Tipo de equipamiento")
+    clase_up: Optional[str] = Field(None, description="Clase UP")
+    direccion: Optional[str] = Field(None, description="Dirección")
+    geometry: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Geometría GeoJSON Point enviada desde el frontend. Si se envía, recalcula automáticamente comuna_corregimiento, barrio_vereda y proyectos_estrategicos"
+    )
+
+    class Config:
+        extra = "allow"
+        schema_extra = {
+            "example": {
+                "upid": "UNP-1",
+                "aprobado": True,
+                "nombre_up": "Nombre unidad",
+                "nombre_up_detalle": "Detalle unidad",
+                "tipo_equipamiento": "Parque",
+                "clase_up": "Espacio Publico",
+                "direccion": "Calle 1 # 2-3",
+                "geometry": {
+                    "additionalProp1": {}
+                },
+                "additionalProp1": {}
+            }
+        }
+
+
 @app.post("/solicitudes_cambios_unidad_proyecto", tags=["Unidades de Proyecto"], summary="🟢 POST | Solicitud de cambios en Unidad de Proyecto")
 @optional_rate_limit("30/minute")
 async def crear_solicitud_cambio_unidad_proyecto(
     request: Request,
-    upid: Optional[str] = Body(None, description="ID específico de unidad (ej: UNP-1000)"),
-    nombre_centro_gestor: Optional[str] = Body(None, description="Centro gestor responsable"),
-    tipo_intervencion: Optional[str] = Body(None, description="Tipo de intervención"),
-    estado: Optional[str] = Body(None, description="Estado del proyecto"),
-    clase_up: Optional[str] = Body(None, description="Clase de la unidad de proyecto"),
-    tipo_equipamiento: Optional[str] = Body(None, description="Tipo de equipamiento"),
-    comuna_corregimiento: Optional[str] = Body(None, description="Comuna o corregimiento"),
-    barrio_vereda: Optional[str] = Body(None, description="Barrio o vereda"),
-    frente_activo: Optional[str] = Body(None, description="Frente activo"),
-    fuente_financiacion: Optional[str] = Body(None, description="Fuente de financiación"),
-    ano: Optional[int] = Body(None, description="Año de ejecución")
+    payload: SolicitudCambioUnidadProyectoRequest = Body(
+        ...,
+        description="Datos de solicitud. Usa la misma estructura de /modificar/unidad_proyecto"
+    )
 ):
     if not FIREBASE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Firebase not available")
@@ -3070,19 +3095,41 @@ async def crear_solicitud_cambio_unidad_proyecto(
         if db is None:
             raise HTTPException(status_code=503, detail="No se pudo conectar a Firestore")
 
+        body = payload.model_dump(exclude_unset=True) if hasattr(payload, "model_dump") else payload.dict(exclude_unset=True)
+        upid_value = str(body.get("upid", "")).strip()
+        if not upid_value:
+            raise HTTPException(status_code=400, detail="Debe enviar upid para registrar la solicitud")
+
+        if "aprobado" not in body or not isinstance(body.get("aprobado"), bool):
+            raise HTTPException(status_code=400, detail="Debe enviar 'aprobado' como booleano")
+
+        changes = {key: value for key, value in body.items() if key not in {"upid", "aprobado"}}
+
+        # Recalcular campos geograficos cuando se envia geometry Point.
+        geometry_val = changes.get("geometry")
+        if isinstance(geometry_val, dict) and geometry_val.get("type") == "Point" and geometry_val.get("coordinates"):
+            coords = geometry_val["coordinates"]
+            basemaps_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "basemaps")
+            comuna = _buscar_en_geojson(
+                os.path.join(basemaps_dir, "comunas_corregimientos.geojson"),
+                "comuna_corregimiento", coords
+            )
+            barrio = _buscar_en_geojson(
+                os.path.join(basemaps_dir, "barrios_veredas.geojson"),
+                "barrio_vereda", coords
+            )
+            proyectos = _buscar_proyectos_estrategicos(coords)
+            if comuna:
+                changes["comuna_corregimiento"] = comuna
+            if barrio:
+                changes["barrio_vereda"] = barrio
+            changes["proyectos_estrategicos"] = proyectos
+
         now_iso = datetime.now().isoformat()
         solicitud_payload = {
-            "upid": upid,
-            "nombre_centro_gestor": nombre_centro_gestor,
-            "tipo_intervencion": tipo_intervencion,
-            "estado": estado,
-            "clase_up": clase_up,
-            "tipo_equipamiento": tipo_equipamiento,
-            "comuna_corregimiento": comuna_corregimiento,
-            "barrio_vereda": barrio_vereda,
-            "frente_activo": frente_activo,
-            "fuente_financiacion": fuente_financiacion,
-            "ano": ano,
+            "upid": upid_value,
+            "aprobado": body.get("aprobado"),
+            **changes,
             "created_at": now_iso,
             "updated_at": now_iso
         }
