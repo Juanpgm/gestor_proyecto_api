@@ -39,7 +39,7 @@ from fastapi import FastAPI, HTTPException, Query, Request, status, Form, Upload
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from typing import Dict, Any, Optional, Union, List
+from typing import Dict, Any, Optional, Union, List, Tuple
 from pydantic import BaseModel, Field
 import uvicorn
 import asyncio
@@ -47,6 +47,7 @@ from datetime import datetime
 import json
 import re
 import uuid
+from urllib.parse import urlparse
 from shapely.geometry import shape as shapely_shape, Point as ShapelyPoint
 
 # Rate limiting (opcional, con fallback)
@@ -556,6 +557,73 @@ def set_in_cache(cache_key: str, value):
     """Guardar en caché"""
     _simple_cache[cache_key] = value
     _cache_timestamps[cache_key] = datetime.now()
+
+
+def _bool_from_env(name: str, default: bool = True) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _s3_presigned_enabled() -> bool:
+    return _bool_from_env("S3_USE_PRESIGNED_URLS", True)
+
+
+def _s3_presigned_expiration() -> int:
+    try:
+        return int(os.getenv("S3_PRESIGNED_URL_EXPIRATION_SECONDS", "3600"))
+    except Exception:
+        return 3600
+
+
+def _extract_s3_bucket_key_from_url(url: str) -> Tuple[Optional[str], Optional[str]]:
+    if not url:
+        return None, None
+    try:
+        parsed = urlparse(url)
+        host = (parsed.netloc or "").lower()
+        path = (parsed.path or "").lstrip("/")
+
+        if host.endswith("amazonaws.com"):
+            if ".s3." in host:
+                bucket = host.split(".s3.")[0]
+                return bucket or None, path or None
+            if host.startswith("s3.") or host == "s3.amazonaws.com":
+                if "/" in path:
+                    bucket, key = path.split("/", 1)
+                    return bucket or None, key or None
+        return None, None
+    except Exception:
+        return None, None
+
+
+@lru_cache(maxsize=6)
+def _get_s3_client_for_presign_cached(credentials_path: str = ""):
+    try:
+        from api.utils.s3_document_manager import S3DocumentManager, BOTO3_AVAILABLE
+        if not BOTO3_AVAILABLE:
+            return None
+        manager = S3DocumentManager(credentials_path=credentials_path or None)
+        return manager.s3_client
+    except Exception:
+        return None
+
+
+def _generate_presigned_s3_url(bucket: str, key: str, credentials_path: str = "") -> Optional[str]:
+    if not _s3_presigned_enabled() or not bucket or not key:
+        return None
+    try:
+        s3_client = _get_s3_client_for_presign_cached(credentials_path or "")
+        if s3_client is None:
+            return None
+        return s3_client.generate_presigned_url(
+            'get_object',
+            Params={'Bucket': bucket, 'Key': key},
+            ExpiresIn=_s3_presigned_expiration()
+        )
+    except Exception:
+        return None
 
 def async_cache(ttl_seconds: int = 300):
     """
@@ -2838,6 +2906,8 @@ async def get_avances_unidades_proyecto(
             raise HTTPException(status_code=503, detail="No se pudo conectar a Firestore")
 
         collection_ref = db.collection('avances_unidades_proyecto')
+        presign_credentials_path = os.getenv('AWS_CREDENTIALS_FILE_UNIDADES_PROYECTO', 'credentials/aws_credentials.json')
+        presign_cache: Dict[Tuple[str, str], str] = {}
 
         should_convert = FIREBASE_TYPES_AVAILABLE
         datetime_type = DatetimeWithNanoseconds
@@ -2872,6 +2942,27 @@ async def get_avances_unidades_proyecto(
             if url_lower.endswith(".txt"):
                 return "text/plain"
             return "application/octet-stream"
+
+        def _get_presigned_or_direct(url: str = "", bucket: str = "", key: str = "") -> str:
+            resolved_bucket = bucket
+            resolved_key = key
+            if (not resolved_bucket or not resolved_key) and url:
+                parsed_bucket, parsed_key = _extract_s3_bucket_key_from_url(url)
+                resolved_bucket = resolved_bucket or (parsed_bucket or "")
+                resolved_key = resolved_key or (parsed_key or "")
+
+            if not resolved_bucket or not resolved_key:
+                return url
+
+            cache_key = (resolved_bucket, resolved_key)
+            if cache_key in presign_cache:
+                return presign_cache[cache_key]
+
+            signed = _generate_presigned_s3_url(resolved_bucket, resolved_key, presign_credentials_path)
+            final_url = signed or url
+            if final_url:
+                presign_cache[cache_key] = final_url
+            return final_url
 
         def _normalize_avance_links(doc_data: Dict[str, Any], doc_firestore_id: str) -> Dict[str, Any]:
             """Normaliza links para frontend desde esquema nuevo y legado."""
@@ -2933,6 +3024,30 @@ async def get_avances_unidades_proyecto(
 
             imagenes_urls = _dedupe(imagenes_urls)
             documentos_urls = _dedupe(documentos_urls)
+
+            # Firmar URLs de soportes (nuevo esquema) y retener la directa para diagnóstico
+            signed_soportes = []
+            for idx, soporte in enumerate(soportes):
+                if not isinstance(soporte, dict):
+                    continue
+                soporte_copy = dict(soporte)
+                direct_url = str(soporte_copy.get("url_directa") or soporte_copy.get("url") or "")
+                bucket = str(soporte_copy.get("bucket") or "")
+                s3_key = str(soporte_copy.get("s3_key") or "")
+                signed_url = _get_presigned_or_direct(direct_url, bucket, s3_key)
+                if direct_url and "url_directa" not in soporte_copy:
+                    soporte_copy["url_directa"] = direct_url
+                soporte_copy["url"] = signed_url or direct_url
+                soporte_copy["url_presigned"] = signed_url if signed_url and signed_url != direct_url else None
+                soporte_copy["indice"] = soporte_copy.get("indice", idx + 1)
+                signed_soportes.append(soporte_copy)
+
+            if signed_soportes:
+                soportes = signed_soportes
+
+            # Firmar listas planas (legacy y nuevo)
+            imagenes_urls = [_get_presigned_or_direct(url) for url in imagenes_urls]
+            documentos_urls = [_get_presigned_or_direct(url) for url in documentos_urls]
 
             doc_data["soportes"] = soportes
             doc_data["imagenes_urls"] = imagenes_urls
@@ -4166,6 +4281,7 @@ async def registrar_avance_up(
         ts_safe    = now.strftime('%Y%m%d_%H%M%S')      # 20260307_143000 (en el nombre del archivo)
         ts_human   = now.strftime('%d/%m/%Y %H:%M:%S')  # 07/03/2026 14:30:00 (metadatos S3)
         now_iso    = now.isoformat()                    # 2026-03-07T14:30:00-05:00 (Firestore)
+        presigned_expiration = _s3_presigned_expiration()
 
         # ── Procesamiento de archivos (optimizado y concurrente) ──────────────
         soportes_registros: list = []
@@ -4275,15 +4391,29 @@ async def registrar_avance_up(
                 }
             )
 
-            url = f"https://{bucket}.s3.amazonaws.com/{s3_key}"
+            url_directa = f"https://{bucket}.s3.amazonaws.com/{s3_key}"
+            url_presigned = None
+            if _s3_presigned_enabled():
+                try:
+                    url_presigned = s3_client.generate_presigned_url(
+                        'get_object',
+                        Params={'Bucket': bucket, 'Key': s3_key},
+                        ExpiresIn=presigned_expiration
+                    )
+                except Exception:
+                    url_presigned = None
+            final_url = url_presigned or url_directa
             return {
                 "indice": indice,
                 "tipo": soporte_tipo,
                 "nombre_original": original_name,
                 "extension": ext_lower,
                 "content_type": content_type,
+                "bucket": bucket,
                 "s3_key": s3_key,
-                "url": url,
+                "url_directa": url_directa,
+                "url_presigned": url_presigned,
+                "url": final_url,
                 "uploaded_at": now_iso,
             }
 
@@ -4396,10 +4526,10 @@ async def crear_reporte_contrato(
     **Propósito**: Endpoint unificado para crear reportes de seguimiento de contratos 
     con carga de archivos y estructura de carpetas organizada.
     
-    ### ✅ IMPORTANTE - Google Drive:
+    ### ✅ IMPORTANTE - AWS S3:
     - **Estado actual**: PRODUCCIÓN - Subida real de archivos funcionando
-    - **Configuración**: Google Drive API con Service Account y Shared Drive
-    - **Archivos**: Se suben realmente y son accesibles desde Google Drive
+    - **Configuración**: AWS S3 con buckets separados por tipo
+    - **Archivos**: Imágenes y documentos quedan con URL pública lista para frontend
     
     ### ✅ Características principales:
     - **Carga de archivos**: Upload directo de archivos de evidencia
@@ -4418,14 +4548,10 @@ async def crear_reporte_contrato(
     - **alertas_tipo_alerta**: Tipos de alerta separados por coma (opcional)
     - **archivos_evidencia**: Archivos de evidencia para subir (obligatorio, múltiples archivos)
     
-    ### 📁 Estructura de carpetas en Google Drive:
+        ### 📁 Estructura de almacenamiento en S3:
     ```
-    📁 CONTRATOS_REPORTES/
-      📁 {referencia_contrato}/
-        📁 REPORTE_{YYYY-MM-DD}_{HH-MM-SS}_{UUID}/
-          📄 evidencia1.pdf
-          📄 evidencia2.jpg
-          📄 ...
+        📁 reportes_contratos_fotos/{referencia_contrato}/{YYYY-MM-DD}/...
+        📁 reportes_contratos_documentos/{referencia_contrato}/{YYYY-MM-DD}/...
     ```
     
     ### 🔒 Validaciones aplicadas:
@@ -4437,9 +4563,8 @@ async def crear_reporte_contrato(
     
     ### 🚀 Proceso automático:
     1. Validar archivos subidos
-    2. Crear/verificar carpeta del contrato
-    3. Crear carpeta única para este reporte
-    4. Subir archivos a Google Drive
+    2. Clasificar archivos por extensión (imagen/documento)
+    3. Subir a S3 en bucket/prefix correspondiente
     5. Guardar metadata en Firebase con timestamp actual
     6. Retornar URLs y confirmación
     
@@ -4551,7 +4676,11 @@ async def crear_reporte_contrato(
             "success": True,
             "message": result["message"],
             "doc_id": result["doc_id"],
-            "url_carpeta_drive": result["url_carpeta_drive"],
+            "url_carpeta_drive": result.get("url_carpeta_drive"),
+            "url_carpeta_s3": result.get("url_carpeta_s3"),
+            "diagnostico_s3": result.get("diagnostico_s3"),
+            "imagenes_urls": result.get("imagenes_urls", []),
+            "documentos_urls": result.get("documentos_urls", []),
             "archivos_count": len(archivos_validados)
         }
         
