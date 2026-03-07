@@ -1013,7 +1013,18 @@ async def read_root():
             "port": os.getenv("PORT", "NOT_SET")
         },
         "endpoints": {
-            "general": ["/", "/health", "/ping", "/centros-gestores/nombres-unicos"],
+            "general": [
+                "/",
+                "/health",
+                "/ping",
+                "/centros-gestores/nombres-unicos",
+                "/reportar-bug",
+                "/reportar-bug/{registro_id}",
+                "/solicitar-escalada-privilegios",
+                "/solicitar-escalada-privilegios/{registro_id}",
+                "/realizar-recomendacion",
+                "/realizar-recomendacion/{registro_id}"
+            ],
             "firebase": ["/firebase/status", "/firebase/collections"], 
             "proyectos_de_inversion": [
                 "/proyectos-presupuestales/all",
@@ -1431,6 +1442,314 @@ async def get_all_nombres_centros_gestores_unique():
             status_code=500,
             detail=f"Error procesando nombres únicos de centros gestores: {str(e)}"
         )
+
+
+class ReportarBugRequest(BaseModel):
+    reportado_por: Optional[str] = Field(None, description="Usuario que reporta el bug")
+    descripcion_bug: Optional[str] = Field(None, description="Descripción del comportamiento inesperado")
+    contexto_adicional_bug: Optional[str] = Field(None, description="Impacto o contexto adicional del bug")
+
+
+class SolicitarEscaladaPrivilegiosRequest(BaseModel):
+    reportado_por: Optional[str] = Field(None, description="Usuario que solicita la escalada")
+    rol_solicitado: Optional[str] = Field(None, description="Rol que se requiere")
+    motivo_solicitud: Optional[str] = Field(None, description="Motivo de la solicitud")
+    justificacion_escalada: Optional[str] = Field(None, description="Justificación de por qué requiere el nuevo rol")
+
+
+class RealizarRecomendacionRequest(BaseModel):
+    reportado_por: str = Field(..., description="Usuario que realiza la recomendación")
+    recomendacion_sugerencia: str = Field(..., description="Recomendación o sugerencia propuesta")
+    beneficio_esperado: str = Field(..., description="Beneficio esperado de la recomendación")
+
+
+class ActualizarRecomendacionRequest(BaseModel):
+    reportado_por: Optional[str] = Field(None, description="Usuario que realiza la recomendación")
+    recomendacion_sugerencia: Optional[str] = Field(None, description="Recomendación o sugerencia propuesta")
+    beneficio_esperado: Optional[str] = Field(None, description="Beneficio esperado de la recomendación")
+
+
+def _timestamp_colombia_iso() -> str:
+    """Generar timestamp ISO en hora Colombia (UTC-5)."""
+    try:
+        from zoneinfo import ZoneInfo
+        tz_colombia = ZoneInfo("America/Bogota")
+    except Exception:
+        from datetime import timezone as _timezone, timedelta as _timedelta
+        tz_colombia = _timezone(_timedelta(hours=-5))
+    return datetime.now(tz_colombia).isoformat()
+
+
+def _payload_to_dict(payload: Optional[BaseModel]) -> Dict[str, Any]:
+    """Serializa payload Pydantic y elimina campos nulos."""
+    if payload is None:
+        return {}
+    data = payload.model_dump(exclude_unset=True) if hasattr(payload, "model_dump") else payload.dict(exclude_unset=True)
+    return {key: value for key, value in data.items() if value is not None}
+
+
+def _get_general_collection(collection_name: str):
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase not available")
+
+    db = get_firestore_client()
+    if db is None:
+        raise HTTPException(status_code=503, detail="No se pudo conectar a Firestore")
+
+    return db.collection(collection_name)
+
+
+def _create_general_record(collection_name: str, payload: Optional[BaseModel]) -> Dict[str, Any]:
+    collection_ref = _get_general_collection(collection_name)
+    data = _payload_to_dict(payload)
+
+    now_iso = _timestamp_colombia_iso()
+    data["timestamp"] = now_iso
+    data["created_at"] = now_iso
+    data["updated_at"] = now_iso
+
+    doc_id = str(uuid.uuid4())
+    collection_ref.document(doc_id).set(data)
+
+    return {
+        "success": True,
+        "id": doc_id,
+        "collection": collection_name,
+        "data": data
+    }
+
+
+def _get_general_records(collection_name: str, registro_id: Optional[str], limit: int) -> Dict[str, Any]:
+    collection_ref = _get_general_collection(collection_name)
+
+    if registro_id:
+        doc = collection_ref.document(registro_id).get()
+        if not doc.exists:
+            raise HTTPException(status_code=404, detail=f"Registro no encontrado en {collection_name}: {registro_id}")
+
+        data = clean_firebase_data(doc.to_dict() or {})
+        data["id"] = doc.id
+        return {
+            "success": True,
+            "collection": collection_name,
+            "count": 1,
+            "data": [data]
+        }
+
+    docs = collection_ref.limit(limit).stream()
+    data = []
+    for doc in docs:
+        row = clean_firebase_data(doc.to_dict() or {})
+        row["id"] = doc.id
+        data.append(row)
+
+    return {
+        "success": True,
+        "collection": collection_name,
+        "count": len(data),
+        "data": data,
+        "limit": limit
+    }
+
+
+def _update_general_record(collection_name: str, registro_id: str, payload: Optional[BaseModel]) -> Dict[str, Any]:
+    collection_ref = _get_general_collection(collection_name)
+    doc_ref = collection_ref.document(registro_id)
+    doc = doc_ref.get()
+
+    if not doc.exists:
+        raise HTTPException(status_code=404, detail=f"Registro no encontrado en {collection_name}: {registro_id}")
+
+    updates = _payload_to_dict(payload)
+    if not updates:
+        raise HTTPException(status_code=400, detail="Debe enviar al menos un campo para actualizar")
+
+    updates["updated_at"] = _timestamp_colombia_iso()
+    doc_ref.update(updates)
+
+    updated_doc = doc_ref.get()
+    updated_data = clean_firebase_data(updated_doc.to_dict() or {})
+    updated_data["id"] = updated_doc.id
+
+    return {
+        "success": True,
+        "collection": collection_name,
+        "id": registro_id,
+        "data": updated_data
+    }
+
+
+def _delete_general_record(collection_name: str, registro_id: str) -> Dict[str, Any]:
+    collection_ref = _get_general_collection(collection_name)
+    doc_ref = collection_ref.document(registro_id)
+    doc = doc_ref.get()
+
+    if not doc.exists:
+        raise HTTPException(status_code=404, detail=f"Registro no encontrado en {collection_name}: {registro_id}")
+
+    doc_ref.delete()
+    return {
+        "success": True,
+        "collection": collection_name,
+        "id": registro_id,
+        "deleted_at": _timestamp_colombia_iso()
+    }
+
+
+@app.post("/reportar-bug", tags=["General"], summary="🟢 POST | Reportar Bug")
+async def reportar_bug(
+    payload: Optional[ReportarBugRequest] = Body(None, description="Campos opcionales del reporte de bug")
+):
+    try:
+        result = _create_general_record("general_reportes_bug", payload)
+        return create_utf8_response(result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error reportando bug: {str(e)}")
+
+
+@app.get("/reportar-bug", tags=["General"], summary="🔵 GET | Consultar Reportes de Bug")
+async def get_reportes_bug(
+    registro_id: Optional[str] = Query(None, description="ID del registro a consultar"),
+    limit: int = Query(50, ge=1, le=200, description="Cantidad máxima de registros")
+):
+    try:
+        result = _get_general_records("general_reportes_bug", registro_id, limit)
+        return create_utf8_response(result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error consultando reportes de bug: {str(e)}")
+
+
+@app.put("/reportar-bug/{registro_id}", tags=["General"], summary="🟠 PUT | Actualizar Reporte de Bug")
+async def update_reportar_bug(
+    registro_id: str,
+    payload: Optional[ReportarBugRequest] = Body(None, description="Campos opcionales para actualizar")
+):
+    try:
+        result = _update_general_record("general_reportes_bug", registro_id, payload)
+        return create_utf8_response(result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error actualizando reporte de bug: {str(e)}")
+
+
+@app.delete("/reportar-bug/{registro_id}", tags=["General"], summary="🔴 DELETE | Eliminar Reporte de Bug")
+async def delete_reportar_bug(registro_id: str):
+    try:
+        result = _delete_general_record("general_reportes_bug", registro_id)
+        return create_utf8_response(result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error eliminando reporte de bug: {str(e)}")
+
+
+@app.post("/solicitar-escalada-privilegios", tags=["General"], summary="🟢 POST | Solicitar Escalada de Privilegios")
+async def solicitar_escalada_privilegios(
+    payload: Optional[SolicitarEscaladaPrivilegiosRequest] = Body(None, description="Campos opcionales de la solicitud")
+):
+    try:
+        result = _create_general_record("general_solicitudes_escalada_privilegios", payload)
+        return create_utf8_response(result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error solicitando escalada de privilegios: {str(e)}")
+
+
+@app.get("/solicitar-escalada-privilegios", tags=["General"], summary="🔵 GET | Consultar Solicitudes de Escalada")
+async def get_solicitudes_escalada_privilegios(
+    registro_id: Optional[str] = Query(None, description="ID del registro a consultar"),
+    limit: int = Query(50, ge=1, le=200, description="Cantidad máxima de registros")
+):
+    try:
+        result = _get_general_records("general_solicitudes_escalada_privilegios", registro_id, limit)
+        return create_utf8_response(result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error consultando solicitudes de escalada: {str(e)}")
+
+
+@app.put("/solicitar-escalada-privilegios/{registro_id}", tags=["General"], summary="🟠 PUT | Actualizar Solicitud de Escalada")
+async def update_solicitar_escalada_privilegios(
+    registro_id: str,
+    payload: Optional[SolicitarEscaladaPrivilegiosRequest] = Body(None, description="Campos opcionales para actualizar")
+):
+    try:
+        result = _update_general_record("general_solicitudes_escalada_privilegios", registro_id, payload)
+        return create_utf8_response(result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error actualizando solicitud de escalada: {str(e)}")
+
+
+@app.delete("/solicitar-escalada-privilegios/{registro_id}", tags=["General"], summary="🔴 DELETE | Eliminar Solicitud de Escalada")
+async def delete_solicitar_escalada_privilegios(registro_id: str):
+    try:
+        result = _delete_general_record("general_solicitudes_escalada_privilegios", registro_id)
+        return create_utf8_response(result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error eliminando solicitud de escalada: {str(e)}")
+
+
+@app.post("/realizar-recomendacion", tags=["General"], summary="🟢 POST | Realizar Recomendación")
+async def realizar_recomendacion(
+    payload: RealizarRecomendacionRequest = Body(..., description="Campos de la recomendación")
+):
+    try:
+        result = _create_general_record("general_recomendaciones", payload)
+        return create_utf8_response(result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error registrando recomendación: {str(e)}")
+
+
+@app.get("/realizar-recomendacion", tags=["General"], summary="🔵 GET | Consultar Recomendaciones")
+async def get_recomendaciones(
+    registro_id: Optional[str] = Query(None, description="ID del registro a consultar"),
+    limit: int = Query(50, ge=1, le=200, description="Cantidad máxima de registros")
+):
+    try:
+        result = _get_general_records("general_recomendaciones", registro_id, limit)
+        return create_utf8_response(result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error consultando recomendaciones: {str(e)}")
+
+
+@app.put("/realizar-recomendacion/{registro_id}", tags=["General"], summary="🟠 PUT | Actualizar Recomendación")
+async def update_recomendacion(
+    registro_id: str,
+    payload: Optional[ActualizarRecomendacionRequest] = Body(None, description="Campos opcionales para actualizar")
+):
+    try:
+        result = _update_general_record("general_recomendaciones", registro_id, payload)
+        return create_utf8_response(result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error actualizando recomendación: {str(e)}")
+
+
+@app.delete("/realizar-recomendacion/{registro_id}", tags=["General"], summary="🔴 DELETE | Eliminar Recomendación")
+async def delete_recomendacion(registro_id: str):
+    try:
+        result = _delete_general_record("general_recomendaciones", registro_id)
+        return create_utf8_response(result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error eliminando recomendación: {str(e)}")
 
 # ============================================================================
 # ENDPOINTS DE FIREBASE
