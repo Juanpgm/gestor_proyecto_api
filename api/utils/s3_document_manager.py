@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 # Intentar importar boto3
 try:
     import boto3
+    from botocore.config import Config
     from botocore.exceptions import ClientError, NoCredentialsError
     BOTO3_AVAILABLE = True
 except ImportError:
@@ -59,7 +60,8 @@ class S3DocumentManager:
             aws_access_key_id=self.credentials.get('aws_access_key_id'),
             aws_secret_access_key=self.credentials.get('aws_secret_access_key'),
             aws_session_token=self.credentials.get('aws_session_token') or None,
-            region_name=self.region
+            region_name=self.region,
+            config=Config(signature_version='s3v4')
         )
         
         logger.info(f"✅ S3DocumentManager inicializado - Bucket: {self.bucket_name}")

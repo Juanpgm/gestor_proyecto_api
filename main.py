@@ -3128,6 +3128,169 @@ async def get_avances_unidades_proyecto(
         )
 
 
+@app.delete(
+    "/avances_unidades_proyecto",
+    tags=["Unidades de Proyecto"],
+    summary="🔴 DELETE | Eliminar avance UP y soportes S3"
+)
+@optional_rate_limit("30/minute")
+async def eliminar_avance_unidades_proyecto(
+    request: Request,
+    id: str = Query(..., min_length=1, description="ID del avance en Firestore (obligatorio)")
+):
+    """
+    Elimina un avance de `avances_unidades_proyecto` y todos sus archivos asociados en S3.
+
+    - Requiere `id` del documento.
+    - Soporta esquema nuevo (`soportes[].bucket/s3_key`) y legado (URLs directas).
+    - Solo elimina el documento en Firestore si la eliminación en S3 fue exitosa.
+    """
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase not available")
+
+    try:
+        db = get_firestore_client()
+        if db is None:
+            raise HTTPException(status_code=503, detail="No se pudo conectar a Firestore")
+
+        doc_ref = db.collection('avances_unidades_proyecto').document(id)
+        doc = doc_ref.get()
+        if not doc.exists:
+            raise HTTPException(status_code=404, detail=f"No existe avance con id: {id}")
+
+        doc_data = doc.to_dict() or {}
+
+        # Inicializar S3 para borrado
+        try:
+            from api.utils.s3_document_manager import S3DocumentManager, BOTO3_AVAILABLE
+            if not BOTO3_AVAILABLE:
+                raise HTTPException(status_code=500, detail="boto3 no disponible para eliminación en S3")
+
+            credentials_path = os.getenv('AWS_CREDENTIALS_FILE_UNIDADES_PROYECTO', 'credentials/aws_credentials.json')
+            default_bucket = os.getenv('S3_BUCKET_UNIDADES_PROYECTO', 'unidades-proyecto-documents')
+
+            s3_manager = S3DocumentManager(credentials_path=credentials_path)
+            s3_client = s3_manager.s3_client
+        except HTTPException:
+            raise
+        except Exception as s3_init_error:
+            raise HTTPException(
+                status_code=500,
+                detail=f"No se pudo inicializar cliente S3 para eliminar avance: {str(s3_init_error)}"
+            )
+
+        # Recolectar objetos S3 asociados al avance
+        object_pairs = set()  # (bucket, key)
+
+        def _register_object(url: str = "", bucket: str = "", key: str = ""):
+            resolved_bucket = (bucket or "").strip()
+            resolved_key = (key or "").strip()
+            if (not resolved_bucket or not resolved_key) and url:
+                parsed_bucket, parsed_key = _extract_s3_bucket_key_from_url(url)
+                resolved_bucket = resolved_bucket or (parsed_bucket or "")
+                resolved_key = resolved_key or (parsed_key or "")
+            if resolved_key:
+                object_pairs.add((resolved_bucket or default_bucket, resolved_key))
+
+        # Esquema nuevo: soportes con bucket/s3_key/url
+        for soporte in (doc_data.get("soportes") or []):
+            if not isinstance(soporte, dict):
+                continue
+            _register_object(
+                url=str(soporte.get("url_directa") or soporte.get("url") or ""),
+                bucket=str(soporte.get("bucket") or ""),
+                key=str(soporte.get("s3_key") or "")
+            )
+
+        # Campos planos actuales
+        for url in (doc_data.get("imagenes_urls") or []):
+            _register_object(url=str(url))
+        for url in (doc_data.get("documentos_urls") or []):
+            _register_object(url=str(url))
+
+        # Compatibilidad legacy
+        for url in (doc_data.get("registro_fotografico_urls") or []):
+            _register_object(url=str(url))
+        for url in (doc_data.get("documentos_soporte_urls") or []):
+            _register_object(url=str(url))
+
+        # Eliminar objetos en S3 (si existen)
+        s3_deleted = []
+        s3_failed = []
+
+        # Agrupar por bucket para usar delete_objects en lote
+        bucket_to_keys: Dict[str, List[str]] = {}
+        for bucket_name, key_name in object_pairs:
+            bucket_to_keys.setdefault(bucket_name, []).append(key_name)
+
+        for bucket_name, keys in bucket_to_keys.items():
+            # S3 permite máx 1000 claves por lote
+            for i in range(0, len(keys), 1000):
+                chunk = keys[i:i + 1000]
+                try:
+                    response = s3_client.delete_objects(
+                        Bucket=bucket_name,
+                        Delete={
+                            'Objects': [{'Key': key} for key in chunk],
+                            'Quiet': False
+                        }
+                    )
+                    for deleted in response.get('Deleted', []):
+                        s3_deleted.append({
+                            "bucket": bucket_name,
+                            "key": deleted.get('Key')
+                        })
+                    for error in response.get('Errors', []):
+                        s3_failed.append({
+                            "bucket": bucket_name,
+                            "key": error.get('Key'),
+                            "code": error.get('Code'),
+                            "message": error.get('Message')
+                        })
+                except Exception as delete_error:
+                    for key in chunk:
+                        s3_failed.append({
+                            "bucket": bucket_name,
+                            "key": key,
+                            "code": "DeleteException",
+                            "message": str(delete_error)
+                        })
+
+        if s3_failed:
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "message": "No se pudo completar la eliminación en S3. El documento NO fue eliminado en Firestore.",
+                    "id": id,
+                    "s3_deleted": len(s3_deleted),
+                    "s3_failed": len(s3_failed),
+                    "errors": s3_failed[:20]
+                }
+            )
+
+        # Eliminar documento en Firestore solo si S3 quedó limpio
+        doc_ref.delete()
+
+        return create_utf8_response({
+            "success": True,
+            "message": "Avance eliminado correctamente junto con sus archivos S3",
+            "id": id,
+            "deleted_firestore": True,
+            "s3_total_detected": len(object_pairs),
+            "s3_deleted": len(s3_deleted),
+            "s3_failed": 0,
+            "deleted_files": s3_deleted
+        })
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error eliminando avance y soportes: {str(e)}"
+        )
+
+
 @app.get(
     "/solicitudes_cambios_unidades_proyecto",
     tags=["Unidades de Proyecto"],
