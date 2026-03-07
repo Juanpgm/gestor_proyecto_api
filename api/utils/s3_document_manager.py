@@ -53,18 +53,45 @@ class S3DocumentManager:
         self.credentials = self._load_credentials(credentials_path)
         self.bucket_name = self.credentials.get('bucket_name_emprestito', 'contratos-emprestito')
         self.region = self.credentials.get('aws_region', self.credentials.get('region', 'us-east-1'))
+
+        # Inicializar cliente S3 (siempre SigV4)
+        self.s3_client = self._create_s3_client(self.region)
+
+        # Ajustar región al bucket real para evitar presigned inválidos por región incorrecta
+        try:
+            bucket_region = self._detect_bucket_region(self.bucket_name)
+            if bucket_region and bucket_region != self.region:
+                logger.info(f"🔄 Ajustando región S3 de {self.region} a {bucket_region} para bucket {self.bucket_name}")
+                self.region = bucket_region
+                self.s3_client = self._create_s3_client(self.region)
+        except Exception as region_error:
+            logger.warning(f"No se pudo detectar región real del bucket {self.bucket_name}: {region_error}")
         
-        # Inicializar cliente S3
-        self.s3_client = boto3.client(
+        logger.info(f"✅ S3DocumentManager inicializado - Bucket: {self.bucket_name}")
+
+    def _create_s3_client(self, region_name: str):
+        """Crea cliente S3 forzando firma SigV4."""
+        return boto3.client(
             's3',
             aws_access_key_id=self.credentials.get('aws_access_key_id'),
             aws_secret_access_key=self.credentials.get('aws_secret_access_key'),
             aws_session_token=self.credentials.get('aws_session_token') or None,
-            region_name=self.region,
+            region_name=region_name,
             config=Config(signature_version='s3v4')
         )
-        
-        logger.info(f"✅ S3DocumentManager inicializado - Bucket: {self.bucket_name}")
+
+    def _detect_bucket_region(self, bucket_name: str) -> str:
+        """Obtiene región real del bucket para evitar mismatch en presigned URLs."""
+        try:
+            response = self.s3_client.get_bucket_location(Bucket=bucket_name)
+            location = response.get('LocationConstraint')
+            # AWS devuelve None para us-east-1
+            return location or 'us-east-1'
+        except Exception:
+            # Fallback con head_bucket (x-amz-bucket-region)
+            response = self.s3_client.head_bucket(Bucket=bucket_name)
+            headers = response.get('ResponseMetadata', {}).get('HTTPHeaders', {})
+            return headers.get('x-amz-bucket-region', self.region)
     
     def _load_credentials(self, credentials_path: str = None) -> Dict[str, str]:
         """
