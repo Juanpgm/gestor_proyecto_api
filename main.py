@@ -2714,12 +2714,121 @@ async def exportar_intervenciones_xlsx(
         )
 
 
-@app.get("/avances_unidades_proyecto", tags=["Unidades de Proyecto"], summary="🔵 GET | Leer avances de Unidades de Proyecto")
+@app.get(
+    "/avances_unidades_proyecto",
+    tags=["Unidades de Proyecto"],
+    summary="🔵 GET | Leer avances de Unidades de Proyecto",
+    response_description="Lista de avances con enlaces normalizados para imágenes y documentos",
+    responses={
+        200: {
+            "description": "Consulta exitosa de avances con estructura lista para frontend",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "data": [
+                            {
+                                "id": "f4f0f2dd-10ef-42df-9b4f-b9ad2554d110",
+                                "intervencion_id": "INT-001",
+                                "avance_obra": 67.5,
+                                "observaciones": "Avance de estructura y acabados.",
+                                "registrado_por": "usuario@empresa.com",
+                                "soportes": [
+                                    {
+                                        "indice": 1,
+                                        "tipo": "imagen",
+                                        "nombre_original": "foto_frente.jpg",
+                                        "extension": ".jpg",
+                                        "content_type": "image/jpeg",
+                                        "s3_key": "unidades_proyecto_photos/registro_avance/INT-001/2026-03-07/INT-001_20260307_143000_001.jpg",
+                                        "url": "https://unidades-proyecto-documents.s3.amazonaws.com/unidades_proyecto_photos/registro_avance/INT-001/2026-03-07/INT-001_20260307_143000_001.jpg",
+                                        "uploaded_at": "2026-03-07T14:30:00-05:00"
+                                    },
+                                    {
+                                        "indice": 2,
+                                        "tipo": "documento",
+                                        "nombre_original": "informe_tecnico.pdf",
+                                        "extension": ".pdf",
+                                        "content_type": "application/pdf",
+                                        "s3_key": "unidades_proyecto_documentos/registro_avance/INT-001/2026-03-07/INT-001_20260307_143000_001_informe_tecnico.pdf",
+                                        "url": "https://unidades-proyecto-documents.s3.amazonaws.com/unidades_proyecto_documentos/registro_avance/INT-001/2026-03-07/INT-001_20260307_143000_001_informe_tecnico.pdf",
+                                        "uploaded_at": "2026-03-07T14:30:00-05:00"
+                                    }
+                                ],
+                                "imagenes_urls": [
+                                    "https://unidades-proyecto-documents.s3.amazonaws.com/unidades_proyecto_photos/registro_avance/INT-001/2026-03-07/INT-001_20260307_143000_001.jpg"
+                                ],
+                                "documentos_urls": [
+                                    "https://unidades-proyecto-documents.s3.amazonaws.com/unidades_proyecto_documentos/registro_avance/INT-001/2026-03-07/INT-001_20260307_143000_001_informe_tecnico.pdf"
+                                ],
+                                "links": {
+                                    "imagenes": [
+                                        "https://unidades-proyecto-documents.s3.amazonaws.com/unidades_proyecto_photos/registro_avance/INT-001/2026-03-07/INT-001_20260307_143000_001.jpg"
+                                    ],
+                                    "documentos": [
+                                        "https://unidades-proyecto-documents.s3.amazonaws.com/unidades_proyecto_documentos/registro_avance/INT-001/2026-03-07/INT-001_20260307_143000_001_informe_tecnico.pdf"
+                                    ],
+                                    "all_soportes": [
+                                        {
+                                            "indice": 1,
+                                            "tipo": "imagen",
+                                            "url": "https://unidades-proyecto-documents.s3.amazonaws.com/unidades_proyecto_photos/registro_avance/INT-001/2026-03-07/INT-001_20260307_143000_001.jpg"
+                                        },
+                                        {
+                                            "indice": 2,
+                                            "tipo": "documento",
+                                            "url": "https://unidades-proyecto-documents.s3.amazonaws.com/unidades_proyecto_documentos/registro_avance/INT-001/2026-03-07/INT-001_20260307_143000_001_informe_tecnico.pdf"
+                                        }
+                                    ],
+                                    "visores": {
+                                        "imagenes": [
+                                            "https://unidades-proyecto-documents.s3.amazonaws.com/unidades_proyecto_photos/registro_avance/INT-001/2026-03-07/INT-001_20260307_143000_001.jpg"
+                                        ],
+                                        "documentos_inline": [
+                                            "https://unidades-proyecto-documents.s3.amazonaws.com/unidades_proyecto_documentos/registro_avance/INT-001/2026-03-07/INT-001_20260307_143000_001_informe_tecnico.pdf"
+                                        ],
+                                        "documentos_download": []
+                                    }
+                                },
+                                "registro_fotografico_urls": [
+                                    "https://unidades-proyecto-documents.s3.amazonaws.com/unidades_proyecto_photos/registro_avance/INT-001/2026-03-07/INT-001_20260307_143000_001.jpg"
+                                ],
+                                "documentos_soporte_urls": [
+                                    "https://unidades-proyecto-documents.s3.amazonaws.com/unidades_proyecto_documentos/registro_avance/INT-001/2026-03-07/INT-001_20260307_143000_001_informe_tecnico.pdf"
+                                ],
+                                "total_imagenes": 1,
+                                "total_documentos": 1,
+                                "total_soportes": 2,
+                                "created_at": "2026-03-07T14:30:00-05:00",
+                                "updated_at": "2026-03-07T14:30:00-05:00"
+                            }
+                        ],
+                        "count": 1,
+                        "filters": {
+                            "doc_id": None,
+                            "intervencion_id": "INT-001"
+                        }
+                    }
+                }
+            }
+        },
+        404: {"description": "No existe avance con el doc_id solicitado"},
+        503: {"description": "Firestore/Firebase no disponible"}
+    }
+)
 @optional_rate_limit("60/minute")
 async def get_avances_unidades_proyecto(
     intervencion_id: Optional[str] = Query(None, description="Filtrar por intervencion_id"),
     doc_id: Optional[str] = Query(None, description="ID exacto del documento en Firestore")
 ):
+    """
+    Lee avances de unidades de proyecto y normaliza enlaces para frontend.
+
+    Compatibilidad de salida:
+    - Nuevo esquema: `soportes`, `imagenes_urls`, `documentos_urls`, `links`.
+    - Esquema legado: `registro_fotografico_urls`, `documentos_soporte_urls`.
+
+    La respuesta siempre incluye ambos formatos para evitar rompimientos en clientes.
+    """
     if not FIREBASE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Firebase not available")
 
@@ -2744,6 +2853,117 @@ async def get_avances_unidades_proyecto(
                 return [normalize_value(item) for item in value]
             return value
 
+        def _content_type_from_url(url: str) -> str:
+            url_lower = (url or "").lower()
+            if url_lower.endswith((".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tif", ".tiff", ".heic", ".heif", ".ico")):
+                return "image/jpeg"
+            if url_lower.endswith(".pdf"):
+                return "application/pdf"
+            if url_lower.endswith(".xlsx"):
+                return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            if url_lower.endswith(".xls"):
+                return "application/vnd.ms-excel"
+            if url_lower.endswith(".docx"):
+                return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            if url_lower.endswith(".doc"):
+                return "application/msword"
+            if url_lower.endswith(".csv"):
+                return "text/csv"
+            if url_lower.endswith(".txt"):
+                return "text/plain"
+            return "application/octet-stream"
+
+        def _normalize_avance_links(doc_data: Dict[str, Any], doc_firestore_id: str) -> Dict[str, Any]:
+            """Normaliza links para frontend desde esquema nuevo y legado."""
+            soportes = doc_data.get("soportes") or []
+            imagenes_urls = list(doc_data.get("imagenes_urls") or [])
+            documentos_urls = list(doc_data.get("documentos_urls") or [])
+
+            # Compatibilidad con payload legado
+            legacy_img_urls = list(doc_data.get("registro_fotografico_urls") or [])
+            legacy_doc_urls = list(doc_data.get("documentos_soporte_urls") or [])
+
+            if not imagenes_urls and legacy_img_urls:
+                imagenes_urls = legacy_img_urls
+            if not documentos_urls and legacy_doc_urls:
+                documentos_urls = legacy_doc_urls
+
+            # Si no existen listas separadas, reconstruir desde soportes
+            if (not imagenes_urls and not documentos_urls) and soportes:
+                for soporte in soportes:
+                    if not isinstance(soporte, dict):
+                        continue
+                    soporte_tipo = str(soporte.get("tipo") or "").lower()
+                    soporte_url = soporte.get("url")
+                    if not soporte_url:
+                        continue
+                    if soporte_tipo == "imagen":
+                        imagenes_urls.append(soporte_url)
+                    elif soporte_tipo == "documento":
+                        documentos_urls.append(soporte_url)
+
+            # Si no existe soportes, reconstruirlo con enlaces disponibles
+            if not soportes:
+                soportes = []
+                for idx, url in enumerate(imagenes_urls):
+                    soportes.append({
+                        "indice": idx + 1,
+                        "tipo": "imagen",
+                        "url": url,
+                        "content_type": _content_type_from_url(url)
+                    })
+                for idx, url in enumerate(documentos_urls):
+                    soportes.append({
+                        "indice": len(soportes) + 1,
+                        "tipo": "documento",
+                        "url": url,
+                        "content_type": _content_type_from_url(url)
+                    })
+
+            # Dedupe preservando orden
+            def _dedupe(values: List[str]) -> List[str]:
+                seen = set()
+                out = []
+                for value in values:
+                    if not value or value in seen:
+                        continue
+                    seen.add(value)
+                    out.append(value)
+                return out
+
+            imagenes_urls = _dedupe(imagenes_urls)
+            documentos_urls = _dedupe(documentos_urls)
+
+            doc_data["soportes"] = soportes
+            doc_data["imagenes_urls"] = imagenes_urls
+            doc_data["documentos_urls"] = documentos_urls
+
+            # Compatibilidad hacia clientes antiguos
+            doc_data["registro_fotografico_urls"] = imagenes_urls
+            doc_data["documentos_soporte_urls"] = documentos_urls
+
+            # Estructura explícita para frontend
+            doc_data["links"] = {
+                "imagenes": imagenes_urls,
+                "documentos": documentos_urls,
+                "all_soportes": soportes,
+                "visores": {
+                    "imagenes": imagenes_urls,
+                    "documentos_inline": [
+                        url for url in documentos_urls if str(url).lower().endswith(".pdf")
+                    ],
+                    "documentos_download": [
+                        url for url in documentos_urls if not str(url).lower().endswith(".pdf")
+                    ]
+                }
+            }
+
+            doc_data["total_imagenes"] = len(imagenes_urls)
+            doc_data["total_documentos"] = len(documentos_urls)
+            doc_data["total_soportes"] = len(soportes)
+            doc_data["id"] = doc_firestore_id
+            return doc_data
+
         if doc_id:
             doc = collection_ref.document(doc_id).get()
             if not doc.exists:
@@ -2752,7 +2972,7 @@ async def get_avances_unidades_proyecto(
             doc_data = doc.to_dict() or {}
             if should_convert:
                 doc_data = normalize_value(doc_data)
-            doc_data['id'] = doc.id
+            doc_data = _normalize_avance_links(doc_data, doc.id)
 
             return create_utf8_response({
                 "data": [doc_data],
@@ -2773,7 +2993,7 @@ async def get_avances_unidades_proyecto(
             doc_data = doc.to_dict() or {}
             if should_convert:
                 doc_data = normalize_value(doc_data)
-            doc_data['id'] = doc.id
+            doc_data = _normalize_avance_links(doc_data, doc.id)
             data.append(doc_data)
 
         return create_utf8_response({
@@ -3815,211 +4035,339 @@ async def registrar_avance_up(
     avance_obra: float = Form(..., description="Avance de obra (admite decimales)"),
     observaciones: str = Form(..., description="Observaciones del avance"),
     intervencion_id: str = Form(..., min_length=1, description="ID de la intervención"),
-    registro_fotografico: List[UploadFile] = File(..., description="Uno o más archivos de imagen")
+    soportes: Optional[List[UploadFile]] = File(None, description=(
+        "Archivos de soporte (opcional, se pueden enviar varios mezclados). "
+        "Imágenes (.jpg, .jpeg, .png, .bmp, .gif, .webp, .tiff, .heic…) → se comprimen para web y se "
+        "guardan en 'unidades_proyecto_photos'. "
+        "Documentos (PDF, XLSX, DOCX, CSV…) → se guardan en 'unidades_proyecto_documentos'."
+    ))
 ):
     """
     ## 🟢 POST | Registrar avance de unidad de proyecto
 
-    - Comprime imágenes para optimización web
-    - Guarda imágenes en S3 bajo folder por `intervencion_id`
-    - Persiste el avance y urls en Firestore
+    - Campo unificado `soportes`: acepta imágenes y documentos mezclados, sin límite de cantidad
+    - **Imágenes**: detectadas por extensión → compresión JPEG progresiva optimizada para web →
+      carpeta `unidades_proyecto_photos/registro_avance/{intervencion_id}/{fecha}/`
+    - **Documentos**: cualquier otra extensión → carpeta `unidades_proyecto_documentos/registro_avance/{intervencion_id}/{fecha}/`
+    - Genera URLs directas listas para `<img src>`, visor de PDF o descarga en el frontend
+    - `registrado_por` se extrae automáticamente del token de sesión
+    - Timestamps en hora Colombia (UTC−5)
     """
     if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
         raise HTTPException(status_code=503, detail="Firebase or scripts not available")
 
-    if not registro_fotografico:
-        raise HTTPException(status_code=400, detail="Debe adjuntar al menos una imagen en registro_fotografico")
-
     try:
         import io
         import unicodedata
+        import mimetypes
         from PIL import Image, UnidentifiedImageError
         from api.utils.s3_document_manager import S3DocumentManager, BOTO3_AVAILABLE
 
         if not BOTO3_AVAILABLE:
             raise HTTPException(status_code=500, detail="boto3 no disponible para subida a S3")
 
+        # ── Timezone Colombia (UTC-5, sin DST) ───────────────────────────────
+        try:
+            from zoneinfo import ZoneInfo
+            _co_tz = ZoneInfo("America/Bogota")
+        except ImportError:
+            from datetime import timezone as _tz, timedelta as _td
+            _co_tz = _tz(_td(hours=-5))
+
+        def now_colombia() -> datetime:
+            return datetime.now(_co_tz)
+
+        # ── Usuario autenticado ───────────────────────────────────────────────
+        registrado_por: str = getattr(request.state, "user_email", None) or "desconocido"
+
+        # ── Extensiones reconocidas como imagen ──────────────────────────────
+        _IMAGE_EXTS = {
+            '.jpg', '.jpeg', '.jfif', '.pjpeg', '.pjp',
+            '.png', '.bmp', '.gif', '.webp',
+            '.tiff', '.tif', '.heic', '.heif', '.ico',
+        }
+
+        # ── Content-types para documentos ────────────────────────────────────
+        _DOC_CONTENT_TYPES = {
+            ".pdf":  "application/pdf",
+            ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ".xls":  "application/vnd.ms-excel",
+            ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ".doc":  "application/msword",
+            ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            ".ppt":  "application/vnd.ms-powerpoint",
+            ".csv":  "text/csv",
+            ".txt":  "text/plain",
+            ".zip":  "application/zip",
+            ".rar":  "application/x-rar-compressed",
+            ".7z":   "application/x-7z-compressed",
+        }
+
+        # ── Prefijos S3 fijos ────────────────────────────────────────────────
+        photos_prefix = "unidades_proyecto_photos"
+        docs_prefix   = "unidades_proyecto_documentos"
+
+        # ── Inicialización S3 ─────────────────────────────────────────────────
         credentials_path = os.getenv('AWS_CREDENTIALS_FILE_UNIDADES_PROYECTO', 'credentials/aws_credentials.json')
-        bucket_unidades_proyecto = os.getenv('S3_BUCKET_UNIDADES_PROYECTO', 'unidades-proyecto-documents')
-        fotos_prefix = os.getenv('S3_PREFIX_UNIDADES_PROYECTO', 'unidades_proyecto_photos').strip('/')
+        bucket = os.getenv('S3_BUCKET_UNIDADES_PROYECTO', 'unidades-proyecto-documents')
 
         try:
             s3_manager = S3DocumentManager(credentials_path=credentials_path)
-            # Para este endpoint se usa explícitamente el bucket de unidades de proyecto
-            s3_manager.bucket_name = bucket_unidades_proyecto
+            s3_manager.bucket_name = bucket
             s3_client = s3_manager.s3_client
-            aws_profile_usado = f"archivo:{credentials_path}"
 
             try:
-                s3_client.head_bucket(Bucket=bucket_unidades_proyecto)
+                s3_client.head_bucket(Bucket=bucket)
             except Exception:
                 fallback_bucket = s3_manager.credentials.get('bucket_name', 'unidades-proyecto-documents')
-                if fallback_bucket and fallback_bucket != bucket_unidades_proyecto:
+                if fallback_bucket and fallback_bucket != bucket:
                     try:
                         s3_client.head_bucket(Bucket=fallback_bucket)
-                        bucket_unidades_proyecto = fallback_bucket
+                        bucket = fallback_bucket
                         s3_manager.bucket_name = fallback_bucket
                     except Exception as fallback_error:
                         raise HTTPException(
                             status_code=500,
                             detail=(
-                                f"Bucket S3 inválido/configurado incorrectamente ({bucket_unidades_proyecto}) "
-                                f"y fallback ({fallback_bucket}) no accesible: {str(fallback_error)}"
+                                f"Bucket S3 inválido ({bucket}) y fallback ({fallback_bucket}) "
+                                f"no accesible: {str(fallback_error)}"
                             )
                         )
                 else:
                     raise HTTPException(
                         status_code=500,
-                        detail=(
-                            f"Bucket S3 inválido/configurado incorrectamente: {bucket_unidades_proyecto}"
-                        )
+                        detail=f"Bucket S3 inválido/no accesible: {bucket}"
                     )
         except HTTPException:
             raise
         except Exception as s3_setup_error:
             raise HTTPException(
                 status_code=500,
-                detail=(
-                    f"No se pudo inicializar S3 para registrar_avance_up con {credentials_path}: {str(s3_setup_error)}"
-                )
+                detail=f"No se pudo inicializar S3 para registrar_avance_up: {str(s3_setup_error)}"
             )
 
-        folder_key = f"{fotos_prefix}/registro_avance/{intervencion_id}/"
-
-        folder_exists = False
-        try:
-            check_response = s3_client.list_objects_v2(
-                Bucket=bucket_unidades_proyecto,
-                Prefix=folder_key,
-                MaxKeys=1
-            )
-            folder_exists = bool(check_response.get('Contents'))
-        except Exception:
-            folder_exists = False
-
-        if not folder_exists:
-            try:
-                s3_client.put_object(
-                    Bucket=bucket_unidades_proyecto,
-                    Key=folder_key,
-                    Body=b''
-                )
-            except Exception as folder_error:
-                raise HTTPException(
-                    status_code=500,
-                    detail=(
-                        f"No se pudo crear/verificar folder en S3 ({bucket_unidades_proyecto}) "
-                        f"usando perfil {aws_profile_usado}: {str(folder_error)}"
-                    )
-                )
-
-        uploaded_urls = []
-        failed_files = []
-
+        # ── Helpers ───────────────────────────────────────────────────────────
         def to_ascii_s3_metadata(value: Any, default: str = "") -> str:
+            """Convierte valor a ASCII puro apto para metadatos S3 (máx. 200 chars)."""
             text = str(value) if value is not None else default
             text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
-            text = "".join(ch for ch in text if 32 <= ord(ch) <= 126)
-            text = text.strip()
-            if not text:
-                return default
-            return text[:200]
+            text = "".join(ch for ch in text if 32 <= ord(ch) <= 126).strip()
+            return text[:200] if text else default
 
-        for idx, photo in enumerate(registro_fotografico):
+        def safe_s3_name(name: str) -> str:
+            """Normaliza nombre a caracteres ASCII alfanuméricos + '._-' para S3."""
+            name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii")
+            name = "".join(ch for ch in name if ch.isalnum() or ch in "._-")
+            return name.strip("._-") or "archivo"
+
+        # ── Timestamps fijos para este registro ──────────────────────────────
+        now        = now_colombia()
+        date_str   = now.strftime('%Y-%m-%d')          # 2026-03-07  (carpeta por fecha)
+        ts_safe    = now.strftime('%Y%m%d_%H%M%S')      # 20260307_143000 (en el nombre del archivo)
+        ts_human   = now.strftime('%d/%m/%Y %H:%M:%S')  # 07/03/2026 14:30:00 (metadatos S3)
+        now_iso    = now.isoformat()                    # 2026-03-07T14:30:00-05:00 (Firestore)
+
+        # ── Procesamiento de archivos (optimizado y concurrente) ──────────────
+        soportes_registros: list = []
+        imagenes_urls: list = []
+        documentos_urls: list = []
+        fallidos: list = []
+
+        photos_folder = f"{photos_prefix}/registro_avance/{intervencion_id}/{date_str}/"
+        docs_folder = f"{docs_prefix}/registro_avance/{intervencion_id}/{date_str}/"
+
+        soporte_items: List[Dict[str, Any]] = []
+        img_counter = 0
+        doc_counter = 0
+
+        for idx, archivo in enumerate(soportes or []):
+            original_name = archivo.filename or f"soporte_{idx + 1}"
+            _, ext = os.path.splitext(original_name)
+            ext_lower = ext.lower()
+            is_image = ext_lower in _IMAGE_EXTS
+
             try:
-                file_bytes = await photo.read()
+                file_bytes = await archivo.read()
                 if not file_bytes:
-                    raise ValueError("archivo vacío")
+                    raise ValueError("El archivo está vacío (0 bytes)")
 
-                image = Image.open(io.BytesIO(file_bytes))
+                if is_image:
+                    img_counter += 1
+                    img_seq = img_counter
+                    doc_seq = None
+                else:
+                    doc_counter += 1
+                    doc_seq = doc_counter
+                    img_seq = None
 
-                if image.mode not in ("RGB", "L"):
+                soporte_items.append({
+                    "indice": idx + 1,
+                    "original_name": original_name,
+                    "ext_lower": ext_lower,
+                    "is_image": is_image,
+                    "file_bytes": file_bytes,
+                    "img_seq": img_seq,
+                    "doc_seq": doc_seq,
+                })
+            except Exception as read_err:
+                fallidos.append({"indice": idx + 1, "filename": original_name, "error": str(read_err)})
+
+        def _process_and_upload_soporte(item: Dict[str, Any]) -> Dict[str, Any]:
+            original_name = item["original_name"]
+            ext_lower = item["ext_lower"]
+            is_image = item["is_image"]
+            file_bytes = item["file_bytes"]
+            indice = item["indice"]
+
+            if is_image:
+                try:
+                    image = Image.open(io.BytesIO(file_bytes))
+                except UnidentifiedImageError:
+                    raise ValueError(f"No se reconoce como imagen válida: {original_name}")
+
+                if image.mode != "RGB":
                     image = image.convert("RGB")
-                elif image.mode == "L":
-                    image = image.convert("RGB")
 
-                max_dimension = 1920
-                image.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
+                image.thumbnail((1280, 1280), Image.Resampling.LANCZOS)
 
-                compressed_buffer = io.BytesIO()
+                buf = io.BytesIO()
                 image.save(
-                    compressed_buffer,
-                    format='JPEG',
-                    quality=78,
+                    buf,
+                    format="JPEG",
+                    quality=72,
                     optimize=True,
-                    progressive=True
+                    progressive=True,
+                    subsampling=2,
                 )
-                compressed_buffer.seek(0)
-
-                timestamp_human = datetime.now().strftime('%d/%m/%Y - %H:%M:%S')
-                timestamp_safe = timestamp_human.replace('/', '-').replace(':', '-')
-                file_name = f"{intervencion_id} - {timestamp_safe} - {idx + 1}.jpg"
-                s3_key = f"{folder_key}{file_name}"
-
-                s3_client.put_object(
-                    Bucket=bucket_unidades_proyecto,
-                    Key=s3_key,
-                    Body=compressed_buffer.getvalue(),
-                    ContentType='image/jpeg',
-                    Metadata={
-                        'intervencion_id': to_ascii_s3_metadata(intervencion_id, default='sin_intervencion'),
-                        'timestamp_human': to_ascii_s3_metadata(timestamp_human, default='sin_timestamp'),
-                        'original_filename': to_ascii_s3_metadata(photo.filename or 'sin_nombre', default='sin_nombre')
-                    }
+                upload_bytes = buf.getvalue()
+                content_type = "image/jpeg"
+                s3_filename = f"{intervencion_id}_{ts_safe}_{item['img_seq']:03d}.jpg"
+                s3_key = f"{photos_folder}{s3_filename}"
+                content_disposition = "inline"
+                soporte_tipo = "imagen"
+            else:
+                content_type = _DOC_CONTENT_TYPES.get(
+                    ext_lower,
+                    mimetypes.guess_type(original_name)[0] or "application/octet-stream"
                 )
+                upload_bytes = file_bytes
+                base_name = safe_s3_name(os.path.splitext(original_name)[0])
+                s3_filename = f"{intervencion_id}_{ts_safe}_{item['doc_seq']:03d}_{base_name}{ext_lower}"
+                s3_key = f"{docs_folder}{s3_filename}"
+                content_disposition = (
+                    "inline" if ext_lower == ".pdf"
+                    else f'attachment; filename="{s3_filename}"'
+                )
+                soporte_tipo = "documento"
 
-                uploaded_urls.append(f"https://{bucket_unidades_proyecto}.s3.amazonaws.com/{s3_key}")
+            s3_client.put_object(
+                Bucket=bucket,
+                Key=s3_key,
+                Body=upload_bytes,
+                ContentType=content_type,
+                ContentDisposition=content_disposition,
+                Metadata={
+                    "intervencion-id": to_ascii_s3_metadata(intervencion_id, "sin_intervencion"),
+                    "registrado-por": to_ascii_s3_metadata(registrado_por, "desconocido"),
+                    "timestamp": to_ascii_s3_metadata(ts_human, ""),
+                    "original-filename": to_ascii_s3_metadata(original_name, "sin_nombre"),
+                    "tipo": soporte_tipo,
+                }
+            )
 
-            except (UnidentifiedImageError, ValueError) as image_error:
-                failed_files.append({
-                    "filename": photo.filename,
-                    "error": f"Archivo no válido como imagen: {str(image_error)}"
+            url = f"https://{bucket}.s3.amazonaws.com/{s3_key}"
+            return {
+                "indice": indice,
+                "tipo": soporte_tipo,
+                "nombre_original": original_name,
+                "extension": ext_lower,
+                "content_type": content_type,
+                "s3_key": s3_key,
+                "url": url,
+                "uploaded_at": now_iso,
+            }
+
+        max_parallel_uploads = int(os.getenv("REGISTRAR_AVANCE_UP_UPLOAD_CONCURRENCY", "4"))
+        upload_semaphore = asyncio.Semaphore(max(1, max_parallel_uploads))
+
+        async def _run_upload(item: Dict[str, Any]) -> Dict[str, Any]:
+            async with upload_semaphore:
+                return await asyncio.to_thread(_process_and_upload_soporte, item)
+
+        upload_tasks = [_run_upload(item) for item in soporte_items]
+        upload_results = await asyncio.gather(*upload_tasks, return_exceptions=True)
+
+        for item, result in zip(soporte_items, upload_results):
+            if isinstance(result, Exception):
+                fallidos.append({
+                    "indice": item["indice"],
+                    "filename": item["original_name"],
+                    "error": str(result)
                 })
-            except Exception as upload_error:
-                failed_files.append({
-                    "filename": photo.filename,
-                    "error": str(upload_error)
-                })
+                continue
 
+            soportes_registros.append(result)
+            if result["tipo"] == "imagen":
+                imagenes_urls.append(result["url"])
+            else:
+                documentos_urls.append(result["url"])
+
+        soportes_registros.sort(key=lambda x: x.get("indice", 0))
+
+        # ── Firestore ─────────────────────────────────────────────────────────
         db = get_firestore_client()
         if db is None:
             raise HTTPException(status_code=503, detail="No se pudo conectar a Firestore")
 
-        now_iso = datetime.now().isoformat()
+        doc_id = str(uuid.uuid4())
+
         avance_payload = {
-            "avance_obra": avance_obra,
-            "observaciones": observaciones,
-            "intervencion_id": intervencion_id,
-            "registro_fotografico_urls": uploaded_urls,
-            "total_fotos": len(registro_fotografico),
-            "fotos_subidas": len(uploaded_urls),
-            "fotos_fallidas": len(failed_files),
-            "created_at": now_iso,
-            "updated_at": now_iso
+            "id":                doc_id,
+            "avance_obra":       avance_obra,
+            "observaciones":     observaciones,
+            "intervencion_id":   intervencion_id,
+            "registrado_por":    registrado_por,
+            # Índice completo: cada archivo con su url, tipo, s3_key, content_type, etc.
+            "soportes":          soportes_registros,
+            # Listas planas de URLs para consultas/filtros rápidos en Firestore
+            "imagenes_urls":     imagenes_urls,
+            "documentos_urls":   documentos_urls,
+            # Contadores
+            "total_soportes":    len(soportes or []),
+            "total_imagenes":    len(imagenes_urls),
+            "total_documentos":  len(documentos_urls),
+            "total_fallidos":    len(fallidos),
+            "fallidos":          fallidos,
+            # Timestamps en hora Colombia
+            "created_at":        now_iso,
+            "updated_at":        now_iso,
         }
 
-        doc_id = str(uuid.uuid4())
         db.collection('avances_unidades_proyecto').document(doc_id).set(avance_payload)
 
-        response_payload = {
-            "id": doc_id,
-            "intervencion_id": intervencion_id,
-            "avance_obra": avance_obra,
-            "observaciones": observaciones,
-            "registro_fotografico_urls": uploaded_urls,
-            "fotos_subidas": len(uploaded_urls),
-            "fotos_fallidas": len(failed_files),
-            "timestamp": now_iso
-        }
-
-        return create_utf8_response(response_payload)
+        return create_utf8_response({
+            "id":               doc_id,
+            "intervencion_id":  intervencion_id,
+            "avance_obra":      avance_obra,
+            "observaciones":    observaciones,
+            "registrado_por":   registrado_por,
+            "soportes":         soportes_registros,
+            "imagenes_urls":    imagenes_urls,
+            "documentos_urls":  documentos_urls,
+            "total_soportes":   len(soportes or []),
+            "total_imagenes":   len(imagenes_urls),
+            "total_documentos": len(documentos_urls),
+            "total_fallidos":   len(fallidos),
+            "fallidos":         fallidos,
+            "timestamp":        now_iso,
+        })
 
     except HTTPException:
         raise
     except ImportError as import_error:
         raise HTTPException(
             status_code=500,
-            detail=f"Dependencia faltante para compresión/subida de imágenes: {str(import_error)}"
+            detail=f"Dependencia faltante para subida de archivos: {str(import_error)}"
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error registrando avance UP: {str(e)}")
