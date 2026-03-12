@@ -210,7 +210,13 @@ try:
         get_unidades_proyecto_attributes,
         get_filter_options,
         validate_unidades_proyecto_collection,
-        get_unidades_proyecto_quality_metrics,
+        generate_unidades_proyecto_quality_report,
+        get_unidades_proyecto_quality_summary,
+        get_unidades_proyecto_quality_records_paginated,
+        get_unidades_proyecto_quality_issues_paginated,
+        get_unidades_proyecto_quality_missing_centros_paginated,
+        get_unidades_proyecto_quality_history,
+        get_unidades_proyecto_quality_centros_paginated,
         # Contratos operations
         get_contratos_init_data,
         get_contratos_emprestito_all,
@@ -959,6 +965,21 @@ async def timeout_middleware(request: Request, call_next):
         elif request.url.path == "/emprestito/obtener-contratos-secop":
             # 20 minutos para procesamiento completo de TODOS los contratos sin límite
             timeout_seconds = 1200.0
+        elif request.url.path == "/unidades-proyecto/calidad-datos/analizar":
+            # 10 minutos para snapshot extensivo de calidad de datos
+            timeout_seconds = 600.0
+        elif request.url.path == "/unidades-proyecto/calidad-datos/registros":
+            # 2 minutos para consultas paginadas de detalle (con filtros)
+            timeout_seconds = 120.0
+        elif request.url.path == "/unidades-proyecto/calidad-datos/issues":
+            # 2 minutos para consulta de issues individuales paginados
+            timeout_seconds = 120.0
+        elif request.url.path == "/unidades-proyecto/calidad-datos/centros-gestores":
+            # 2 minutos para agregación paginada por centro gestor
+            timeout_seconds = 120.0
+        elif request.url.path == "/unidades-proyecto/calidad-datos/centros-gestores/faltantes":
+            # 2 minutos para candidatos de limpieza de centro gestor
+            timeout_seconds = 120.0
         else:
             # Timeout de 30 segundos para todas las otras requests
             timeout_seconds = 30.0
@@ -1036,7 +1057,14 @@ async def read_root():
                 "/unidades-proyecto/geometry", 
                 "/unidades-proyecto/attributes",
                 "/unidades-proyecto/dashboard",
-                "/unidades-proyecto/filters"
+                "/unidades-proyecto/filters",
+                "/unidades-proyecto/calidad-datos",
+                "/unidades-proyecto/calidad-datos/analizar",
+                "/unidades-proyecto/calidad-datos/registros",
+                "/unidades-proyecto/calidad-datos/issues",
+                "/unidades-proyecto/calidad-datos/historial",
+                "/unidades-proyecto/calidad-datos/centros-gestores",
+                "/unidades-proyecto/calidad-datos/centros-gestores/faltantes"
             ],
             "gestion_contractual": [
                 "/contratos/init_contratos_seguimiento"
@@ -2515,32 +2543,22 @@ async def consultar_unidades_proyecto(
 @optional_rate_limit("30/minute")
 async def get_unidades_proyecto_calidad_datos(
     request: Request,
+    report_id: Optional[str] = Query(None, description="ID del snapshot de calidad a consultar. Si no se envía, usa el último"),
     nombre_centro_gestor: Optional[str] = Query(None, description="Filtrar clasificación por centro gestor"),
-    history_limit: Optional[int] = Query(None, ge=1, description="Cantidad máxima de snapshots en historial. Si no se envía, devuelve todo el historial disponible")
+    history_limit: int = Query(10, ge=1, le=200, description="Cantidad máxima de snapshots en historial"),
+    auto_generate: bool = Query(True, description="Si no hay snapshot, genera uno automáticamente")
 ):
     """
-    ## 🔵 Métricas de Calidad de Datos de Unidades de Proyecto
+    ## 🔵 Resumen de Calidad de Datos (Snapshot)
 
-    Evalúa calidad de datos sobre `unidades_proyecto` e `intervenciones_unidades_proyecto`
-    con marco alineado a ISO 8000, ISO/IEC 25012 y DAMA-DMBOK.
+    Consulta el resumen de calidad persistido en Firestore para `unidades_proyecto`
+    e `intervenciones_unidades_proyecto` usando snapshots controlados.
 
-    Incluye:
-    - Reglas por dimensión (completitud, validez, consistencia, unicidad, oportunidad)
-    - Clasificación de gravedad (S1-S4)
-    - Priorización (P1-P5) según matriz gravedad x volumen
-    - Data Quality Score (DQS) ponderado 0-100
-    - Clasificación por `nombre_centro_gestor`
-    - Secciones de `resumen`, `registros`, `historial`, `metadatos` y `estadisticas_globales`
-
-        ### 📝 Ejemplos de consulta:
-        - **Sin límite (por defecto, retorna todo el historial):**
-            `/unidades-proyecto/calidad-datos`
-        - **Con límite de historial:**
-            `/unidades-proyecto/calidad-datos?history_limit=5`
-        - **Filtrado por centro gestor (sin limitar historial):**
-            `/unidades-proyecto/calidad-datos?nombre_centro_gestor=Unidad%20Administrativa%20Especial%20de%20Servicios%20Públicos`
-        - **Filtrado por centro gestor + límite de historial:**
-            `/unidades-proyecto/calidad-datos?nombre_centro_gestor=Unidad%20Administrativa%20Especial%20de%20Servicios%20Públicos&history_limit=10`
+    Flujo recomendado:
+    1. `POST /unidades-proyecto/calidad-datos/analizar` para generar snapshot extensivo.
+    2. `GET /unidades-proyecto/calidad-datos` para ver resumen ISO/DAMA.
+    3. `GET /unidades-proyecto/calidad-datos/registros` para detalle uno a uno paginado.
+    4. `GET /unidades-proyecto/calidad-datos/historial` para auditoría de snapshots.
     """
     if not FIREBASE_AVAILABLE:
         raise HTTPException(
@@ -2549,9 +2567,11 @@ async def get_unidades_proyecto_calidad_datos(
         )
 
     try:
-        result = await get_unidades_proyecto_quality_metrics(
+        result = await get_unidades_proyecto_quality_summary(
+            report_id=report_id,
+            history_limit=history_limit,
+            auto_generate=auto_generate,
             nombre_centro_gestor=nombre_centro_gestor,
-            history_limit=history_limit
         )
         return create_utf8_response(result)
 
@@ -2562,6 +2582,248 @@ async def get_unidades_proyecto_calidad_datos(
         raise HTTPException(
             status_code=500,
             detail=f"Error generando métricas de calidad: {str(e)}"
+        )
+
+
+@app.post(
+    "/unidades-proyecto/calidad-datos/analizar",
+    tags=["Unidades de Proyecto"],
+    summary="🟢 Ejecutar Análisis Extensivo de Calidad (Snapshot)"
+)
+@optional_rate_limit("10/minute")
+async def post_unidades_proyecto_calidad_datos_analizar(
+    request: Request,
+    nombre_centro_gestor: Optional[str] = Query(None, description="Filtrar análisis por centro gestor antes de persistir snapshot")
+):
+    """Genera y persiste un snapshot completo en colecciones quality para consulta controlada."""
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(
+            status_code=503,
+            detail="Firebase no disponible - verifica las credenciales"
+        )
+
+    try:
+        result = await generate_unidades_proyecto_quality_report(
+            nombre_centro_gestor=nombre_centro_gestor,
+            persist=True,
+        )
+        return create_utf8_response(result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error generando snapshot de calidad: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error generando snapshot de calidad: {str(e)}"
+        )
+
+
+@app.get(
+    "/unidades-proyecto/calidad-datos/registros",
+    tags=["Unidades de Proyecto"],
+    summary="🔵 Diagnóstico por Registro (Paginado)"
+)
+@optional_rate_limit("30/minute")
+async def get_unidades_proyecto_calidad_datos_registros(
+    request: Request,
+    report_id: Optional[str] = Query(None, description="ID del snapshot de calidad. Si no se envía, usa el último"),
+    page_size: int = Query(50, ge=1, le=200, description="Cantidad de registros por página"),
+    page_token: Optional[int] = Query(None, ge=0, description="Cursor numérico devuelto por la página anterior"),
+    record_type: Optional[str] = Query(None, description="Filtrar por tipo: unidad o intervencion"),
+    has_issues: Optional[bool] = Query(None, description="Filtrar si tiene hallazgos"),
+    nombre_centro_gestor: Optional[str] = Query(None, description="Filtrar por centro gestor"),
+):
+    """Devuelve evaluación uno a uno por unidad/intervención con enfoque en presupuesto_base, fechas y geometry."""
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(
+            status_code=503,
+            detail="Firebase no disponible - verifica las credenciales"
+        )
+
+    if record_type is not None and record_type.lower() not in {"unidad", "intervencion"}:
+        raise HTTPException(status_code=400, detail="record_type debe ser 'unidad' o 'intervencion'")
+
+    try:
+        result = await get_unidades_proyecto_quality_records_paginated(
+            report_id=report_id,
+            page_size=page_size,
+            page_token=page_token,
+            record_type=record_type,
+            has_issues=has_issues,
+            nombre_centro_gestor=nombre_centro_gestor,
+        )
+        return create_utf8_response(result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error consultando detalle de calidad paginado: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error consultando detalle de calidad paginado: {str(e)}"
+        )
+
+
+@app.get(
+    "/unidades-proyecto/calidad-datos/issues",
+    tags=["Unidades de Proyecto"],
+    summary="🔵 Issues Individuales de Calidad (Paginado)"
+)
+@optional_rate_limit("30/minute")
+async def get_unidades_proyecto_calidad_datos_issues(
+    request: Request,
+    report_id: Optional[str] = Query(None, description="ID del snapshot de calidad. Si no se envía, usa el último"),
+    page_size: int = Query(100, ge=1, le=200, description="Cantidad de issues por página"),
+    page_token: Optional[int] = Query(None, ge=0, description="Offset devuelto por la página anterior"),
+    record_type: Optional[str] = Query(None, description="Filtrar por tipo: unidad o intervencion"),
+    severity: Optional[str] = Query(None, description="Filtrar por severidad: S1, S2, S3, S4"),
+    field: Optional[str] = Query(None, description="Filtrar por campo: presupuesto_base, fecha_inicio, fecha_fin, geometry, upid, etc."),
+    nombre_centro_gestor: Optional[str] = Query(None, description="Filtrar por centro gestor"),
+):
+    """Devuelve cada issue del snapshot como registro individual para trazabilidad y auditoría."""
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(
+            status_code=503,
+            detail="Firebase no disponible - verifica las credenciales"
+        )
+
+    if record_type is not None and record_type.lower() not in {"unidad", "intervencion"}:
+        raise HTTPException(status_code=400, detail="record_type debe ser 'unidad' o 'intervencion'")
+
+    if severity is not None and severity not in {"S1", "S2", "S3", "S4"}:
+        raise HTTPException(status_code=400, detail="severity debe ser S1, S2, S3 o S4")
+
+    try:
+        result = await get_unidades_proyecto_quality_issues_paginated(
+            report_id=report_id,
+            page_size=page_size,
+            page_token=page_token,
+            record_type=record_type,
+            severity=severity,
+            field=field,
+            nombre_centro_gestor=nombre_centro_gestor,
+        )
+        return create_utf8_response(result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error consultando issues de calidad: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error consultando issues de calidad: {str(e)}"
+        )
+
+
+@app.get(
+    "/unidades-proyecto/calidad-datos/historial",
+    tags=["Unidades de Proyecto"],
+    summary="🔵 Historial de Snapshots de Calidad"
+)
+@optional_rate_limit("30/minute")
+async def get_unidades_proyecto_calidad_datos_historial(
+    request: Request,
+    limit: int = Query(20, ge=1, le=200, description="Cantidad de snapshots a retornar")
+):
+    """Retorna historial de análisis de calidad persistidos en colecciones quality."""
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(
+            status_code=503,
+            detail="Firebase no disponible - verifica las credenciales"
+        )
+
+    try:
+        result = await get_unidades_proyecto_quality_history(limit=limit)
+        return create_utf8_response(result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error consultando historial de calidad: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error consultando historial de calidad: {str(e)}"
+        )
+
+
+@app.get(
+    "/unidades-proyecto/calidad-datos/centros-gestores",
+    tags=["Unidades de Proyecto"],
+    summary="🔵 Diagnóstico Agrupado por Centro Gestor (Paginado)"
+)
+@optional_rate_limit("30/minute")
+async def get_unidades_proyecto_calidad_datos_centros_gestores(
+    request: Request,
+    report_id: Optional[str] = Query(None, description="ID del snapshot de calidad. Si no se envía, usa el último"),
+    page_size: int = Query(25, ge=1, le=200, description="Cantidad de centros gestores por página"),
+    page_token: Optional[int] = Query(None, ge=0, description="Offset de paginación devuelto por la página anterior"),
+    only_with_issues: bool = Query(False, description="Si true, retorna solo centros con hallazgos"),
+    sort_by: str = Query("issue_rate", description="Orden: issue_rate, with_issues, total_records, name"),
+):
+    """Retorna métricas agregadas por nombre_centro_gestor con foco en campos críticos y severidades."""
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(
+            status_code=503,
+            detail="Firebase no disponible - verifica las credenciales"
+        )
+
+    if sort_by not in {"issue_rate", "with_issues", "total_records", "name"}:
+        raise HTTPException(status_code=400, detail="sort_by debe ser: issue_rate, with_issues, total_records, name")
+
+    try:
+        result = await get_unidades_proyecto_quality_centros_paginated(
+            report_id=report_id,
+            page_size=page_size,
+            page_token=page_token,
+            only_with_issues=only_with_issues,
+            sort_by=sort_by,
+        )
+        return create_utf8_response(result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error consultando calidad agrupada por centro gestor: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error consultando calidad agrupada por centro gestor: {str(e)}"
+        )
+
+
+@app.get(
+    "/unidades-proyecto/calidad-datos/centros-gestores/faltantes",
+    tags=["Unidades de Proyecto"],
+    summary="🔵 Candidatos de Corrección: nombre_centro_gestor Faltante"
+)
+@optional_rate_limit("30/minute")
+async def get_unidades_proyecto_calidad_datos_centros_gestores_faltantes(
+    request: Request,
+    report_id: Optional[str] = Query(None, description="ID del snapshot de calidad. Si no se envía, usa el último"),
+    page_size: int = Query(100, ge=1, le=200, description="Cantidad de candidatos por página"),
+    page_token: Optional[int] = Query(None, ge=0, description="Offset devuelto por la página anterior"),
+    record_type: Optional[str] = Query(None, description="Filtrar por tipo: unidad o intervencion"),
+):
+    """Lista documentos con `nombre_centro_gestor_source = not_found` para limpieza de datos."""
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(
+            status_code=503,
+            detail="Firebase no disponible - verifica las credenciales"
+        )
+
+    if record_type is not None and record_type.lower() not in {"unidad", "intervencion"}:
+        raise HTTPException(status_code=400, detail="record_type debe ser 'unidad' o 'intervencion'")
+
+    try:
+        result = await get_unidades_proyecto_quality_missing_centros_paginated(
+            report_id=report_id,
+            page_size=page_size,
+            page_token=page_token,
+            record_type=record_type,
+        )
+        return create_utf8_response(result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error consultando candidatos faltantes de centro gestor: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error consultando candidatos faltantes de centro gestor: {str(e)}"
         )
 
 # ============================================================================

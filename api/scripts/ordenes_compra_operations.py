@@ -32,6 +32,29 @@ def serialize_datetime_objects(obj):
     else:
         return obj
 
+
+def get_all_docs_paginated(collection_ref, batch_size: int = 500):
+    """Obtener todos los documentos de una colección usando paginación por cursor."""
+    docs = []
+    last_doc = None
+
+    while True:
+        query = collection_ref.order_by("__name__").limit(batch_size)
+        if last_doc is not None:
+            query = query.start_after(last_doc)
+
+        batch_docs = query.get()
+        if not batch_docs:
+            break
+
+        docs.extend(batch_docs)
+        last_doc = batch_docs[-1]
+
+        if len(batch_docs) < batch_size:
+            break
+
+    return docs
+
 async def get_ordenes_compra_emprestito_all() -> Dict[str, Any]:
     """Obtener todos los registros de la colección ordenes_compra_emprestito"""
     try:
@@ -43,7 +66,7 @@ async def get_ordenes_compra_emprestito_all() -> Dict[str, Any]:
             return {"success": False, "error": "No se pudo conectar a Firestore", "data": [], "count": 0}
         
         collection_ref = db.collection('ordenes_compra_emprestito')
-        docs = collection_ref.stream()
+        docs = get_all_docs_paginated(collection_ref)
         ordenes_data = []
         
         for doc in docs:

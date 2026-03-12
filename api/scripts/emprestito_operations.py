@@ -51,7 +51,25 @@ async def get_procesos_emprestito_all() -> Dict[str, Any]:
 
         try:
             collection_ref = db.collection('procesos_emprestito')
-            docs = collection_ref.stream()
+            batch_size = 500
+            docs = []
+            last_doc = None
+
+            # Evitar pérdidas parciales en colecciones grandes usando paginación por cursor.
+            while True:
+                query = collection_ref.order_by("__name__").limit(batch_size)
+                if last_doc is not None:
+                    query = query.start_after(last_doc)
+
+                batch_docs = query.get()
+                if not batch_docs:
+                    break
+
+                docs.extend(batch_docs)
+                last_doc = batch_docs[-1]
+
+                if len(batch_docs) < batch_size:
+                    break
         except Exception as e:
             return {
                 "success": False,
@@ -104,6 +122,29 @@ def serialize_datetime_objects(obj):
         return obj.strftime('%Y-%m-%d %H:%M:%S')
     else:
         return obj
+
+
+def get_all_docs_paginated(collection_ref, batch_size: int = 500):
+    """Obtener todos los documentos de una colección usando paginación por cursor."""
+    docs = []
+    last_doc = None
+
+    while True:
+        query = collection_ref.order_by("__name__").limit(batch_size)
+        if last_doc is not None:
+            query = query.start_after(last_doc)
+
+        batch_docs = query.get()
+        if not batch_docs:
+            break
+
+        docs.extend(batch_docs)
+        last_doc = batch_docs[-1]
+
+        if len(batch_docs) < batch_size:
+            break
+
+    return docs
 
 async def restaurar_procesos_emprestito_usando_post() -> Dict[str, Any]:
     """
@@ -1070,7 +1111,7 @@ async def get_bancos_emprestito_all() -> Dict[str, Any]:
             return {"success": False, "error": "No se pudo conectar a Firestore", "data": [], "count": 0}
         
         collection_ref = db.collection('bancos_emprestito')
-        docs = collection_ref.stream()
+        docs = get_all_docs_paginated(collection_ref)
         bancos_data = []
         
         for doc in docs:
@@ -1111,7 +1152,7 @@ async def get_convenios_transferencia_emprestito_all() -> Dict[str, Any]:
             return {"success": False, "error": "No se pudo conectar a Firestore", "data": [], "count": 0}
         
         collection_ref = db.collection('convenios_transferencias_emprestito')
-        docs = collection_ref.stream()
+        docs = get_all_docs_paginated(collection_ref)
         convenios_data = []
         
         for doc in docs:
@@ -2338,7 +2379,7 @@ async def get_pagos_emprestito_all() -> Dict[str, Any]:
         logger.info("Cargando contratos_emprestito...")
         contratos_map = {}  # {referencia_contrato: bp}
         try:
-            for doc in db_client.collection('contratos_emprestito').stream():
+            for doc in get_all_docs_paginated(db_client.collection('contratos_emprestito')):
                 data = doc.to_dict()
                 ref = data.get('referencia_contrato', '').strip()
                 bp = data.get('bp', '').strip()
@@ -2351,7 +2392,7 @@ async def get_pagos_emprestito_all() -> Dict[str, Any]:
         logger.info("Cargando convenios_transferencias_emprestito...")
         convenios_map = {}  # {referencia_contrato: bp}
         try:
-            for doc in db_client.collection('convenios_transferencias_emprestito').stream():
+            for doc in get_all_docs_paginated(db_client.collection('convenios_transferencias_emprestito')):
                 data = doc.to_dict()
                 ref = data.get('referencia_contrato', '').strip()
                 bp = data.get('bp', '').strip()
@@ -2364,7 +2405,7 @@ async def get_pagos_emprestito_all() -> Dict[str, Any]:
         logger.info("Cargando ordenes_compra_emprestito...")
         ordenes_map = {}  # {nombre_centro_gestor: bp}
         try:
-            for doc in db_client.collection('ordenes_compra_emprestito').stream():
+            for doc in get_all_docs_paginated(db_client.collection('ordenes_compra_emprestito')):
                 data = doc.to_dict()
                 centro = data.get('nombre_centro_gestor', '').strip()
                 bp = data.get('bp', '').strip()
@@ -2377,7 +2418,7 @@ async def get_pagos_emprestito_all() -> Dict[str, Any]:
         # PASO 2: Obtener y procesar pagos
         logger.info("Procesando pagos...")
         pagos_ref = db_client.collection('pagos_emprestito')
-        docs = pagos_ref.stream()
+        docs = get_all_docs_paginated(pagos_ref)
 
         pagos_list = []
         bp_stats = {'contratos': 0, 'convenios': 0, 'ordenes': 0, 'sin_bp': 0}
@@ -2491,7 +2532,7 @@ async def get_rpc_contratos_emprestito_all() -> Dict[str, Any]:
         logger.info("Cargando contratos_emprestito...")
         contratos_map = {}  # {referencia_contrato: bp}
         try:
-            for doc in db_client.collection('contratos_emprestito').stream():
+            for doc in get_all_docs_paginated(db_client.collection('contratos_emprestito')):
                 data = doc.to_dict()
                 ref = data.get('referencia_contrato', '').strip()
                 bp = data.get('bp', '').strip()
@@ -2504,7 +2545,7 @@ async def get_rpc_contratos_emprestito_all() -> Dict[str, Any]:
         logger.info("Cargando convenios_transferencias_emprestito...")
         convenios_map = {}  # {referencia_contrato: bp}
         try:
-            for doc in db_client.collection('convenios_transferencias_emprestito').stream():
+            for doc in get_all_docs_paginated(db_client.collection('convenios_transferencias_emprestito')):
                 data = doc.to_dict()
                 ref = data.get('referencia_contrato', '').strip()
                 bp = data.get('bp', '').strip()
@@ -2517,7 +2558,7 @@ async def get_rpc_contratos_emprestito_all() -> Dict[str, Any]:
         logger.info("Cargando ordenes_compra_emprestito...")
         ordenes_map = {}  # {nombre_centro_gestor: bp}
         try:
-            for doc in db_client.collection('ordenes_compra_emprestito').stream():
+            for doc in get_all_docs_paginated(db_client.collection('ordenes_compra_emprestito')):
                 data = doc.to_dict()
                 centro = data.get('nombre_centro_gestor', '').strip()
                 bp = data.get('bp', '').strip()
@@ -2530,7 +2571,7 @@ async def get_rpc_contratos_emprestito_all() -> Dict[str, Any]:
         # PASO 2: Obtener y procesar RPCs
         logger.info("Procesando RPCs...")
         rpc_ref = db_client.collection('rpc_contratos_emprestito')
-        docs = rpc_ref.stream()
+        docs = get_all_docs_paginated(rpc_ref)
 
         rpc_list = []
         bp_stats = {'contratos': 0, 'convenios': 0, 'ordenes': 0, 'sin_bp': 0}
@@ -2761,7 +2802,7 @@ async def get_asignaciones_emprestito_banco_centro_gestor_all() -> Dict[str, Any
 
         # Obtener todos los documentos de la colección
         asignaciones_ref = db_client.collection('montos_emprestito_asignados_centro_gestor')
-        docs = asignaciones_ref.stream()
+        docs = get_all_docs_paginated(asignaciones_ref)
 
         # Procesar documentos
         asignaciones_list = []

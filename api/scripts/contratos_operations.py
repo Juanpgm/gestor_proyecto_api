@@ -71,6 +71,29 @@ def clean_text_field(text: Any) -> str:
     return text_str
 
 
+def get_all_docs_paginated(collection_ref, batch_size: int = 500):
+    """Obtener todos los documentos de una colección usando paginación por cursor."""
+    docs = []
+    last_doc = None
+
+    while True:
+        query = collection_ref.order_by("__name__").limit(batch_size)
+        if last_doc is not None:
+            query = query.start_after(last_doc)
+
+        batch_docs = query.get()
+        if not batch_docs:
+            break
+
+        docs.extend(batch_docs)
+        last_doc = batch_docs[-1]
+
+        if len(batch_docs) < batch_size:
+            break
+
+    return docs
+
+
 def extract_contract_fields(doc_data: Dict[str, Any], nombre_resumido_proceso: str = '') -> Dict[str, Any]:
     """Extraer solo los campos requeridos para el endpoint con texto limpio"""
     registro_origen = doc_data.get('registro_origen', {})
@@ -434,7 +457,7 @@ async def get_ordenes_compra_all_data(db) -> list:
     """Obtener datos de órdenes de compra mapeados para contratos_emprestito_all (versión legacy)"""
     try:
         collection_ref = db.collection('ordenes_compra_emprestito')
-        docs = collection_ref.stream()
+        docs = get_all_docs_paginated(collection_ref)
         ordenes_data = []
         
         for doc in docs:
@@ -471,7 +494,7 @@ async def get_contratos_emprestito_all_optimized(db, proceso_map: Dict[str, str]
     """Obtener contratos de empréstito usando el mapa de procesos precargado"""
     try:
         collection_ref = db.collection('contratos_emprestito')
-        docs = collection_ref.stream()
+        docs = get_all_docs_paginated(collection_ref)
         contratos_data = []
         
         for doc in docs:
@@ -506,7 +529,7 @@ async def get_ordenes_compra_all_data_optimized(db, proceso_map: Dict[str, str])
     """Obtener datos de órdenes de compra mapeados usando el mapa de procesos precargado"""
     try:
         collection_ref = db.collection('ordenes_compra_emprestito')
-        docs = collection_ref.stream()
+        docs = get_all_docs_paginated(collection_ref)
         ordenes_data = []
         
         for doc in docs:
@@ -544,7 +567,7 @@ async def get_convenios_transferencias_all_data(db) -> list:
     """Obtener todos los convenios de transferencia de la colección convenios_transferencias_emprestito"""
     try:
         collection_ref = db.collection('convenios_transferencias_emprestito')
-        docs = collection_ref.stream()
+        docs = get_all_docs_paginated(collection_ref)
         convenios_data = []
         
         for doc in docs:

@@ -61,11 +61,41 @@ except ImportError as e:
     UNIDADES_PROYECTO_AVAILABLE = False
 
 try:
-    from .unidades_proyecto_quality_metrics import get_unidades_proyecto_quality_metrics
+    from .unidades_proyecto_quality_metrics import (
+        get_unidades_proyecto_quality_metrics,
+        generate_unidades_proyecto_quality_report,
+        get_unidades_proyecto_quality_summary,
+        get_unidades_proyecto_quality_records_paginated,
+        get_unidades_proyecto_quality_issues_paginated,
+        get_unidades_proyecto_quality_missing_centros_paginated,
+        get_unidades_proyecto_quality_history,
+        get_unidades_proyecto_quality_centros_paginated,
+    )
 except ImportError as e:
     print(f"Warning: Unidades proyecto quality metrics not available: {e}")
 
     async def get_unidades_proyecto_quality_metrics(nombre_centro_gestor: Optional[str] = None, history_limit: Optional[int] = None):
+        return {"success": False, "error": "Unidades proyecto quality metrics not available"}
+
+    async def generate_unidades_proyecto_quality_report(nombre_centro_gestor: Optional[str] = None, persist: bool = True):
+        return {"success": False, "error": "Unidades proyecto quality metrics not available"}
+
+    async def get_unidades_proyecto_quality_summary(report_id: Optional[str] = None, history_limit: int = 10, auto_generate: bool = False, nombre_centro_gestor: Optional[str] = None):
+        return {"success": False, "error": "Unidades proyecto quality metrics not available"}
+
+    async def get_unidades_proyecto_quality_records_paginated(report_id: Optional[str] = None, page_size: int = 50, page_token: Optional[int] = None, record_type: Optional[str] = None, has_issues: Optional[bool] = None, nombre_centro_gestor: Optional[str] = None):
+        return {"success": False, "error": "Unidades proyecto quality metrics not available"}
+
+    async def get_unidades_proyecto_quality_issues_paginated(report_id: Optional[str] = None, page_size: int = 100, page_token: Optional[int] = None, record_type: Optional[str] = None, severity: Optional[str] = None, field: Optional[str] = None, nombre_centro_gestor: Optional[str] = None):
+        return {"success": False, "error": "Unidades proyecto quality metrics not available"}
+
+    async def get_unidades_proyecto_quality_missing_centros_paginated(report_id: Optional[str] = None, page_size: int = 100, page_token: Optional[int] = None, record_type: Optional[str] = None):
+        return {"success": False, "error": "Unidades proyecto quality metrics not available"}
+
+    async def get_unidades_proyecto_quality_history(limit: int = 20):
+        return {"success": False, "error": "Unidades proyecto quality metrics not available"}
+
+    async def get_unidades_proyecto_quality_centros_paginated(report_id: Optional[str] = None, page_size: int = 25, page_token: Optional[int] = None, only_with_issues: bool = False, sort_by: str = "issue_rate"):
         return {"success": False, "error": "Unidades proyecto quality metrics not available"}
 
 try:
