@@ -56,6 +56,18 @@ try {
         Write-WarnMsg "RAILWAY_SERVICE_ID omitido. El deploy por action fallará hasta configurarlo."
     }
 
+    Write-Host ""
+    $socrataToken = Read-Host "SOCRATA_APP_TOKEN (opcional, Enter para omitir)"
+    if (-not [string]::IsNullOrWhiteSpace($socrataToken)) {
+        Write-Info "Configurando secret SOCRATA_APP_TOKEN..."
+        $socrataToken.Trim() | gh secret set SOCRATA_APP_TOKEN --repo $Repo
+        if ($LASTEXITCODE -ne 0) { throw "No se pudo configurar SOCRATA_APP_TOKEN" }
+        Write-Ok "SOCRATA_APP_TOKEN configurado"
+    }
+    else {
+        Write-WarnMsg "SOCRATA_APP_TOKEN omitido. Los endpoints SECOP funcionarán con límites públicos."
+    }
+
     Write-Info "Secrets actuales:"
     gh secret list --repo $Repo
 

@@ -5,11 +5,15 @@ Solo funcionalidades esenciales habilitadas
 
 import logging
 import asyncio
+import os
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 import pandas as pd
 import re
 from database.firebase_config import get_firestore_client
+
+# Token de Socrata para acceso sin límites de velocidad ni consultas
+SOCRATA_APP_TOKEN = os.environ.get("SOCRATA_APP_TOKEN")
 
 # Configurar logging primero
 logger = logging.getLogger(__name__)
@@ -410,8 +414,8 @@ async def obtener_datos_secop(referencia_proceso: str, nit_entidad: Optional[str
         DATASET_ID = "p6dx-8zbt"
         NIT_ENTIDAD_CALI = "890399011"
 
-        # Cliente no autenticado para datos públicos
-        client = Socrata(SECOP_DOMAIN, None, timeout=30)
+        # Cliente autenticado con app_token para eliminar límites de velocidad
+        client = Socrata(SECOP_DOMAIN, SOCRATA_APP_TOKEN, timeout=30)
 
         # Construir filtro para búsqueda específica
         # Si se proporciona NIT, filtrar por él. Si no, buscar sin filtro de NIT
@@ -520,8 +524,8 @@ async def obtener_datos_tvec(referencia_proceso: str) -> Dict[str, Any]:
         # Importar Socrata aquí para evitar errores de importación si no está disponible
         from sodapy import Socrata
         
-        # Cliente para API de TVEC
-        client = Socrata("www.datos.gov.co", None, timeout=30)
+        # Cliente para API de TVEC con app_token para eliminar límites
+        client = Socrata("www.datos.gov.co", SOCRATA_APP_TOKEN, timeout=30)
 
         # Buscar por identificador_de_la_orden
         where_clause = f"identificador_de_la_orden='{referencia_proceso}'"
@@ -875,14 +879,14 @@ async def procesar_proceso_individual(db_client, proceso_data, referencia_proces
         NIT_ENTIDAD_CALI = "890399011"
         where_clause = f"proceso_de_compra LIKE '%{proceso_contractual}%' AND nit_entidad = '{NIT_ENTIDAD_CALI}'"
 
-        with Socrata("www.datos.gov.co", None) as client:
+        with Socrata("www.datos.gov.co", SOCRATA_APP_TOKEN) as client:
             contratos_secop = client.get("jbjy-vk9h", limit=100, where=where_clause)
         
         # Si no se encuentran contratos con el NIT de Cali, buscar sin restricción de NIT
         if not contratos_secop:
             logger.warning(f"⚠️ No se encontraron contratos para {proceso_contractual} con NIT {NIT_ENTIDAD_CALI}, buscando sin restricción de NIT...")
             where_clause = f"proceso_de_compra LIKE '%{proceso_contractual}%'"
-            with Socrata("www.datos.gov.co", None) as client:
+            with Socrata("www.datos.gov.co", SOCRATA_APP_TOKEN) as client:
                 contratos_secop = client.get("jbjy-vk9h", limit=100, where=where_clause)
 
         # Filtrar contratos excluyendo estados "Borrador" y "Cancelado"
@@ -2852,8 +2856,8 @@ async def obtener_datos_secop_completos(referencia_proceso: str, nit_entidad: Op
         DATASET_ID = "p6dx-8zbt"
         NIT_ENTIDAD_CALI = "890399011"
 
-        # Cliente no autenticado para datos públicos
-        client = Socrata(SECOP_DOMAIN, None, timeout=30)
+        # Cliente autenticado con app_token para eliminar límites de velocidad
+        client = Socrata(SECOP_DOMAIN, SOCRATA_APP_TOKEN, timeout=30)
 
         # Construir filtro para búsqueda específica
         # Si se proporciona NIT, filtrar por él. Si no, buscar sin filtro de NIT

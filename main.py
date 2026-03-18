@@ -5341,8 +5341,8 @@ async def sincronizar_links_secop_intervenciones(request: Request):
     SECOP_DOMAIN = "www.datos.gov.co"
     DATASET_PROCESOS = "p6dx-8zbt"
     DATASET_CONTRATOS = "jbjy-vk9h"
-    MAX_PARALELO = 3          # Máximo consultas simultáneas a SECOP (igual que empréstito)
-    PAUSA_ENTRE_LOTES = 1.0   # Segundos de espera entre lotes para evitar throttling
+    MAX_PARALELO = 10         # Consultas simultáneas a SECOP (aumentado con app_token autenticado)
+    PAUSA_ENTRE_LOTES = 0.2   # Segundos de espera entre lotes (reducido con app_token)
     TIMEOUT_INTERNO = 540.0   # 9 minutos — detenerse antes del timeout del middleware (600s)
     _inicio_total = _time.monotonic()
 
@@ -5465,7 +5465,7 @@ async def sincronizar_links_secop_intervenciones(request: Request):
     def _buscar_en_dataset_sync(dataset: str, campo_where: str, referencia: str) -> str:
         """Consulta urlproceso en un dataset SECOP específico."""
         try:
-            client = Socrata(SECOP_DOMAIN, None, timeout=30)
+            client = Socrata(SECOP_DOMAIN, os.environ.get("SOCRATA_APP_TOKEN"), timeout=30)
             results = client.get(
                 dataset,
                 where=f"{campo_where}='{referencia}'",

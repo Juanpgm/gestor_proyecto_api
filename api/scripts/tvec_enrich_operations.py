@@ -3,6 +3,7 @@ Operaciones para enriquecer datos de órdenes de compra de empréstito con datos
 """
 
 import logging
+import os
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 import pandas as pd
@@ -11,6 +12,9 @@ from database.firebase_config import get_firestore_client
 
 # Configurar logging
 logger = logging.getLogger(__name__)
+
+# Token de Socrata para acceso sin límites de velocidad ni consultas
+SOCRATA_APP_TOKEN = os.environ.get("SOCRATA_APP_TOKEN")
 
 # Variables de disponibilidad
 FIRESTORE_AVAILABLE = True
@@ -126,7 +130,7 @@ async def obtener_ordenes_compra_tvec_enriquecidas(numero_orden: Optional[str] =
         try:
             logger.info("🔍 Ejecutando snippet TVEC exacto del usuario...")
             # Implementación exacta del snippet proporcionado
-            client = Socrata("www.datos.gov.co", None)
+            client = Socrata("www.datos.gov.co", SOCRATA_APP_TOKEN)
             
             # Buscar cada número de orden específicamente
             for numero_orden in numeros_orden_firebase:
