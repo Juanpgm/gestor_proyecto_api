@@ -980,6 +980,9 @@ async def timeout_middleware(request: Request, call_next):
         elif request.url.path == "/unidades-proyecto/calidad-datos/centros-gestores/faltantes":
             # 2 minutos para candidatos de limpieza de centro gestor
             timeout_seconds = 120.0
+        elif request.url.path == "/intervenciones/sincronizar-links-secop":
+            # 10 minutos para sincronización masiva de links SECOP
+            timeout_seconds = 600.0
         else:
             # Timeout de 30 segundos para todas las otras requests
             timeout_seconds = 30.0
@@ -5245,6 +5248,518 @@ async def registrar_avance_up(
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error registrando avance UP: {str(e)}")
+
+
+# ============================================================================
+# ENDPOINT: SINCRONIZACIÓN INCREMENTAL DE LINKS SECOP PARA INTERVENCIONES
+# ============================================================================
+
+@app.post(
+    "/intervenciones/sincronizar-links-secop",
+    tags=["Unidades de Proyecto"],
+    summary="🟢 POST | Sincronizar Links SECOP de Intervenciones (incremental)",
+)
+@optional_rate_limit("5/minute")
+async def sincronizar_links_secop_intervenciones(request: Request):
+    """
+    ## 🟢 POST | Sincronizar Links SECOP de Intervenciones (carga incremental)
+
+    Lee `referencia_proceso` y `referencia_contrato` de cada documento en
+    `intervenciones_unidades_proyecto`, consulta en **paralelo** las APIs de SECOP
+    (procesos: `p6dx-8zbt` y contratos: `jbjy-vk9h`) para obtener los links públicos
+    de cada referencia y guarda los resultados en la colección
+    `intervenciones_unidades_proyecto_links`.
+
+    ### 🔄 Carga incremental:
+    Solo procesa documentos que:
+    - **No** existen todavía en `intervenciones_unidades_proyecto_links`, **o**
+    - Han cambiado su `referencia_proceso` o `referencia_contrato` respecto al
+      registro ya guardado.
+
+    Los documentos sin cambios se omiten para optimizar el tiempo de respuesta.
+
+    ### 📦 Estructura guardada en `intervenciones_unidades_proyecto_links`:
+    Incluye **todos** los campos originales de `intervenciones_unidades_proyecto`
+    más los campos adicionales de links SECOP:
+    ```json
+    {
+        "upid": "UNP-1",
+        "intervencion_id": "INT-001",
+        "avance_obra": 50.0,
+        "bpin": 12345,
+        "cantidad": 10,
+        "clase_up": "...",
+        "estado": "En ejecución",
+        "fecha_fin": "...",
+        "fecha_inicio": "...",
+        "fuente_financiacion": "...",
+        "identificador": "...",
+        "nombre_centro_gestor": "...",
+        "presupuesto_base": 1000000,
+        "tipo_intervencion": "...",
+        "unidad": "...",
+        "url_proceso": "...",
+        "referencia_proceso": "CO1.PCCNTR.123456",
+        "link_proceso": "https://www.secop.gov.co/...",
+        "referencia_contrato": "CO1.BDOS.123456",
+        "link_contrato": "https://www.secop.gov.co/...",
+        "fecha_sincronizacion": "2026-03-18T10:00:00"
+    }
+    ```
+
+    ### 📊 Respuesta:
+    ```json
+    {
+        "success": true,
+        "procesados": 5,
+        "omitidos_sin_cambios": 20,
+        "omitidos_sin_referencias": 3,
+        "nuevos": 3,
+        "actualizados": 2,
+        "errores": 0,
+        "detalles_errores": [],
+        "timestamp": "2026-03-18T10:00:00"
+    }
+    ```
+    """
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase not available")
+
+    try:
+        from sodapy import Socrata
+    except ImportError:
+        raise HTTPException(
+            status_code=500,
+            detail="sodapy no está disponible. Instala con: pip install sodapy"
+        )
+
+    db = get_firestore_client()
+    if db is None:
+        raise HTTPException(status_code=503, detail="No se pudo conectar a Firestore")
+
+    import time as _time
+    SECOP_DOMAIN = "www.datos.gov.co"
+    DATASET_PROCESOS = "p6dx-8zbt"
+    DATASET_CONTRATOS = "jbjy-vk9h"
+    MAX_PARALELO = 3          # Máximo consultas simultáneas a SECOP (igual que empréstito)
+    PAUSA_ENTRE_LOTES = 1.0   # Segundos de espera entre lotes para evitar throttling
+    TIMEOUT_INTERNO = 540.0   # 9 minutos — detenerse antes del timeout del middleware (600s)
+    _inicio_total = _time.monotonic()
+
+    # ── 1. Cargar estado actual de la colección de links ─────────────────────
+    links_col = db.collection("intervenciones_unidades_proyecto_links")
+    links_existentes: Dict[str, Dict[str, Any]] = {}
+    for doc in links_col.stream():
+        data = doc.to_dict() or {}
+        intervencion_id_key = data.get("intervencion_id") or doc.id
+        links_existentes[intervencion_id_key] = {
+            "doc_id": doc.id,
+            "referencia_proceso": data.get("referencia_proceso", ""),
+            "referencia_contrato": data.get("referencia_contrato", ""),
+            "link_proceso": data.get("link_proceso", ""),
+            "link_contrato": data.get("link_contrato", ""),
+        }
+
+    # ── 2. Cargar intervenciones ──────────────────────────────────────────────
+    intervenciones_docs = list(
+        db.collection("intervenciones_unidades_proyecto").stream()
+    )
+
+    # ── 3. Filtrar cuáles necesitan procesarse (lógica incremental) ──────────
+    a_procesar = []
+    omitidos_sin_cambios = 0
+    omitidos_sin_referencias = 0
+
+    # Valores que no son referencias SECOP válidas
+    _REFS_INVALIDAS = {
+        "", "n/a", "na", "sin referencia", "sin proceso", "sin contrato",
+        "null", "none", "nan", "-", "--", "0", "pendiente", "no aplica",
+        "no tiene", "sin asignar", "por definir", "sin dato", "sin datos",
+    }
+
+    def _es_referencia_valida(valor) -> str:
+        """Retorna la referencia limpia si es válida, o cadena vacía si no."""
+        if valor is None:
+            return ""
+        # Si es lista, tomar el primer elemento no vacío
+        if isinstance(valor, list):
+            for v in valor:
+                resultado = _es_referencia_valida(v)
+                if resultado:
+                    return resultado
+            return ""
+        # Convertir a string y limpiar
+        texto = str(valor).strip()
+        if texto.lower() in _REFS_INVALIDAS:
+            return ""
+        # Si contiene comas → múltiples valores concatenados → inválido
+        if "," in texto:
+            return ""
+        # Debe tener al menos 3 caracteres para ser una referencia real
+        if len(texto) < 3:
+            return ""
+        return texto
+
+    for doc in intervenciones_docs:
+        data = doc.to_dict() or {}
+        intervencion_id = data.get("intervencion_id") or doc.id
+        upid = data.get("upid", "")
+        ref_proceso = _es_referencia_valida(data.get("referencia_proceso"))
+        ref_contrato = _es_referencia_valida(data.get("referencia_contrato"))
+        url_proceso_original = str(data.get("url_proceso", "") or "").strip()
+
+        # Sin ninguna referencia y sin url_proceso → no hay nada que buscar
+        if not ref_proceso and not ref_contrato and not url_proceso_original:
+            omitidos_sin_referencias += 1
+            continue
+
+        existente = links_existentes.get(intervencion_id)
+        if existente:
+            # Solo procesar si alguna referencia cambió
+            if (existente["referencia_proceso"] == ref_proceso and
+                    existente["referencia_contrato"] == ref_contrato):
+                omitidos_sin_cambios += 1
+                continue
+
+        # Determinar qué links se pueden reutilizar (referencia no cambió y ya tiene link)
+        link_proceso_cache = ""
+        link_contrato_cache = ""
+        if existente:
+            if existente["referencia_proceso"] == ref_proceso and existente["link_proceso"]:
+                link_proceso_cache = existente["link_proceso"]
+            if existente["referencia_contrato"] == ref_contrato and existente["link_contrato"]:
+                link_contrato_cache = existente["link_contrato"]
+
+        # Guardar TODOS los campos originales del documento
+        campos_originales = {}
+        for key, value in data.items():
+            campos_originales[key] = value
+
+        a_procesar.append({
+            "doc_id": doc.id,
+            "intervencion_id": intervencion_id,
+            "upid": upid,
+            "referencia_proceso": ref_proceso,
+            "referencia_contrato": ref_contrato,
+            "url_proceso_original": url_proceso_original,
+            "link_doc_id": existente["doc_id"] if existente else None,
+            "link_proceso_cache": link_proceso_cache,
+            "link_contrato_cache": link_contrato_cache,
+            "campos_originales": campos_originales,
+        })
+
+    # ── 4. Consultar SECOP por lotes con paralelismo controlado ──────────────
+    nuevos = 0
+    actualizados = 0
+    errores = 0
+    detalles_errores = []
+
+    def _extraer_url(campo_urlproceso) -> str:
+        """Extrae URL del campo urlproceso que puede ser dict {'url': '...'} o string."""
+        if isinstance(campo_urlproceso, dict):
+            return campo_urlproceso.get("url", "") or ""
+        if isinstance(campo_urlproceso, str):
+            return campo_urlproceso
+        return ""
+
+    def _buscar_en_dataset_sync(dataset: str, campo_where: str, referencia: str) -> str:
+        """Consulta urlproceso en un dataset SECOP específico."""
+        try:
+            client = Socrata(SECOP_DOMAIN, None, timeout=30)
+            results = client.get(
+                dataset,
+                where=f"{campo_where}='{referencia}'",
+                limit=1,
+            )
+            client.close()
+            if results:
+                url = _extraer_url(results[0].get("urlproceso"))
+                if url:
+                    return url
+        except Exception as exc:
+            logger.warning(f"❌ Error consultando SECOP {dataset}/{campo_where}='{referencia}': {exc}")
+        return ""
+
+    def _get_link_proceso_sync(referencia: str) -> str:
+        """Busca link de proceso en ambos datasets SECOP para maximizar resultados."""
+        if not referencia:
+            return ""
+        # 1) Intento principal: buscar en dataset de procesos
+        logger.info(f"🔍 SECOP Procesos: buscando referencia_del_proceso='{referencia}'")
+        url = _buscar_en_dataset_sync(DATASET_PROCESOS, "referencia_del_proceso", referencia)
+        if url:
+            logger.info(f"✅ SECOP Procesos: {referencia} → {url[:80]}{'...' if len(url) > 80 else ''}")
+            return url
+        # 2) Fallback: buscar la misma referencia en dataset de contratos
+        logger.info(f"🔄 SECOP Fallback: buscando referencia_del_contrato='{referencia}' en contratos")
+        url = _buscar_en_dataset_sync(DATASET_CONTRATOS, "referencia_del_contrato", referencia)
+        if url:
+            logger.info(f"✅ SECOP Fallback Contratos: {referencia} → {url[:80]}{'...' if len(url) > 80 else ''}")
+            return url
+        logger.info(f"⚠️ SECOP Procesos: {referencia} → sin resultados en ambos datasets")
+        return ""
+
+    def _get_link_contrato_sync(referencia: str) -> str:
+        """Busca link de contrato en ambos datasets SECOP para maximizar resultados."""
+        if not referencia:
+            return ""
+        # 1) Intento principal: buscar en dataset de contratos
+        logger.info(f"🔍 SECOP Contratos: buscando referencia_del_contrato='{referencia}'")
+        url = _buscar_en_dataset_sync(DATASET_CONTRATOS, "referencia_del_contrato", referencia)
+        if url:
+            logger.info(f"✅ SECOP Contratos: {referencia} → {url[:80]}{'...' if len(url) > 80 else ''}")
+            return url
+        # 2) Fallback: buscar la misma referencia en dataset de procesos
+        logger.info(f"🔄 SECOP Fallback: buscando referencia_del_proceso='{referencia}' en procesos")
+        url = _buscar_en_dataset_sync(DATASET_PROCESOS, "referencia_del_proceso", referencia)
+        if url:
+            logger.info(f"✅ SECOP Fallback Procesos: {referencia} → {url[:80]}{'...' if len(url) > 80 else ''}")
+            return url
+        logger.info(f"⚠️ SECOP Contratos: {referencia} → sin resultados en ambos datasets")
+        return ""
+
+    llamadas_secop_ahorradas = 0
+
+    async def _procesar_item(item: dict) -> dict:
+        """Consulta proceso y contrato en paralelo, reutilizando links ya resueltos."""
+        nonlocal llamadas_secop_ahorradas
+        tareas = []
+        campos = []  # Para saber qué posición corresponde a qué campo
+
+        # Solo consultar SECOP si no hay link cacheado
+        if item["link_proceso_cache"]:
+            link_proceso = item["link_proceso_cache"]
+            llamadas_secop_ahorradas += 1
+        else:
+            tareas.append(asyncio.to_thread(_get_link_proceso_sync, item["referencia_proceso"]))
+            campos.append("proceso")
+            link_proceso = None
+
+        if item["link_contrato_cache"]:
+            link_contrato = item["link_contrato_cache"]
+            llamadas_secop_ahorradas += 1
+        else:
+            tareas.append(asyncio.to_thread(_get_link_contrato_sync, item["referencia_contrato"]))
+            campos.append("contrato")
+            link_contrato = None
+
+        if tareas:
+            resultados = await asyncio.gather(*tareas)
+            for campo, valor in zip(campos, resultados):
+                if campo == "proceso":
+                    link_proceso = valor
+                else:
+                    link_contrato = valor
+
+        # Fallback: usar url_proceso del documento original si SECOP no devolvió link
+        if not link_proceso and item.get("url_proceso_original"):
+            url_orig = item["url_proceso_original"]
+            if url_orig.startswith("http"):
+                link_proceso = url_orig
+                logger.info(f"🔗 Fallback url_proceso original: {item['intervencion_id']} → {url_orig[:80]}")
+
+        return {**item, "link_proceso": link_proceso, "link_contrato": link_contrato}
+
+    # Procesar en lotes de MAX_PARALELO para no saturar SECOP
+    completado = True
+    pendientes = len(a_procesar)
+    lotes_procesados = 0
+    motivo_corte = None
+
+    try:
+        for lote_inicio in range(0, len(a_procesar), MAX_PARALELO):
+            # ── Verificar si queda tiempo suficiente antes de iniciar otro lote ──
+            elapsed = _time.monotonic() - _inicio_total
+            if elapsed >= TIMEOUT_INTERNO:
+                completado = False
+                pendientes = len(a_procesar) - lote_inicio
+                motivo_corte = f"Tiempo límite interno alcanzado ({elapsed:.1f}s/{TIMEOUT_INTERNO}s)"
+                logger.warning(f"⏱️ {motivo_corte}. Guardados hasta ahora: {nuevos} nuevos, {actualizados} actualizados.")
+                break
+
+            lote = a_procesar[lote_inicio:lote_inicio + MAX_PARALELO]
+
+            resultados_lote = await asyncio.gather(
+                *[_procesar_item(item) for item in lote],
+                return_exceptions=True,
+            )
+
+            for item, resultado in zip(lote, resultados_lote):
+                if isinstance(resultado, Exception):
+                    errores += 1
+                    detalles_errores.append({
+                        "intervencion_id": item["intervencion_id"],
+                        "error": str(resultado),
+                    })
+                    logger.error(
+                        f"❌ Error sincronizando links SECOP para {item['intervencion_id']}: {resultado}"
+                    )
+                    continue
+
+                try:
+                    # Partir de TODOS los campos originales del documento
+                    payload = dict(resultado.get("campos_originales", {}))
+                    # Sobreescribir/agregar los campos de links y sincronización
+                    payload["upid"] = resultado["upid"]
+                    payload["intervencion_id"] = resultado["intervencion_id"]
+                    payload["referencia_proceso"] = resultado["referencia_proceso"]
+                    payload["link_proceso"] = resultado["link_proceso"]
+                    payload["referencia_contrato"] = resultado["referencia_contrato"]
+                    payload["link_contrato"] = resultado["link_contrato"]
+                    payload["fecha_sincronizacion"] = datetime.now().isoformat()
+
+                    if resultado["link_doc_id"]:
+                        links_col.document(resultado["link_doc_id"]).set(payload)
+                        actualizados += 1
+                    else:
+                        links_col.document(resultado["intervencion_id"]).set(payload)
+                        nuevos += 1
+                except Exception as exc:
+                    errores += 1
+                    detalles_errores.append({
+                        "intervencion_id": resultado["intervencion_id"],
+                        "error": str(exc),
+                    })
+                    logger.error(
+                        f"❌ Error guardando link para {resultado['intervencion_id']}: {exc}"
+                    )
+
+            lotes_procesados += 1
+            pendientes = len(a_procesar) - (lote_inicio + len(lote))
+
+            # Pausa entre lotes para respetar rate limits de SECOP sin app_token
+            if lote_inicio + MAX_PARALELO < len(a_procesar):
+                await asyncio.sleep(PAUSA_ENTRE_LOTES)
+
+    except Exception as exc_global:
+        completado = False
+        motivo_corte = f"Error inesperado: {str(exc_global)[:200]}"
+        logger.error(f"❌ Error global en sincronización SECOP: {exc_global}")
+
+    # ── SIEMPRE devolver métricas, completado o no ───────────────────────────
+    elapsed_total = round(_time.monotonic() - _inicio_total, 2)
+    procesados_efectivos = nuevos + actualizados + errores
+
+    return create_utf8_response({
+        "success": completado and errores == 0,
+        "completado": completado,
+        "motivo_corte": motivo_corte,
+        "total_a_procesar": len(a_procesar),
+        "procesados": procesados_efectivos,
+        "pendientes": pendientes if not completado else 0,
+        "omitidos_sin_cambios": omitidos_sin_cambios,
+        "omitidos_sin_referencias": omitidos_sin_referencias,
+        "nuevos": nuevos,
+        "actualizados": actualizados,
+        "errores": errores,
+        "llamadas_secop_ahorradas": llamadas_secop_ahorradas,
+        "lotes_procesados": lotes_procesados,
+        "tiempo_ejecucion_seg": elapsed_total,
+        "detalles_errores": detalles_errores[:50],
+        "timestamp": datetime.now().isoformat(),
+        "nota": "Ejecución parcial — vuelva a llamar para continuar con los pendientes (carga incremental)." if not completado else "Sincronización completa.",
+    })
+
+
+# ============================================================================
+# ENDPOINT: LEER LINKS SECOP DE INTERVENCIONES
+# ============================================================================
+
+@app.get(
+    "/intervenciones/links-secop",
+    tags=["Unidades de Proyecto"],
+    summary="🔵 GET | Leer Links SECOP de Intervenciones",
+)
+@optional_rate_limit("30/minute")
+async def leer_links_secop_intervenciones(
+    request: Request,
+    nombre_centro_gestor: Optional[str] = Query(None, description="Filtrar por nombre del centro gestor"),
+    referencia_proceso: Optional[str] = Query(None, description="Filtrar por referencia de proceso"),
+    referencia_contrato: Optional[str] = Query(None, description="Filtrar por referencia de contrato"),
+):
+    """
+    ## 🔵 GET | Leer Links SECOP de Intervenciones
+
+    Consulta los datos almacenados en `intervenciones_unidades_proyecto_links`.
+    Retorna todos los registros o filtra opcionalmente por:
+    - `nombre_centro_gestor`
+    - `referencia_proceso`
+    - `referencia_contrato`
+
+    Los filtros son opcionales y se pueden combinar.
+    """
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase not available")
+
+    db = get_firestore_client()
+    if db is None:
+        raise HTTPException(status_code=503, detail="No se pudo conectar a Firestore")
+
+    try:
+        query = db.collection("intervenciones_unidades_proyecto_links")
+
+        if nombre_centro_gestor:
+            query = query.where("nombre_centro_gestor", "==", nombre_centro_gestor)
+        if referencia_proceso:
+            query = query.where("referencia_proceso", "==", referencia_proceso)
+        if referencia_contrato:
+            query = query.where("referencia_contrato", "==", referencia_contrato)
+
+        docs = query.stream()
+        data = []
+        con_link_proceso = 0
+        sin_link_proceso = 0
+        con_link_contrato = 0
+        sin_link_contrato = 0
+
+        for doc in docs:
+            record = doc.to_dict() or {}
+            record["doc_id"] = doc.id
+
+            lp = record.get("link_proceso") or ""
+            lc = record.get("link_contrato") or ""
+            if isinstance(lp, dict):
+                lp = lp.get("url", "")
+            if isinstance(lc, dict):
+                lc = lc.get("url", "")
+            lp = str(lp).strip()
+            lc = str(lc).strip()
+            if lp:
+                con_link_proceso += 1
+            else:
+                sin_link_proceso += 1
+            if lc:
+                con_link_contrato += 1
+            else:
+                sin_link_contrato += 1
+
+            data.append(clean_firebase_data(record))
+
+        # Ordenar de mayor a menor por upid
+        data.sort(key=lambda r: r.get("upid") or "", reverse=True)
+
+        return create_utf8_response({
+            "success": True,
+            "data": data,
+            "count": len(data),
+            "metricas_links": {
+                "con_link_proceso": con_link_proceso,
+                "sin_link_proceso": sin_link_proceso,
+                "con_link_contrato": con_link_contrato,
+                "sin_link_contrato": sin_link_contrato,
+            },
+            "filtros_aplicados": {
+                "nombre_centro_gestor": nombre_centro_gestor,
+                "referencia_proceso": referencia_proceso,
+                "referencia_contrato": referencia_contrato,
+            },
+        })
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error consultando intervenciones_unidades_proyecto_links: {str(e)}"
+        )
+
 
 @app.post("/reportes_contratos/", tags=["Interoperabilidad con Artefacto de Seguimiento"])
 async def crear_reporte_contrato(
