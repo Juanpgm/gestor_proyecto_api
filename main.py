@@ -8832,14 +8832,79 @@ async def get_all_rpc_contratos_emprestito():
                 detail=f"Error obteniendo RPCs: {result.get('error', 'Error desconocido')}"
             )
         
+        # Enriquecer cada RPC con enlaces de descarga y visualización de documentos S3
+        data_enriquecida = result["data"]
+        total_documentos_enriquecidos = 0
+        
+        if _s3_presigned_enabled():
+            try:
+                presigned_expiration = _s3_presigned_expiration()
+                
+                for rpc in data_enriquecida:
+                    documentos_s3 = rpc.get('documentos_s3', [])
+                    
+                    if not documentos_s3 or not isinstance(documentos_s3, list):
+                        rpc['documentos_con_enlaces'] = []
+                        rpc['total_documentos'] = 0
+                        continue
+                    
+                    documentos_con_enlaces = []
+                    
+                    for doc in documentos_s3:
+                        if not isinstance(doc, dict):
+                            continue
+                        
+                        s3_url = doc.get('s3_url') or doc.get('url') or ''
+                        s3_key = doc.get('s3_key') or doc.get('key') or ''
+                        
+                        # Extraer bucket y key desde la URL si no tenemos s3_key
+                        bucket, key_from_url = None, None
+                        if s3_url:
+                            bucket, key_from_url = _extract_s3_bucket_key_from_url(s3_url)
+                        
+                        resolved_key = s3_key or key_from_url or ''
+                        resolved_bucket = bucket or ''
+                        
+                        presigned_url = None
+                        if resolved_bucket and resolved_key:
+                            presigned_url = _generate_presigned_s3_url(resolved_bucket, resolved_key)
+                        
+                        filename = doc.get('filename') or (resolved_key.split('/')[-1] if resolved_key else '')
+                        
+                        documento_enriquecido = {
+                            'filename': filename,
+                            's3_key': resolved_key,
+                            's3_url': s3_url,
+                            'content_type': doc.get('content_type', 'application/pdf'),
+                            'size': doc.get('size', 0),
+                            'upload_date': doc.get('upload_date', ''),
+                            'url_descarga': presigned_url,
+                            'url_visualizar': presigned_url,
+                            'url_presigned': presigned_url,
+                            'url_expiration_seconds': presigned_expiration if presigned_url else None,
+                        }
+                        documentos_con_enlaces.append(documento_enriquecido)
+                        
+                        if presigned_url:
+                            total_documentos_enriquecidos += 1
+                    
+                    rpc['documentos_con_enlaces'] = documentos_con_enlaces
+                    rpc['total_documentos'] = len(documentos_con_enlaces)
+                
+                logger.info(f"✅ URLs de descarga/visualización generadas para {total_documentos_enriquecidos} documentos en {len(data_enriquecida)} RPCs")
+            except Exception as e:
+                logger.warning(f"⚠️ No se pudieron generar URLs presigned para documentos: {e}")
+        
         return JSONResponse(
             content={
                 "success": True,
-                "data": result["data"],
+                "data": data_enriquecida,
                 "count": result["count"],
                 "collection": result["collection"],
                 "timestamp": result["timestamp"],
-                "message": f"Se obtuvieron {result['count']} RPCs exitosamente"
+                "documentos_enriquecidos": total_documentos_enriquecidos,
+                "s3_presigned_enabled": _s3_presigned_enabled(),
+                "message": f"Se obtuvieron {result['count']} RPCs exitosamente con enlaces de documentos"
             },
             status_code=200,
             headers={"Content-Type": "application/json; charset=utf-8"}
@@ -9349,14 +9414,78 @@ async def get_all_rpc_contratos_emprestito():
                 detail=f"Error obteniendo RPCs de empréstito: {result.get('error', 'Error desconocido')}"
             )
         
+        # Enriquecer cada RPC con enlaces de descarga y visualización de documentos S3
+        data_enriquecida = result["data"]
+        total_documentos_enriquecidos = 0
+        
+        if _s3_presigned_enabled():
+            try:
+                presigned_expiration = _s3_presigned_expiration()
+                
+                for rpc in data_enriquecida:
+                    documentos_s3 = rpc.get('documentos_s3', [])
+                    
+                    if not documentos_s3 or not isinstance(documentos_s3, list):
+                        rpc['documentos_con_enlaces'] = []
+                        rpc['total_documentos'] = 0
+                        continue
+                    
+                    documentos_con_enlaces = []
+                    
+                    for doc in documentos_s3:
+                        if not isinstance(doc, dict):
+                            continue
+                        
+                        s3_url = doc.get('s3_url') or doc.get('url') or ''
+                        s3_key = doc.get('s3_key') or doc.get('key') or ''
+                        
+                        bucket, key_from_url = None, None
+                        if s3_url:
+                            bucket, key_from_url = _extract_s3_bucket_key_from_url(s3_url)
+                        
+                        resolved_key = s3_key or key_from_url or ''
+                        resolved_bucket = bucket or ''
+                        
+                        presigned_url = None
+                        if resolved_bucket and resolved_key:
+                            presigned_url = _generate_presigned_s3_url(resolved_bucket, resolved_key)
+                        
+                        filename = doc.get('filename') or (resolved_key.split('/')[-1] if resolved_key else '')
+                        
+                        documento_enriquecido = {
+                            'filename': filename,
+                            's3_key': resolved_key,
+                            's3_url': s3_url,
+                            'content_type': doc.get('content_type', 'application/pdf'),
+                            'size': doc.get('size', 0),
+                            'upload_date': doc.get('upload_date', ''),
+                            'url_descarga': presigned_url,
+                            'url_visualizar': presigned_url,
+                            'url_presigned': presigned_url,
+                            'url_expiration_seconds': presigned_expiration if presigned_url else None,
+                        }
+                        documentos_con_enlaces.append(documento_enriquecido)
+                        
+                        if presigned_url:
+                            total_documentos_enriquecidos += 1
+                    
+                    rpc['documentos_con_enlaces'] = documentos_con_enlaces
+                    rpc['total_documentos'] = len(documentos_con_enlaces)
+                
+                logger.info(f"✅ URLs de descarga/visualización generadas para {total_documentos_enriquecidos} documentos en {len(data_enriquecida)} RPCs")
+            except Exception as e:
+                logger.warning(f"⚠️ No se pudieron generar URLs presigned para documentos: {e}")
+        
         return JSONResponse(
             content={
                 "success": True,
-                "data": result["data"],
+                "data": data_enriquecida,
                 "count": result["count"],
                 "collection": result["collection"],
                 "timestamp": result["timestamp"],
-                "message": f"Se obtuvieron {result['count']} RPCs de empréstito exitosamente"
+                "documentos_enriquecidos": total_documentos_enriquecidos,
+                "s3_presigned_enabled": _s3_presigned_enabled(),
+                "message": f"Se obtuvieron {result['count']} RPCs de empréstito exitosamente con enlaces de documentos"
             },
             status_code=200,
             headers={"Content-Type": "application/json; charset=utf-8"}
