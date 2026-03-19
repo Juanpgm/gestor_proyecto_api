@@ -269,8 +269,8 @@ async def obtener_ordenes_compra_tvec_enriquecidas(numero_orden: Optional[str] =
                     "sector": datos_tvec.get("sector_de_la_entidad"),  # Campo real: sector_de_la_entidad
                     "rama_entidad": datos_tvec.get("rama_de_la_entidad"),  # Campo real: rama_de_la_entidad
                     
-                    # Valores monetarios (campo real)
-                    "valor_orden": datos_tvec.get("total"),  # Campo real: total
+                    # Valores monetarios (campo real) - convertir a número
+                    "valor_orden": float(datos_tvec.get("total")) if datos_tvec.get("total") else None,  # Campo real: total
                     
                     # Metadatos de origen
                     "_dataset_source": "rgxm-mmea",  # Similar a jbjy-vk9h para contratos
@@ -297,9 +297,19 @@ async def obtener_ordenes_compra_tvec_enriquecidas(numero_orden: Optional[str] =
                 # Combinar todos los campos
                 campos_adicionales = {**campos_estructura_contrato, **campos_adicionales_tvec, **campos_bpin}
                 
-                # Solo agregar campos que no sean None y que no existan ya
+                # Campos que siempre deben actualizarse con datos frescos de TVEC
+                campos_siempre_actualizar = {
+                    "valor_orden", "estado_orden", "nombre_proveedor", "nit_proveedor",
+                    "fecha_publicacion_orden", "fecha_vencimiento_orden", "objeto_orden",
+                    "items", "sector", "bpin",
+                    "_dataset_source", "fuente_datos", "plataforma_origen", "tipo_documento"
+                }
+                
                 for campo, valor in campos_adicionales.items():
-                    if valor is not None and campo not in datos_enriquecidos:
+                    if valor is None:
+                        continue
+                    # Siempre actualizar campos clave; para el resto, solo agregar si no existen
+                    if campo in campos_siempre_actualizar or campo not in datos_enriquecidos:
                         datos_enriquecidos[campo] = valor
                 
                 # Actualizar metadatos (estructura similar a contratos)
