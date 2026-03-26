@@ -2290,6 +2290,7 @@ async def consultar_unidades_proyecto(
     barrio_vereda: Optional[str] = Query(None, description="Barrio o vereda"),
     frente_activo: Optional[str] = Query(None, description="Frente activo"),
     fuente_financiacion: Optional[str] = Query(None, description="Fuente de financiación"),
+    proyectos_estrategicos: Optional[str] = Query(None, description="Filtrar por proyecto estratégico (busca dentro de la lista)"),
     ano: Optional[int] = Query(None, description="Año de ejecución"),
     
     # Paginación
@@ -2461,6 +2462,10 @@ async def consultar_unidades_proyecto(
             query = query.where('fuente_financiacion', '==', fuente_financiacion)
             filters_applied += 1
             active_filters['fuente_financiacion'] = fuente_financiacion
+        if proyectos_estrategicos:
+            query = query.where('proyectos_estrategicos', 'array_contains', proyectos_estrategicos)
+            filters_applied += 1
+            active_filters['proyectos_estrategicos'] = proyectos_estrategicos
         if ano:
             query = query.where('ano', '==', ano)
             filters_applied += 1
@@ -2494,6 +2499,13 @@ async def consultar_unidades_proyecto(
                 for key, value in doc_dict.items():
                     if isinstance(value, DatetimeWithNanoseconds):
                         doc_dict[key] = value.isoformat()
+            
+            # Normalizar proyectos_estrategicos: string legacy → lista
+            pe = doc_dict.get("proyectos_estrategicos")
+            if isinstance(pe, str):
+                doc_dict["proyectos_estrategicos"] = [v.strip() for v in pe.split(",") if v.strip()] if pe else []
+            elif not isinstance(pe, list):
+                doc_dict["proyectos_estrategicos"] = []
             
             data.append(doc_dict)
             
@@ -4322,12 +4334,12 @@ def _buscar_en_geojson(geojson_path: str, property_name: str, point_coords: list
     return None
 
 
-def _buscar_proyectos_estrategicos(point_coords: list) -> str:
-    """Intersecta un punto con todos los GeoJSON en basemaps/proyectos_estrategicos/ y retorna los Name coincidentes."""
+def _buscar_proyectos_estrategicos(point_coords: list) -> list:
+    """Intersecta un punto con todos los GeoJSON en basemaps/proyectos_estrategicos/ y retorna lista de Name coincidentes."""
     nombres = []
     estrategicos_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "basemaps", "proyectos_estrategicos")
     if not os.path.isdir(estrategicos_dir):
-        return ""
+        return []
     try:
         point = ShapelyPoint(point_coords[0], point_coords[1])
         for filename in os.listdir(estrategicos_dir):
@@ -4347,7 +4359,7 @@ def _buscar_proyectos_estrategicos(point_coords: list) -> str:
                 logger.warning(f"Error procesando {filename}: {type(e).__name__}")
     except Exception as e:
         logger.warning(f"Error leyendo directorio proyectos_estrategicos: {type(e).__name__}")
-    return ", ".join(nombres) if nombres else ""
+    return nombres
 
 
 @app.post("/crear_unidad_proyecto", tags=["Unidades de Proyecto"], summary="🟢 POST | Crear Unidad de Proyecto",
@@ -4406,7 +4418,7 @@ async def crear_unidad_proyecto(
         barrio_vereda = None
         basemaps_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "basemaps")
 
-        proyectos_estrategicos = ""
+        proyectos_estrategicos = []
 
         if geometry and geometry.get("type") == "Point" and geometry.get("coordinates"):
             coords = geometry["coordinates"]
