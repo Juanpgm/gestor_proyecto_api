@@ -7,6 +7,7 @@ from pydantic import BaseModel, EmailStr, Field, field_validator, ConfigDict
 from typing import Optional, Dict, Any, List, Union
 from datetime import datetime
 import re
+import unicodedata
 
 # ============================================================================
 # MODELOS PARA GESTIÓN DE USUARIOS
@@ -37,6 +38,14 @@ class UserRegistrationRequest(BaseModel):
         if not v or len(str(v).strip()) < 10:
             raise ValueError('Número de celular requerido')
         return str(v).strip()
+    
+    @field_validator('nombre_centro_gestor')
+    @classmethod
+    def normalize_centro_gestor(cls, v):
+        if not v or not v.strip():
+            raise ValueError('El centro gestor es requerido')
+        # Normalizar Unicode NFC para caracteres especiales (ñ, á, é, í, ó, ú)
+        return unicodedata.normalize('NFC', v.strip())
 
 class UserLoginRequest(BaseModel):
     """Login con email y contraseña"""

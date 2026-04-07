@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 import secrets
 import string
 import re
+import unicodedata
 from firebase_admin import auth, exceptions as firebase_exceptions
 from database.firebase_config import get_firestore_client, get_auth_client
 
@@ -313,15 +314,78 @@ async def create_user_account(
         if not phone_validation["valid"]:
             return phone_validation
         
-        # Crear usuario en Firebase Auth
-        auth_client = get_auth_client()
+        # Normalizar nombre_centro_gestor (NFC para caracteres especiales como ñ, á, é, í, ó, ú)
+        nombre_centro_gestor_normalizado = unicodedata.normalize('NFC', nombre_centro_gestor.strip())
         
+        auth_client = get_auth_client()
+        firestore_client = get_firestore_client()
+        normalized_email = email_validation["email"]
+        normalized_phone = phone_validation["normalized"]
+        
+        # =====================================================================
+        # PRE-CHECK: Detectar usuario huérfano en Firebase Auth (existe en Auth
+        # pero no en Firestore, causado por un registro previo parcialmente
+        # fallido). Si se detecta, se elimina el registro huérfano de Auth
+        # para permitir un nuevo registro limpio.
+        # =====================================================================
+        existing_auth_user = None
+        try:
+            existing_auth_user = auth_client.get_user_by_email(normalized_email)
+        except firebase_exceptions.NotFoundError:
+            pass  # Email no existe en Auth - caso normal, continuar
+        except Exception as e:
+            logger.warning(f"Error checking existing user by email: {e}")
+        
+        if existing_auth_user:
+            # Verificar si tiene documento en Firestore
+            user_doc = firestore_client.collection('users').document(existing_auth_user.uid).get()
+            if user_doc.exists:
+                # Usuario completo (Auth + Firestore) - realmente ya existe
+                return {
+                    "success": False,
+                    "error": "Ya existe un usuario con este email",
+                    "code": "EMAIL_ALREADY_EXISTS"
+                }
+            else:
+                # Usuario huérfano: existe en Auth pero NO en Firestore
+                # Esto ocurre cuando un registro anterior falló a mitad del proceso
+                logger.warning(
+                    f"Usuario huérfano detectado en Firebase Auth (uid={existing_auth_user.uid}, "
+                    f"email={normalized_email}). Eliminando para permitir re-registro."
+                )
+                try:
+                    auth_client.delete_user(existing_auth_user.uid)
+                    logger.info(f"Usuario huérfano eliminado exitosamente: {existing_auth_user.uid}")
+                except Exception as e:
+                    logger.error(f"Error eliminando usuario huérfano: {e}")
+                    return {
+                        "success": False,
+                        "error": "Error interno: no se pudo limpiar un registro previo incompleto. Contacte al administrador.",
+                        "code": "ORPHAN_CLEANUP_ERROR"
+                    }
+        
+        # PRE-CHECK: Verificar si el número de teléfono ya está en uso por otro usuario
+        try:
+            existing_phone_user = auth_client.get_user_by_phone_number(normalized_phone)
+            # Si llegamos aquí, el teléfono ya está registrado
+            return {
+                "success": False,
+                "error": f"Ya existe un usuario con este número de teléfono ({cellphone}). Cada cuenta debe tener un número único.",
+                "code": "PHONE_ALREADY_EXISTS"
+            }
+        except firebase_exceptions.NotFoundError:
+            pass  # Teléfono no existe - caso normal, continuar
+        except Exception as e:
+            logger.warning(f"Error checking existing phone number: {e}")
+        
+        # Crear usuario en Firebase Auth
+        user_record = None
         try:
             user_record = auth_client.create_user(
-                email=email_validation["email"],
+                email=normalized_email,
                 password=password,
                 display_name=fullname_validation["normalized"],
-                phone_number=phone_validation["normalized"],
+                phone_number=normalized_phone,
                 email_verified=False,
                 disabled=False
             )
@@ -329,20 +393,19 @@ async def create_user_account(
             # Establecer custom claims básicos
             custom_claims = {
                 "role": "publico",  # rol por defecto
-                "centro_gestor": nombre_centro_gestor,
+                "centro_gestor": nombre_centro_gestor_normalizado,
                 "created_at": datetime.now().isoformat()
             }
             
             auth_client.set_custom_user_claims(user_record.uid, custom_claims)
             
             # Guardar datos adicionales en Firestore
-            firestore_client = get_firestore_client()
             user_data = {
                 "uid": user_record.uid,
-                "email": email_validation["email"],
+                "email": normalized_email,
                 "fullname": fullname_validation["normalized"],
-                "cellphone": phone_validation["normalized"],
-                "nombre_centro_gestor": nombre_centro_gestor,
+                "cellphone": normalized_phone,
+                "nombre_centro_gestor": nombre_centro_gestor_normalizado,
                 "roles": ["publico"],
                 "created_at": datetime.now(),
                 "updated_at": datetime.now(),
@@ -361,7 +424,7 @@ async def create_user_account(
             if send_email_verification:
                 try:
                     verification_link = auth_client.generate_email_verification_link(
-                        email_validation["email"]
+                        normalized_email
                     )
                 except Exception as e:
                     logger.warning(f"Could not generate email verification link: {e}")
@@ -372,7 +435,7 @@ async def create_user_account(
                     "uid": user_record.uid,
                     "email": user_record.email,
                     "fullname": fullname_validation["normalized"],
-                    "centro_gestor": nombre_centro_gestor,
+                    "centro_gestor": nombre_centro_gestor_normalizado,
                     "phone_number": user_record.phone_number,
                     "email_verified": False,
                     "created_at": user_record.user_metadata.creation_timestamp.isoformat() if user_record.user_metadata.creation_timestamp and hasattr(user_record.user_metadata.creation_timestamp, 'isoformat') else datetime.now().isoformat(),
@@ -382,13 +445,31 @@ async def create_user_account(
                 "message": "Usuario creado exitosamente"
             }
             
-        except firebase_exceptions.AlreadyExistsError:
-            return {
-                "success": False,
-                "error": "Ya existe un usuario con este email",
-                "code": "EMAIL_ALREADY_EXISTS"
-            }
+        except firebase_exceptions.AlreadyExistsError as e:
+            # Determinar si el conflicto es por email o por teléfono
+            error_msg = str(e).lower()
+            if 'phone' in error_msg:
+                return {
+                    "success": False,
+                    "error": f"Ya existe un usuario con este número de teléfono ({cellphone})",
+                    "code": "PHONE_ALREADY_EXISTS"
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": "Ya existe un usuario con este email",
+                    "code": "EMAIL_ALREADY_EXISTS"
+                }
         except Exception as e:
+            # ROLLBACK: Si create_user() tuvo éxito pero algo posterior falló,
+            # eliminar el usuario huérfano de Firebase Auth
+            if user_record:
+                try:
+                    auth_client.delete_user(user_record.uid)
+                    logger.info(f"Rollback: usuario {user_record.uid} eliminado de Auth tras error post-creación")
+                except Exception as rollback_error:
+                    logger.error(f"Error en rollback de usuario {user_record.uid}: {rollback_error}")
+            
             logger.error(f"Error creating user account: {e}")
             return {
                 "success": False,
