@@ -425,6 +425,8 @@ def validate_uploaded_files(archivos_evidencia: List[Dict[str, Any]]) -> Tuple[b
 async def create_reporte_contrato(reporte_data: Dict[str, Any]) -> Dict[str, Any]:
     """
     Crear reporte de contrato con almacenamiento S3 (fotos y documentos).
+    Si nombre_centro_gestor viene vacío, se resuelve automáticamente desde
+    las colecciones de empréstito usando referencia_contrato como clave.
     """
     try:
         db = get_firestore_client()
@@ -445,10 +447,26 @@ async def create_reporte_contrato(reporte_data: Dict[str, Any]) -> Dict[str, Any
             failed_names = [f.get("name", "archivo") for f in diagnostico_s3.get("fallidos", [])]
             raise Exception(f"Error subiendo archivos a S3: {failed_names}")
         
+        # Resolver nombre_centro_gestor: usar el enviado, o auto-resolver desde empréstito
+        nombre_centro_gestor = (reporte_data.get('nombre_centro_gestor') or '').strip()
+        if not nombre_centro_gestor:
+            try:
+                nombre_centro_gestor_resolved = await get_nombre_centro_gestor_from_emprestito(
+                    reporte_data['referencia_contrato']
+                )
+                if nombre_centro_gestor_resolved:
+                    nombre_centro_gestor = nombre_centro_gestor_resolved
+                    logger.info(
+                        f"✅ nombre_centro_gestor auto-resuelto desde empréstito: "
+                        f"'{nombre_centro_gestor}' para referencia '{reporte_data['referencia_contrato']}'"
+                    )
+            except Exception as resolve_error:
+                logger.warning(f"⚠️ No se pudo auto-resolver nombre_centro_gestor: {resolve_error}")
+        
         # Datos para Firebase
         doc_data = {
             'referencia_contrato': reporte_data['referencia_contrato'],
-            'nombre_centro_gestor': reporte_data.get('nombre_centro_gestor', ''),
+            'nombre_centro_gestor': nombre_centro_gestor,
             'observaciones': reporte_data['observaciones'],
             'avance_fisico': reporte_data['avance_fisico'],
             'avance_financiero': reporte_data['avance_financiero'],

@@ -5779,6 +5779,9 @@ async def crear_reporte_contrato(
     referencia_contrato: str = Form(..., min_length=1, description="Referencia del contrato"),
     observaciones: str = Form(..., description="Observaciones del reporte"),
     
+    # Centro gestor responsable (opcional - se auto-resuelve desde empréstito si no se envía)
+    nombre_centro_gestor: str = Form(default="", description="Nombre del centro gestor responsable. Si no se envía, se resuelve automáticamente desde las colecciones de empréstito."),
+    
     # Avances del proyecto (soporte para decimales)
     avance_fisico: float = Form(..., ge=0, le=100, description="Porcentaje de avance físico (0-100, decimales permitidos)"),
     avance_financiero: float = Form(..., ge=0, le=100, description="Porcentaje de avance financiero (0-100, decimales permitidos)"),
@@ -5922,6 +5925,7 @@ async def crear_reporte_contrato(
         # Construir datos optimizados para Firebase
         reporte_dict = {
             "referencia_contrato": referencia_contrato.strip(),
+            "nombre_centro_gestor": nombre_centro_gestor.strip(),
             "observaciones": observaciones.strip(),
             "avance_fisico": float(avance_fisico),
             "avance_financiero": float(avance_financiero),
