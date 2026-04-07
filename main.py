@@ -10621,6 +10621,610 @@ async def obtener_historial_cambios_endpoint(
         )
 
 
+# ============================================================================
+# SOLICITUDES DE CAMBIO DE EMPRÉSTITO
+# ============================================================================
+
+TIPO_REGISTRO_TO_COLLECTION = {
+    "contrato": "contratos_emprestito",
+    "proceso": "procesos_emprestito",
+    "pago": "pagos_emprestito",
+    "orden_compra": "ordenes_compra_emprestito",
+    "convenio": "convenios_transferencias_emprestito",
+    "rpc": "rpc_contratos_emprestito",
+}
+
+SOLICITUDES_EMPRESTITO_COLLECTION = "solicitudes_cambios_emprestito"
+
+
+class SolicitudCambioEmprestitoRequest(BaseModel):
+    tipo_registro: str = Field(..., description="Tipo de registro: contrato, proceso, pago, orden_compra, convenio, rpc")
+    referencia_id: str = Field(..., description="Identificador del registro a modificar")
+    campos_modificados: Dict[str, Dict[str, Any]] = Field(
+        ...,
+        description="Campos a modificar: { campo: { anterior: valor, nuevo: valor } }"
+    )
+    motivo: Optional[str] = Field(None, description="Motivo de la solicitud de cambio")
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "tipo_registro": "contrato",
+                "referencia_id": "CONT-2024-001",
+                "campos_modificados": {
+                    "valor_contrato": {"anterior": 1000000, "nuevo": 1500000},
+                    "estado_contrato": {"anterior": "En ejecución", "nuevo": "Terminado"}
+                },
+                "motivo": "Ajuste por adición contractual"
+            }
+        }
+
+
+@app.post("/solicitudes_cambios_emprestito", tags=["Gestión de Empréstito"], summary="🟢 Crear solicitud de cambio de empréstito")
+@optional_rate_limit("30/minute")
+async def crear_solicitud_cambio_emprestito(
+    request: Request,
+    payload: SolicitudCambioEmprestitoRequest = Body(
+        ...,
+        description="Datos de la solicitud de cambio"
+    )
+):
+    """
+    ## 🟢 POST | Crear solicitud de cambio para registros de empréstito
+    
+    Crea una solicitud de cambio pendiente para cualquier tipo de registro de empréstito.
+    La solicitud debe ser aprobada o rechazada posteriormente.
+    
+    ### Tipos de registro válidos:
+    - `contrato`, `proceso`, `pago`, `orden_compra`, `convenio`, `rpc`
+    """
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase not available")
+
+    try:
+        db = get_firestore_client()
+        if db is None:
+            raise HTTPException(status_code=503, detail="No se pudo conectar a Firestore")
+
+        tipo_registro = payload.tipo_registro.strip().lower()
+        referencia_id = payload.referencia_id.strip()
+
+        if tipo_registro not in TIPO_REGISTRO_TO_COLLECTION:
+            raise HTTPException(
+                status_code=400,
+                detail=f"tipo_registro inválido: '{tipo_registro}'. Valores permitidos: {list(TIPO_REGISTRO_TO_COLLECTION.keys())}"
+            )
+
+        if not referencia_id:
+            raise HTTPException(status_code=400, detail="referencia_id es obligatorio")
+
+        if not payload.campos_modificados:
+            raise HTTPException(status_code=400, detail="campos_modificados no puede estar vacío")
+
+        # Validar estructura de campos_modificados
+        for campo, valores in payload.campos_modificados.items():
+            if not isinstance(valores, dict) or "nuevo" not in valores:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Campo '{campo}' debe tener al menos la clave 'nuevo' en su valor"
+                )
+
+        now_iso = datetime.now().isoformat()
+        doc_id = str(uuid.uuid4())
+
+        solicitud_data = {
+            "tipo_registro": tipo_registro,
+            "coleccion_destino": TIPO_REGISTRO_TO_COLLECTION[tipo_registro],
+            "referencia_id": referencia_id,
+            "campos_modificados": payload.campos_modificados if hasattr(payload.campos_modificados, '__iter__') and not isinstance(payload.campos_modificados, str) else {},
+            "motivo": payload.motivo,
+            "estado": "pendiente",
+            "created_at": now_iso,
+            "updated_at": now_iso,
+        }
+
+        # Serializar campos_modificados correctamente
+        campos_serializados = {}
+        for campo, valores in payload.campos_modificados.items():
+            if hasattr(valores, 'model_dump'):
+                campos_serializados[campo] = valores.model_dump()
+            elif hasattr(valores, 'dict'):
+                campos_serializados[campo] = valores.dict()
+            else:
+                campos_serializados[campo] = dict(valores) if isinstance(valores, dict) else valores
+        solicitud_data["campos_modificados"] = campos_serializados
+
+        db.collection(SOLICITUDES_EMPRESTITO_COLLECTION).document(doc_id).set(solicitud_data)
+
+        return create_utf8_response({
+            "success": True,
+            "id": doc_id,
+            "collection": SOLICITUDES_EMPRESTITO_COLLECTION,
+            "estado": "pendiente",
+            "data": solicitud_data,
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creando solicitud de cambio de empréstito: {e}")
+        raise HTTPException(status_code=500, detail=f"Error creando solicitud: {str(e)}")
+
+
+@app.get("/solicitudes_cambios_emprestito", tags=["Gestión de Empréstito"], summary="📋 Consultar solicitudes de cambio de empréstito")
+@optional_rate_limit("30/minute")
+async def consultar_solicitudes_cambios_emprestito(
+    request: Request,
+    estado: Optional[str] = Query(None, description="Filtrar por estado: pendiente, aprobada, rechazada"),
+    tipo_registro: Optional[str] = Query(None, description="Filtrar por tipo: contrato, proceso, pago, orden_compra, convenio, rpc"),
+    centro_gestor: Optional[str] = Query(None, description="Filtrar por centro gestor"),
+    limit: int = Query(100, ge=1, le=500, description="Máximo de registros"),
+    offset: int = Query(0, ge=0, description="Offset para paginación"),
+):
+    """
+    ## 📋 GET | Consultar solicitudes de cambio de empréstito
+    
+    Consulta solicitudes de cambio con filtros opcionales por estado, tipo y centro gestor.
+    """
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase not available")
+
+    try:
+        db = get_firestore_client()
+        if db is None:
+            raise HTTPException(status_code=503, detail="No se pudo conectar a Firestore")
+
+        query = db.collection(SOLICITUDES_EMPRESTITO_COLLECTION)
+
+        if estado:
+            query = query.where("estado", "==", estado.strip().lower())
+        if tipo_registro:
+            query = query.where("tipo_registro", "==", tipo_registro.strip().lower())
+
+        docs = list(query.stream())
+
+        solicitudes = []
+        for doc in docs:
+            data = doc.to_dict() or {}
+            data["id"] = doc.id
+
+            # Normalizar timestamps
+            for key, value in data.items():
+                if hasattr(value, 'isoformat'):
+                    data[key] = value.isoformat()
+
+            # Filtro por centro_gestor (no soportado nativamente por Firestore con otros filtros compuestos)
+            if centro_gestor:
+                ref_id = data.get("referencia_id", "")
+                if centro_gestor.lower() not in str(data).lower():
+                    continue
+
+            solicitudes.append(data)
+
+        # Ordenar por fecha de creación descendente
+        solicitudes.sort(key=lambda s: s.get("created_at", ""), reverse=True)
+
+        # Paginar
+        paged = solicitudes[offset:offset + limit]
+
+        return create_utf8_response({
+            "success": True,
+            "total": len(solicitudes),
+            "count": len(paged),
+            "offset": offset,
+            "limit": limit,
+            "data": paged,
+            "collection": SOLICITUDES_EMPRESTITO_COLLECTION,
+            "filters": {
+                "estado": estado,
+                "tipo_registro": tipo_registro,
+                "centro_gestor": centro_gestor,
+            },
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error consultando solicitudes de cambio: {e}")
+        raise HTTPException(status_code=500, detail=f"Error consultando solicitudes: {str(e)}")
+
+
+@app.put("/solicitudes_cambios_emprestito/{solicitud_id}/aprobar", tags=["Gestión de Empréstito"], summary="✅ Aprobar solicitud de cambio")
+@optional_rate_limit("10/minute")
+async def aprobar_solicitud_cambio_emprestito(
+    request: Request,
+    solicitud_id: str = Path(..., description="ID de la solicitud a aprobar"),
+):
+    """
+    ## ✅ PUT | Aprobar solicitud de cambio de empréstito
+    
+    Aprueba una solicitud pendiente y aplica los cambios al registro original.
+    Registra cada cambio en el sistema de auditoría (emprestito_control_cambios).
+    """
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase not available")
+
+    try:
+        db = get_firestore_client()
+        if db is None:
+            raise HTTPException(status_code=503, detail="No se pudo conectar a Firestore")
+
+        # Leer solicitud
+        sol_ref = db.collection(SOLICITUDES_EMPRESTITO_COLLECTION).document(solicitud_id)
+        sol_doc = sol_ref.get()
+
+        if not sol_doc.exists:
+            raise HTTPException(status_code=404, detail=f"Solicitud no encontrada: {solicitud_id}")
+
+        sol_data = sol_doc.to_dict() or {}
+
+        if sol_data.get("estado") != "pendiente":
+            raise HTTPException(
+                status_code=400,
+                detail=f"La solicitud no está pendiente. Estado actual: {sol_data.get('estado')}"
+            )
+
+        tipo_registro = sol_data.get("tipo_registro")
+        coleccion_destino = sol_data.get("coleccion_destino") or TIPO_REGISTRO_TO_COLLECTION.get(tipo_registro)
+        referencia_id = sol_data.get("referencia_id")
+        campos_modificados = sol_data.get("campos_modificados", {})
+
+        if not coleccion_destino or not referencia_id:
+            raise HTTPException(status_code=400, detail="Solicitud con datos incompletos")
+
+        # Buscar el documento original por referencia
+        identifier_field_map = {
+            "contrato": "referencia_contrato",
+            "proceso": "referencia_proceso",
+            "pago": "referencia_contrato",
+            "orden_compra": "numero_orden",
+            "convenio": "referencia_contrato",
+            "rpc": "numero_rpc",
+        }
+        id_field = identifier_field_map.get(tipo_registro, "referencia_contrato")
+
+        docs_query = db.collection(coleccion_destino).where(id_field, "==", referencia_id).limit(1)
+        target_docs = list(docs_query.stream())
+
+        if not target_docs:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Registro original no encontrado en {coleccion_destino} con {id_field}={referencia_id}"
+            )
+
+        target_doc = target_docs[0]
+        target_ref = db.collection(coleccion_destino).document(target_doc.id)
+
+        # Aplicar cambios y registrar en auditoría
+        update_data = {}
+        cambios_aplicados = []
+
+        for campo, valores in campos_modificados.items():
+            valor_nuevo = valores.get("nuevo")
+            valor_anterior = valores.get("anterior")
+            update_data[campo] = valor_nuevo
+
+            # Registrar en auditoría
+            try:
+                await registrar_cambio_valor(
+                    tipo_coleccion=tipo_registro,
+                    identificador=referencia_id,
+                    campo_modificado=campo,
+                    valor_anterior=valor_anterior,
+                    valor_nuevo=valor_nuevo,
+                    motivo=sol_data.get("motivo") or f"Solicitud de cambio aprobada: {solicitud_id}",
+                    usuario="sistema_solicitudes",
+                    endpoint_usado=f"/solicitudes_cambios_emprestito/{solicitud_id}/aprobar",
+                )
+            except Exception as audit_err:
+                logger.warning(f"Error registrando auditoría para campo {campo}: {audit_err}")
+
+            cambios_aplicados.append({
+                "campo": campo,
+                "valor_anterior": valor_anterior,
+                "valor_nuevo": valor_nuevo,
+            })
+
+        # Aplicar al documento original
+        update_data["updated_at"] = datetime.now().isoformat()
+        target_ref.update(update_data)
+
+        # Actualizar solicitud
+        now_iso = datetime.now().isoformat()
+        sol_ref.update({
+            "estado": "aprobada",
+            "fecha_aprobacion": now_iso,
+            "updated_at": now_iso,
+        })
+
+        return create_utf8_response({
+            "success": True,
+            "message": "Solicitud aprobada y cambios aplicados",
+            "solicitud_id": solicitud_id,
+            "estado": "aprobada",
+            "registro_actualizado": {
+                "coleccion": coleccion_destino,
+                "doc_id": target_doc.id,
+                "referencia": referencia_id,
+            },
+            "cambios_aplicados": cambios_aplicados,
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error aprobando solicitud de cambio: {e}")
+        raise HTTPException(status_code=500, detail=f"Error aprobando solicitud: {str(e)}")
+
+
+@app.put("/solicitudes_cambios_emprestito/{solicitud_id}/rechazar", tags=["Gestión de Empréstito"], summary="❌ Rechazar solicitud de cambio")
+@optional_rate_limit("10/minute")
+async def rechazar_solicitud_cambio_emprestito(
+    request: Request,
+    solicitud_id: str = Path(..., description="ID de la solicitud a rechazar"),
+    motivo_rechazo: str = Body(..., embed=True, description="Motivo del rechazo"),
+):
+    """
+    ## ❌ PUT | Rechazar solicitud de cambio de empréstito
+    
+    Rechaza una solicitud pendiente con un motivo de rechazo obligatorio.
+    No se aplican cambios al registro original.
+    """
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase not available")
+
+    try:
+        db = get_firestore_client()
+        if db is None:
+            raise HTTPException(status_code=503, detail="No se pudo conectar a Firestore")
+
+        sol_ref = db.collection(SOLICITUDES_EMPRESTITO_COLLECTION).document(solicitud_id)
+        sol_doc = sol_ref.get()
+
+        if not sol_doc.exists:
+            raise HTTPException(status_code=404, detail=f"Solicitud no encontrada: {solicitud_id}")
+
+        sol_data = sol_doc.to_dict() or {}
+
+        if sol_data.get("estado") != "pendiente":
+            raise HTTPException(
+                status_code=400,
+                detail=f"La solicitud no está pendiente. Estado actual: {sol_data.get('estado')}"
+            )
+
+        if not motivo_rechazo or not motivo_rechazo.strip():
+            raise HTTPException(status_code=400, detail="motivo_rechazo es obligatorio")
+
+        now_iso = datetime.now().isoformat()
+        sol_ref.update({
+            "estado": "rechazada",
+            "motivo_rechazo": motivo_rechazo.strip(),
+            "fecha_rechazo": now_iso,
+            "updated_at": now_iso,
+        })
+
+        return create_utf8_response({
+            "success": True,
+            "message": "Solicitud rechazada",
+            "solicitud_id": solicitud_id,
+            "estado": "rechazada",
+            "motivo_rechazo": motivo_rechazo.strip(),
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error rechazando solicitud de cambio: {e}")
+        raise HTTPException(status_code=500, detail=f"Error rechazando solicitud: {str(e)}")
+
+
+# ============================================================================
+# REPORTES EMPRÉSTITO
+# ============================================================================
+
+@app.get("/reportes_emprestito/resumen-centro-gestor", tags=["Gestión de Empréstito"], summary="📊 Resumen de empréstito por centro gestor")
+@optional_rate_limit("30/minute")
+async def resumen_emprestito_centro_gestor(request: Request):
+    """
+    ## 📊 GET | Resumen de empréstito agrupado por centro gestor
+    
+    Agrupa: centro gestor → contratos → último avance (desde reportes_contratos).
+    Reutiliza la información existente de contratos y reportes.
+    """
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase not available")
+
+    try:
+        db = get_firestore_client()
+        if db is None:
+            raise HTTPException(status_code=503, detail="No se pudo conectar a Firestore")
+
+        # Cargar contratos
+        contratos_docs = list(db.collection("contratos_emprestito").stream())
+        contratos_by_centro: Dict[str, list] = {}
+
+        for doc in contratos_docs:
+            data = doc.to_dict() or {}
+            data["_doc_id"] = doc.id
+            centro = data.get("nombre_centro_gestor") or data.get("nombreCentroGestor") or "Sin centro gestor"
+            if isinstance(centro, str):
+                centro = centro.strip()
+            contratos_by_centro.setdefault(centro, []).append(data)
+
+        # Cargar reportes de contratos (últimos avances)
+        reportes_docs = list(db.collection("reportes_contratos").stream())
+        reportes_by_referencia: Dict[str, list] = {}
+
+        for doc in reportes_docs:
+            data = doc.to_dict() or {}
+            data["_doc_id"] = doc.id
+            # Normalizar timestamps
+            for key, value in data.items():
+                if hasattr(value, 'isoformat'):
+                    data[key] = value.isoformat()
+            ref = data.get("referencia_contrato", "")
+            reportes_by_referencia.setdefault(ref, []).append(data)
+
+        # Construir resumen
+        resumen = []
+        for centro, contratos in contratos_by_centro.items():
+            centro_data = {
+                "nombre_centro_gestor": centro,
+                "total_contratos": len(contratos),
+                "contratos": [],
+            }
+
+            for contrato in contratos:
+                ref = contrato.get("referencia_contrato", "")
+                reportes = reportes_by_referencia.get(ref, [])
+                reportes.sort(key=lambda r: r.get("created_at", ""), reverse=True)
+                ultimo_reporte = reportes[0] if reportes else None
+
+                # Normalizar timestamps en contrato
+                contrato_clean = {}
+                for key, value in contrato.items():
+                    if key.startswith("_"):
+                        continue
+                    if hasattr(value, 'isoformat'):
+                        contrato_clean[key] = value.isoformat()
+                    else:
+                        contrato_clean[key] = value
+
+                centro_data["contratos"].append({
+                    "referencia_contrato": ref,
+                    "estado_contrato": contrato.get("estado_contrato"),
+                    "valor_contrato": contrato.get("valor_contrato"),
+                    "contratista": contrato.get("nombre_contratista") or contrato.get("proveedor"),
+                    "ultimo_reporte": ultimo_reporte,
+                    "total_reportes": len(reportes),
+                })
+
+            resumen.append(centro_data)
+
+        resumen.sort(key=lambda c: c.get("total_contratos", 0), reverse=True)
+
+        return create_utf8_response({
+            "success": True,
+            "total_centros_gestores": len(resumen),
+            "total_contratos": sum(c["total_contratos"] for c in resumen),
+            "data": resumen,
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generando resumen por centro gestor: {e}")
+        raise HTTPException(status_code=500, detail=f"Error generando resumen: {str(e)}")
+
+
+# ============================================================================
+# CRUD DELETE EMPRÉSTITO (endpoints faltantes)
+# ============================================================================
+
+@app.delete("/contratos_emprestito/{referencia}", tags=["Gestión de Empréstito"], summary="🔴 Eliminar contrato de empréstito")
+@optional_rate_limit("10/minute")
+async def eliminar_contrato_emprestito(
+    request: Request,
+    referencia: str = Path(..., description="Referencia del contrato a eliminar"),
+):
+    """
+    ## 🔴 DELETE | Eliminar contrato de empréstito por referencia_contrato
+    
+    Busca y elimina el contrato con la referencia indicada de la colección `contratos_emprestito`.
+    """
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase not available")
+
+    try:
+        db = get_firestore_client()
+        if db is None:
+            raise HTTPException(status_code=503, detail="No se pudo conectar a Firestore")
+
+        referencia = referencia.strip()
+        docs = list(db.collection("contratos_emprestito").where("referencia_contrato", "==", referencia).limit(1).stream())
+
+        if not docs:
+            raise HTTPException(status_code=404, detail=f"Contrato no encontrado: {referencia}")
+
+        doc = docs[0]
+        doc_data = doc.to_dict() or {}
+        db.collection("contratos_emprestito").document(doc.id).delete()
+
+        return create_utf8_response({
+            "success": True,
+            "message": f"Contrato eliminado: {referencia}",
+            "doc_id": doc.id,
+            "referencia_contrato": referencia,
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error eliminando contrato: {e}")
+        raise HTTPException(status_code=500, detail=f"Error eliminando contrato: {str(e)}")
+
+
+@app.delete("/ordenes_compra_emprestito/{numero_orden}", tags=["Gestión de Empréstito"], summary="🔴 Eliminar orden de compra")
+@optional_rate_limit("10/minute")
+async def eliminar_orden_compra_emprestito_endpoint(
+    request: Request,
+    numero_orden: str = Path(..., description="Número de la orden de compra a eliminar"),
+):
+    """
+    ## 🔴 DELETE | Eliminar orden de compra de empréstito
+    
+    Elimina la orden de compra con el número indicado.
+    """
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase not available")
+
+    try:
+        check_emprestito_availability()
+        resultado = await eliminar_orden_compra_por_numero(numero_orden.strip())
+
+        if not resultado.get("success"):
+            if resultado.get("not_found"):
+                raise HTTPException(status_code=404, detail=resultado.get("error", "Orden no encontrada"))
+            raise HTTPException(status_code=500, detail=resultado.get("error", "Error eliminando orden"))
+
+        return create_utf8_response(resultado)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error eliminando orden de compra: {e}")
+        raise HTTPException(status_code=500, detail=f"Error eliminando orden de compra: {str(e)}")
+
+
+@app.delete("/convenios_emprestito/{referencia}", tags=["Gestión de Empréstito"], summary="🔴 Eliminar convenio de transferencia")
+@optional_rate_limit("10/minute")
+async def eliminar_convenio_emprestito_endpoint(
+    request: Request,
+    referencia: str = Path(..., description="Referencia del convenio a eliminar"),
+):
+    """
+    ## 🔴 DELETE | Eliminar convenio de transferencia de empréstito
+    
+    Elimina el convenio con la referencia indicada.
+    """
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase not available")
+
+    try:
+        check_emprestito_availability()
+        resultado = await eliminar_convenio_transferencia_por_referencia(referencia.strip())
+
+        if not resultado.get("success"):
+            if resultado.get("not_found"):
+                raise HTTPException(status_code=404, detail=resultado.get("error", "Convenio no encontrado"))
+            raise HTTPException(status_code=500, detail=resultado.get("error", "Error eliminando convenio"))
+
+        return create_utf8_response(resultado)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error eliminando convenio: {e}")
+        raise HTTPException(status_code=500, detail=f"Error eliminando convenio: {str(e)}")
+
+
+# ============================================================================
+# (continúa endpoints existentes)
+# ============================================================================
+
+
 @app.post("/emprestito/obtener-contratos-secop", tags=["Gestión de Empréstito"], summary="🟢 Obtener Contratos SECOP - SIN LIMITACIONES")
 async def obtener_contratos_secop_endpoint(offset: int = 0, limit: int = None):
     """
@@ -13335,6 +13939,14 @@ if AUTH_SYSTEM_AVAILABLE:
         print(f"⚠️ Warning: Could not include auth admin router: {e}")
 else:
     print("⚠️ Auth admin router not included - Auth system not available")
+
+# Incluir router de calidad de datos de empréstito
+try:
+    from api.routers.emprestito_quality_router import router as emprestito_quality_router
+    app.include_router(emprestito_quality_router)
+    print("✅ Emprestito quality router included successfully")
+except Exception as e:
+    print(f"⚠️ Warning: Could not include emprestito quality router: {e}")
 
 # NOTA: Router de Captura 360 ya fue incluido antes de las rutas dinámicas (ver línea ~2410)
 

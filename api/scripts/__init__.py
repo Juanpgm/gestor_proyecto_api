@@ -507,6 +507,36 @@ except ImportError as e:
     def get_ordenes_compra_operations_status():
         return {"operations_available": False, "error": "Ordenes compra operations not available"}
 
+# Importar métricas de calidad de empréstito
+try:
+    from .emprestito_quality_metrics import (
+        generate_emprestito_quality_report,
+        get_emprestito_quality_summary,
+        get_emprestito_quality_records,
+        get_emprestito_quality_by_centro_gestor,
+        get_emprestito_quality_stats,
+    )
+    EMPRESTITO_QUALITY_AVAILABLE = True
+    print(f"✅ Emprestito quality metrics imported successfully")
+except ImportError as e:
+    print(f"Warning: Emprestito quality metrics not available: {e}")
+    EMPRESTITO_QUALITY_AVAILABLE = False
+
+    async def generate_emprestito_quality_report(nombre_centro_gestor=None, persist=True):
+        return {"success": False, "error": "Emprestito quality metrics not available"}
+
+    async def get_emprestito_quality_summary(report_id=None, nombre_centro_gestor=None, auto_generate=False):
+        return {"success": False, "error": "Emprestito quality metrics not available"}
+
+    async def get_emprestito_quality_records(report_id=None, page=1, limit=50, centro_gestor=None, tipo_registro=None):
+        return {"success": False, "error": "Emprestito quality metrics not available"}
+
+    async def get_emprestito_quality_by_centro_gestor(report_id=None):
+        return {"success": False, "error": "Emprestito quality metrics not available"}
+
+    async def get_emprestito_quality_stats():
+        return {"success": False, "error": "Emprestito quality metrics not available"}
+
 # Importar operaciones de flujo de caja
 try:
     from .flujo_caja_operations import (
@@ -695,6 +725,13 @@ __all__ = [
     "generar_estructura_carpetas_s3",
     "obtener_ruta_por_estado",
     
+    # Emprestito quality metrics
+    "generate_emprestito_quality_report",
+    "get_emprestito_quality_summary",
+    "get_emprestito_quality_records",
+    "get_emprestito_quality_by_centro_gestor",
+    "get_emprestito_quality_stats",
+    
     # Availability flags
     "FIREBASE_OPERATIONS_AVAILABLE",
     "UNIDADES_PROYECTO_AVAILABLE",
@@ -702,6 +739,7 @@ __all__ = [
     "REPORTES_CONTRATOS_AVAILABLE",
     "EMPRESTITO_OPERATIONS_AVAILABLE",
     "EMPRESTITO_OPTIMIZED_AVAILABLE",
+    "EMPRESTITO_QUALITY_AVAILABLE",
     "USER_MANAGEMENT_AVAILABLE",
     "AUTH_OPERATIONS_AVAILABLE",
     "WORKLOAD_IDENTITY_AVAILABLE",
