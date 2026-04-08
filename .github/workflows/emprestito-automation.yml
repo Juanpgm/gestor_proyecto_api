@@ -1,0 +1,251 @@
+name: Workflow para la Actualización de datos empréstito
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    - cron: "0 3,5,10,15,20,22 * * *" # Hora Colombia: 22:00, 00:00, 05:00, 10:00, 15:00, 17:00
+
+env:
+  API_BASE_URL: ${{ secrets.API_BASE_URL }}
+
+jobs:
+  emprestito-pipeline:
+    name: Actualización de datos empréstito
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📋 Inicializar Logs
+        run: |
+          echo "🚀 Iniciando pipeline de empréstito"
+          echo "⏰ $(date)"
+
+          echo "==================================================" > execution_log.txt
+          echo "WORKFLOW - Actualización de datos empréstito" >> execution_log.txt
+          echo "==================================================" >> execution_log.txt
+          echo "Timestamp Inicio: $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> execution_log.txt
+          date +%s > start_time.txt
+          echo "Ejecutado por: ${{ github.actor }}" >> execution_log.txt
+          echo "Trigger: ${{ github.event_name }}" >> execution_log.txt
+          echo "Run ID: ${{ github.run_id }}" >> execution_log.txt
+          echo "Run Number: ${{ github.run_number }}" >> execution_log.txt
+          echo "" >> execution_log.txt
+
+      - name: 1️⃣ Crear Tabla de Proyecciones
+        id: step1
+        run: |
+          echo "📊 Paso 1 - Crear tabla de proyecciones"
+          step1_start=$(date +%s)
+
+          response=$(curl -s -w "\n%{http_code}\n%{size_download}\n%{time_total}" \
+            -X POST "$API_BASE_URL/emprestito/crear-tabla-proyecciones" \
+            -H "Content-Type: application/json")
+
+          http_code=$(echo "$response" | tail -n3 | head -n1)
+          size_bytes=$(echo "$response" | tail -n2 | head -n1)
+          time_seconds=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | head -n -3)
+
+          echo "📋 HTTP: $http_code | 📦 $size_bytes bytes | ⏱️ ${time_seconds}s"
+          echo "$body" | jq '.' 2>/dev/null || echo "$body"
+
+          {
+            echo "---------------------------------------------------"
+            echo "PASO 1 - Crear Tabla de Proyecciones"
+            echo "---------------------------------------------------"
+            echo "Timestamp: $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+            echo "HTTP Status: $http_code"
+            echo "Tamaño respuesta: $size_bytes bytes ($((size_bytes/1024)) KB)"
+            echo "Tiempo respuesta API: ${time_seconds}s"
+            echo "Duración paso: $(($(date +%s) - step1_start))s"
+            echo "$body" | jq -r 'if type=="object" then 
+              "Registros procesados: \(.registros_procesados // .total // "N/A")" 
+              else empty end' 2>/dev/null || echo ""
+            echo ""
+          } >> execution_log.txt
+
+          [ "$http_code" = "200" ] || exit 1
+          echo "✅ Completado"
+
+      - name: 2️⃣ Obtener Procesos SECOP
+        id: step2
+        if: success()
+        run: |
+          echo "🔍 Paso 2 - Obtener procesos SECOP"
+          step2_start=$(date +%s)
+
+          response=$(curl -s -w "\n%{http_code}\n%{size_download}\n%{time_total}" \
+            -X POST "$API_BASE_URL/emprestito/obtener-procesos-secop" \
+            -H "Content-Type: application/json")
+
+          http_code=$(echo "$response" | tail -n3 | head -n1)
+          size_bytes=$(echo "$response" | tail -n2 | head -n1)
+          time_seconds=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | head -n -3)
+
+          echo "📋 HTTP: $http_code | 📦 $size_bytes bytes | ⏱️ ${time_seconds}s"
+          echo "$body" | jq '.' 2>/dev/null || echo "$body"
+
+          {
+            echo "---------------------------------------------------"
+            echo "PASO 2 - Obtener Procesos SECOP"
+            echo "---------------------------------------------------"
+            echo "Timestamp: $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+            echo "HTTP Status: $http_code"
+            echo "Tamaño respuesta: $size_bytes bytes ($((size_bytes/1024)) KB)"
+            echo "Tiempo respuesta API: ${time_seconds}s"
+            echo "Duración paso: $(($(date +%s) - step2_start))s"
+            echo "$body" | jq -r 'if type=="object" then 
+              "Procesos procesados: \(.procesos_procesados // .total // "N/A")" 
+              else empty end' 2>/dev/null || echo ""
+            echo ""
+          } >> execution_log.txt
+
+          [ "$http_code" = "200" ] || exit 1
+          echo "✅ Completado"
+
+      - name: 3️⃣ Obtener Contratos SECOP
+        id: step3
+        if: success()
+        run: |
+          echo "📄 Paso 3 - Obtener contratos SECOP (procesamiento por lotes)"
+          step3_start=$(date +%s)
+
+          offset=0
+          limit=10
+          total_contratos=0
+          total_nuevos=0
+          total_actualizados=0
+          lote_num=1
+
+          while true; do
+            echo "🔄 Procesando lote $lote_num (offset: $offset, limit: $limit)"
+            
+            response=$(curl -s -w "\n%{http_code}\n%{size_download}\n%{time_total}" \
+              --max-time 300 \
+              -X POST "$API_BASE_URL/emprestito/obtener-contratos-secop?offset=$offset&limit=$limit" \
+              -H "Content-Type: application/json")
+            
+            http_code=$(echo "$response" | tail -n3 | head -n1)
+            size_bytes=$(echo "$response" | tail -n2 | head -n1)
+            time_seconds=$(echo "$response" | tail -n1)
+            body=$(echo "$response" | head -n -3)
+            
+            echo "📋 Lote $lote_num - HTTP: $http_code | 📦 $size_bytes bytes | ⏱️ ${time_seconds}s"
+            
+            if [ "$http_code" != "200" ]; then
+              echo "❌ Error en lote $lote_num"
+              echo "$body" | jq '.' 2>/dev/null || echo "$body"
+              exit 1
+            fi
+            
+            # Extraer información del lote
+            mas_registros=$(echo "$body" | jq -r '.resumen_procesamiento.mas_registros // false')
+            siguiente_offset=$(echo "$body" | jq -r '.resumen_procesamiento.siguiente_offset // null')
+            contratos_lote=$(echo "$body" | jq -r '.firebase_operacion.documentos_nuevos + .firebase_operacion.documentos_actualizados')
+            nuevos_lote=$(echo "$body" | jq -r '.firebase_operacion.documentos_nuevos')
+            actualizados_lote=$(echo "$body" | jq -r '.firebase_operacion.documentos_actualizados')
+            
+            total_contratos=$((total_contratos + contratos_lote))
+            total_nuevos=$((total_nuevos + nuevos_lote))
+            total_actualizados=$((total_actualizados + actualizados_lote))
+            
+            echo "✅ Lote $lote_num completado: $contratos_lote contratos ($nuevos_lote nuevos, $actualizados_lote actualizados)"
+            echo "📊 Acumulado: $total_contratos contratos ($total_nuevos nuevos, $total_actualizados actualizados)"
+            
+            # Verificar si hay más registros
+            if [ "$mas_registros" != "true" ] || [ "$siguiente_offset" == "null" ]; then
+              echo "🏁 Todos los lotes procesados"
+              break
+            fi
+            
+            offset=$siguiente_offset
+            lote_num=$((lote_num + 1))
+            
+            # Pequeña pausa entre lotes
+            sleep 2
+          done
+
+          # Logs finales
+          {
+            echo "---------------------------------------------------"
+            echo "PASO 3 - Obtener Contratos SECOP"
+            echo "---------------------------------------------------"
+            echo "Timestamp: $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+            echo "Total de lotes procesados: $lote_num"
+            echo "Total contratos: $total_contratos ($total_nuevos nuevos, $total_actualizados actualizados)"
+            echo "Duración paso: $(($(date +%s) - step3_start))s"
+            echo ""
+          } >> execution_log.txt
+
+          echo "✅ Completado"
+
+      - name: 4️⃣ Obtener Órdenes de Compra TVEC
+        id: step4
+        if: success()
+        run: |
+          echo "📦 Paso 4 - Obtener órdenes de compra TVEC"
+          step4_start=$(date +%s)
+
+          response=$(curl -s -w "\n%{http_code}\n%{size_download}\n%{time_total}" \
+            --max-time 300 \
+            -X POST "$API_BASE_URL/emprestito/obtener-ordenes-compra-TVEC" \
+            -H "Content-Type: application/json")
+
+          http_code=$(echo "$response" | tail -n3 | head -n1)
+          size_bytes=$(echo "$response" | tail -n2 | head -n1)
+          time_seconds=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | head -n -3)
+
+          echo "📋 HTTP: $http_code | 📦 $size_bytes bytes | ⏱️ ${time_seconds}s"
+          echo "$body" | jq '.' 2>/dev/null || echo "$body"
+
+          {
+            echo "---------------------------------------------------"
+            echo "PASO 4 - Obtener Órdenes de Compra TVEC"
+            echo "---------------------------------------------------"
+            echo "Timestamp: $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+            echo "HTTP Status: $http_code"
+            echo "Tamaño respuesta: $size_bytes bytes ($((size_bytes/1024)) KB)"
+            echo "Tiempo respuesta API: ${time_seconds}s"
+            echo "Duración paso: $(($(date +%s) - step4_start))s"
+            echo "$body" | jq -r 'if type=="object" then 
+              "Órdenes procesadas: \(.ordenes_procesadas // .total // "N/A")" 
+              else empty end' 2>/dev/null || echo ""
+            echo ""
+          } >> execution_log.txt
+
+          [ "$http_code" = "200" ] || exit 1
+          echo "✅ Completado"
+
+      - name: ✅ Finalizar Logs
+        if: always()
+        run: |
+          end_time=$(date +%s)
+          start_time=$(cat start_time.txt 2>/dev/null || echo $end_time)
+          duration=$((end_time - start_time))
+
+          status="${{ job.status }}"
+          [ "$status" = "success" ] && icon="✅" || icon="❌"
+
+          {
+            echo "=================================================="
+            echo "RESUMEN FINAL"
+            echo "=================================================="
+            echo "Estado: $status $icon"
+            echo "Timestamp Fin: $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+            echo "Duración Total: ${duration}s ($(echo "scale=2; $duration/60" | bc 2>/dev/null || echo "N/A") min)"
+            echo "=================================================="
+          } >> execution_log.txt
+
+          echo ""
+          echo "📊 RESUMEN DE EJECUCIÓN:"
+          cat execution_log.txt
+
+      - name: 📤 Upload Execution Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: emprestito-execution-logs-${{ github.run_number }}
+          path: execution_log.txt
+          retention-days: 90

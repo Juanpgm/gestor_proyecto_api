@@ -1,0 +1,107 @@
+"""
+Modelos Pydantic para Captura de Estado 360
+Gestión de reconocimiento de unidades de proyecto
+"""
+
+from pydantic import BaseModel, Field, validator
+from typing import Optional, Dict, List
+from datetime import datetime
+
+
+class RegistradoPor(BaseModel):
+    """Modelo para información de quién registra"""
+    username: str = Field(..., description="Nombre de usuario (displayName)")
+    email: str = Field(..., description="Correo electrónico del usuario")
+
+
+class UpEntornoItem(BaseModel):
+    """Modelo para un item del entorno del proyecto"""
+    nombre_centro_gestor: str = Field(..., description="Nombre del centro gestor")
+    solicitud_centro_gestor: str = Field(..., description="Solicitud específica al centro gestor")
+
+
+class UpEntorno(BaseModel):
+    """Modelo para información del entorno del proyecto (lista de centros gestores)"""
+    entornos: List['UpEntornoItem'] = Field(..., description="Lista de centros gestores y sus solicitudes")
+    
+    class Config:
+        """Configuración de Pydantic"""
+        arbitrary_types_allowed = True
+
+
+# Actualizar referencias forward
+UpEntorno.model_rebuild()
+
+
+class CoordinatesGPS(BaseModel):
+    """Modelo para coordenadas GPS"""
+    type: str = Field(..., description="Tipo de geometría (Point, LineString, Polygon, etc.)")
+    coordinates: List = Field(..., description="Coordenadas en formato GeoJSON")
+
+
+class PhotosUrl(BaseModel):
+    """Modelo para URLs de fotos organizadas por estado"""
+    photosBeforeUrl: Optional[str] = Field(None, description="URL de carpeta con fotos 'Antes'")
+    photoWhileUrl: Optional[str] = Field(None, description="URL de carpeta con fotos 'Durante'")
+    photosAfterUrl: Optional[str] = Field(None, description="URL de carpeta con fotos 'Después'")
+
+
+class CapturaEstado360Request(BaseModel):
+    """Modelo de solicitud para captura de estado 360"""
+    upid: str = Field(..., description="ID único de la unidad de proyecto")
+    nombre_up: str = Field(..., description="Nombre de la unidad de proyecto")
+    nombre_up_detalle: str = Field(..., description="Detalle del nombre de la unidad de proyecto")
+    descripcion_intervencion: str = Field(..., description="Descripción de la intervención")
+    solicitud_intervencion: str = Field(..., description="Solicitud de la intervención")
+    up_entorno: UpEntorno = Field(..., description="Información del entorno del proyecto")
+    estado_360: str = Field(..., description="Estado 360 del proyecto ('Antes', 'Durante', 'Después')")
+    requiere_alcalde: bool = Field(..., description="Indica si requiere participación del alcalde")
+    entrega_publica: bool = Field(..., description="Indica si habrá entrega pública")
+    tipo_visita: str = Field(..., description="Tipo de visita ('Verificación' o 'Comunicaciones')")
+    observaciones: Optional[str] = Field(None, description="Observaciones adicionales (opcional)")
+    coordinates_gps: CoordinatesGPS = Field(..., description="Coordenadas GPS del proyecto")
+    registrado_por: RegistradoPor = Field(..., description="Información de quién registra (username y email)")
+    photosUrl: List[str] = Field(..., description="Lista de URLs de fotos a guardar en Firebase según estado_360 (obligatorio)")
+    
+    @validator('estado_360')
+    def validate_estado_360(cls, v):
+        """Validar que el estado_360 sea uno de los valores permitidos"""
+        estados_validos = ["Antes", "Durante", "Después"]
+        if v not in estados_validos:
+            raise ValueError(f"estado_360 debe ser uno de: {', '.join(estados_validos)}")
+        return v
+    
+    @validator('tipo_visita')
+    def validate_tipo_visita(cls, v):
+        """Validar que el tipo_visita sea uno de los valores permitidos"""
+        tipos_validos = ["Verificación", "Comunicaciones"]
+        if v not in tipos_validos:
+            raise ValueError(f"tipo_visita debe ser uno de: {', '.join(tipos_validos)}")
+        return v
+
+
+class CapturaEstado360Response(BaseModel):
+    """Modelo de respuesta para captura de estado 360"""
+    success: bool = Field(..., description="Indica si la operación fue exitosa")
+    message: str = Field(..., description="Mensaje descriptivo del resultado")
+    data: Optional[Dict] = Field(None, description="Datos del registro creado")
+    document_id: Optional[str] = Field(None, description="ID del documento en Firebase")
+    estado_360: Optional[str] = Field(None, description="Estado 360 calculado (Antes/Durante/Después)")
+    photos_uploaded: Optional[List[Dict]] = Field(None, description="Lista de fotos subidas exitosamente")
+    photos_failed: Optional[List[Dict]] = Field(None, description="Lista de fotos que fallaron al subir")
+    timestamp: str = Field(..., description="Timestamp de la operación")
+
+
+# Constantes
+COLLECTION_NAME = "unidades_proyecto_reconocimiento_360"
+
+# Mapeo de estados
+ESTADO_360_MAPPING = {
+    "En alistamiento": "Antes",
+    "En ejecución": "Durante",
+    "Suspendido": "Durante",
+    "Terminado": "Después",
+    "Inaugurado": "Después"
+}
+
+CAPTURA_360_MODELS_AVAILABLE = True
