@@ -8,9 +8,21 @@ from starlette.requests import Request
 from starlette.responses import Response, JSONResponse
 from typing import List
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor
+import asyncio
+import logging
 import time
 
 from .constants import PUBLIC_PATHS, FIREBASE_COLLECTIONS
+
+logger = logging.getLogger(__name__)
+
+# Dedicated thread pool for middleware Firebase calls.
+# Keeps gRPC zombie threads (300s retries on 429) isolated from
+# the default asyncio executor so call_next / other I/O stays healthy.
+_middleware_executor = ThreadPoolExecutor(
+    max_workers=3, thread_name_prefix="mw-fb"
+)
 
 
 class AuthorizationMiddleware(BaseHTTPMiddleware):
@@ -27,24 +39,16 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
         # Verificar si la ruta es pública
         path = request.url.path
         
-        # Logging para debug
-        print(f"🔍 Middleware checking path: {path}")
-        print(f"📋 Public paths: {self.public_paths}")
-        
         # Permitir acceso a rutas públicas
         is_public = any(path.startswith(public_path) for public_path in self.public_paths)
-        print(f"✅ Path is public: {is_public}")
         
         if is_public:
             return await call_next(request)
-        
-        print(f"🔐 Path requires auth: {path}")
         
         # Verificar presencia de token de autorización
         auth_header = request.headers.get("Authorization")
         
         if not auth_header or not auth_header.startswith("Bearer "):
-            print(f"❌ Missing or invalid auth header: {auth_header}")
             return JSONResponse(
                 status_code=401,
                 content={
@@ -56,11 +60,27 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
         try:
             # Extraer token
             token = auth_header.split(" ")[1]
-            print(f"🔑 Token extracted: {token[:20]}...")
             
-            # Verificar token con Firebase
+            # Verificar token en DEDICATED thread pool + asyncio.wait_for.
+            # run_in_executor(dedicated_pool) keeps gRPC retries off the
+            # default executor.  await + wait_for yields to the event loop
+            # so /ping and other requests are not blocked.
             from firebase_admin import auth
-            decoded_token = auth.verify_id_token(token)
+            try:
+                loop = asyncio.get_running_loop()
+                decoded_token = await asyncio.wait_for(
+                    loop.run_in_executor(_middleware_executor, auth.verify_id_token, token),
+                    timeout=8.0
+                )
+            except asyncio.TimeoutError:
+                logger.warning("middleware: verify_id_token timed out for %s", path)
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "detail": "Tiempo de espera agotado verificando token",
+                        "error": "auth_timeout"
+                    }
+                )
             
             # Agregar UID del usuario al request state para uso posterior
             request.state.user_uid = decoded_token['uid']
@@ -79,6 +99,7 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
                 }
             )
         except Exception as e:
+            logger.error("middleware auth error: %s", e)
             return JSONResponse(
                 status_code=500,
                 content={
@@ -157,12 +178,14 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
                 # Agregar detalles de la acción basados en el endpoint
                 log_entry["action"] = self._infer_action(request.method, request.url.path)
                 
-                # Guardar en Firestore de forma asíncrona (sin bloquear)
-                db.collection(FIREBASE_COLLECTIONS["audit_logs"]).add(log_entry)
+                # Fire-and-forget en dedicated thread pool — NO bloquea event loop
+                _middleware_executor.submit(
+                    lambda: db.collection(FIREBASE_COLLECTIONS["audit_logs"]).add(log_entry)
+                )
                 
             except Exception as e:
                 # No fallar el request si falla el logging
-                print(f"⚠️ Error registrando audit log: {e}")
+                logger.warning("Error registrando audit log: %s", e)
         
         return response
     

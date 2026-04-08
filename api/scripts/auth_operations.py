@@ -5,6 +5,8 @@ Compatible con Firebase Authentication y NextJS frontend
 """
 
 import logging
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Any, Optional
 from datetime import datetime
 import re
@@ -495,118 +497,150 @@ async def verify_phone_auth_code(phone_number: str, verification_code: str) -> D
 # FUNCIONES DE VALIDACIÓN DE SESIONES
 # ============================================================================
 
+_session_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="auth-session")
+
+
+def _verify_token_sync(id_token: str):
+    """Verificar token JWT (operación generalmente rápida, usa cache de llaves públicas)."""
+    auth_client = get_auth_client()
+    return auth_client.verify_id_token(id_token)
+
+
+def _get_user_and_firestore_sync(uid: str):
+    """Obtener datos de usuario de Auth + Firestore (puede ser lento si hay quota issues)."""
+    auth_client = get_auth_client()
+    user_record = auth_client.get_user(uid)
+    firestore_client = get_firestore_client()
+    user_doc = firestore_client.collection('users').document(uid).get()
+    return user_record, user_doc
+
+
+def _persist_user_sync(uid: str, user_record, user_payload: dict, user_doc_exists: bool, firestore_data: dict):
+    """Persistir/sincronizar datos del usuario en Firestore (fire-and-forget)."""
+    try:
+        firestore_client = get_firestore_client()
+        if not user_doc_exists:
+            firestore_client.collection('users').document(uid).set({
+                "uid": uid,
+                "email": user_record.email,
+                "fullname": user_payload.get("fullname"),
+                "cellphone": user_payload.get("cellphone"),
+                "nombre_centro_gestor": user_payload.get("nombre_centro_gestor"),
+                "roles": user_payload.get("roles", [DEFAULT_SESSION_ROLE]),
+                "created_at": datetime.now(),
+                "updated_at": datetime.now(),
+                "email_verified": user_record.email_verified,
+                "is_active": True,
+                "auth_providers": [provider.provider_id for provider in user_record.provider_data]
+            }, merge=True)
+        else:
+            existing_roles = firestore_data.get("roles")
+            normalized_existing = _normalize_roles(existing_roles)
+            if normalized_existing != user_payload.get("roles", []):
+                firestore_client.collection('users').document(uid).update({
+                    "roles": user_payload.get("roles", [DEFAULT_SESSION_ROLE]),
+                    "updated_at": datetime.now()
+                })
+    except Exception as e:
+        logger.warning(f"auth.validate_session could not persist/sync for uid={uid}: {e}")
+
+
 async def validate_user_session(id_token: str) -> Dict[str, Any]:
     """
-    Validar sesión activa usando ID token de Firebase
+    Validar sesión activa usando ID token de Firebase.
+
+    Estrategia resiliente en 2 fases:
+    1. Verificar JWT (rápido, ~local) — obligatorio.
+    2. Enriquecer con Auth.get_user + Firestore — best-effort con timeout corto.
+       Si falla, retorna sesión válida con datos básicos del token.
+    
+    Todas las operaciones Firebase corren en un ThreadPoolExecutor dedicado
+    y se esperan con asyncio.wait_for para NO bloquear el event loop.
     """
+    loop = asyncio.get_running_loop()
+
+    # --- Fase 1: Verificar token (timeout 5s) ---
     try:
-        auth_client = get_auth_client()
-        
-        # Verificar token
-        try:
-            decoded_token = auth_client.verify_id_token(id_token)
-        except firebase_exceptions.InvalidArgumentError:
-            return {
-                "valid": False,
-                "error": "Token inválido",
-                "code": "INVALID_TOKEN"
-            }
-        except firebase_exceptions.ExpiredIdTokenError:
-            return {
-                "valid": False,
-                "error": "Token expirado",
-                "code": "EXPIRED_TOKEN"
-            }
-        
-        uid = decoded_token['uid']
-        
-        # Obtener información del usuario
-        user_record = auth_client.get_user(uid)
-        
-        if user_record.disabled:
-            return {
-                "valid": False,
-                "error": "Usuario deshabilitado",
-                "code": "USER_DISABLED"
-            }
-        
-        # Obtener datos de Firestore
-        firestore_client = get_firestore_client()
-        user_doc = firestore_client.collection('users').document(uid).get()
-        
-        firestore_data = {}
-        if user_doc.exists:
-            firestore_data = user_doc.to_dict()
-
-            if not firestore_data.get('is_active', True):
-                return {
-                    "valid": False,
-                    "error": "Cuenta desactivada",
-                    "code": "ACCOUNT_INACTIVE"
-                }
-
-        user_payload = _build_user_payload(user_record, firestore_data)
-
-        if not user_doc.exists:
-            try:
-                firestore_client.collection('users').document(uid).set({
-                    "uid": uid,
-                    "email": user_record.email,
-                    "fullname": user_payload.get("fullname"),
-                    "cellphone": user_payload.get("cellphone"),
-                    "nombre_centro_gestor": user_payload.get("nombre_centro_gestor"),
-                    "roles": user_payload.get("roles", [DEFAULT_SESSION_ROLE]),
-                    "created_at": datetime.now(),
-                    "updated_at": datetime.now(),
-                    "email_verified": user_record.email_verified,
-                    "is_active": True,
-                    "auth_providers": [provider.provider_id for provider in user_record.provider_data]
-                }, merge=True)
-            except Exception as persist_error:
-                logger.warning(f"auth.validate_session could not persist default profile for uid={uid}: {persist_error}")
-        else:
-            try:
-                existing_roles = firestore_data.get("roles")
-                normalized_existing = _normalize_roles(existing_roles)
-                if normalized_existing != user_payload.get("roles", []):
-                    firestore_client.collection('users').document(uid).update({
-                        "roles": user_payload.get("roles", [DEFAULT_SESSION_ROLE]),
-                        "updated_at": datetime.now()
-                    })
-            except Exception as sync_error:
-                logger.warning(f"auth.validate_session could not sync roles for uid={uid}: {sync_error}")
-
-        logger.info(
-            "auth.validate_session.hydration uid=%s firestore_doc=%s roles=%s source=%s profile_complete=%s",
-            uid,
-            bool(user_doc.exists),
-            user_payload.get("roles", []),
-            user_payload.get("roles_source"),
-            user_payload.get("profile_complete")
+        decoded_token = await asyncio.wait_for(
+            loop.run_in_executor(_session_executor, _verify_token_sync, id_token),
+            timeout=5.0
         )
-        
+    except asyncio.TimeoutError:
+        logger.error("verify_id_token timed out after 5s")
+        return {"valid": False, "error": "Tiempo de espera agotado verificando token", "code": "SESSION_TIMEOUT"}
+    except firebase_exceptions.InvalidArgumentError:
+        return {"valid": False, "error": "Token inválido", "code": "INVALID_TOKEN"}
+    except firebase_exceptions.ExpiredIdTokenError:
+        return {"valid": False, "error": "Token expirado", "code": "EXPIRED_TOKEN"}
+    except Exception as e:
+        logger.error(f"Error verifying token: {e}")
+        return {"valid": False, "error": "Error validando sesión", "code": "SESSION_VALIDATION_ERROR"}
+
+    uid = decoded_token['uid']
+    token_data = {
+        "iss": decoded_token.get('iss'),
+        "aud": decoded_token.get('aud'),
+        "auth_time": decoded_token.get('auth_time'),
+        "exp": decoded_token.get('exp'),
+        "iat": decoded_token.get('iat'),
+        "firebase": decoded_token.get('firebase', {})
+    }
+
+    # --- Fase 2: Enriquecer con Auth + Firestore (timeout 8s, best-effort) ---
+    try:
+        user_record, user_doc = await asyncio.wait_for(
+            loop.run_in_executor(_session_executor, _get_user_and_firestore_sync, uid),
+            timeout=8.0
+        )
+    except (asyncio.TimeoutError, Exception) as e:
+        logger.warning(f"auth.validate_session enrichment failed for uid={uid}: {e}")
+        # Retornar sesión válida con datos básicos del token
         return {
             "valid": True,
-            "user": user_payload,
-            "token_data": {
-                "iss": decoded_token.get('iss'),
-                "aud": decoded_token.get('aud'),
-                "auth_time": decoded_token.get('auth_time'),
-                "exp": decoded_token.get('exp'),
-                "iat": decoded_token.get('iat'),
-                "firebase": decoded_token.get('firebase', {})
+            "user": {
+                "uid": uid,
+                "email": decoded_token.get('email'),
+                "email_verified": decoded_token.get('email_verified', False),
+                "roles": [DEFAULT_SESSION_ROLE],
+                "roles_source": "token_fallback",
+                "profile_complete": False,
             },
+            "token_data": token_data,
             "session_valid": True,
-            "verified_at": datetime.now().isoformat()
+            "verified_at": datetime.now().isoformat(),
+            "degraded": True,
         }
-        
-    except Exception as e:
-        logger.error(f"Error validating user session: {e}")
-        return {
-            "valid": False,
-            "error": "Error validando sesión",
-            "code": "SESSION_VALIDATION_ERROR"
-        }
+
+    if user_record.disabled:
+        return {"valid": False, "error": "Usuario deshabilitado", "code": "USER_DISABLED"}
+
+    firestore_data = {}
+    if user_doc.exists:
+        firestore_data = user_doc.to_dict()
+        if not firestore_data.get('is_active', True):
+            return {"valid": False, "error": "Cuenta desactivada", "code": "ACCOUNT_INACTIVE"}
+
+    user_payload = _build_user_payload(user_record, firestore_data)
+
+    # Persistir/sincronizar en background (fire-and-forget, no bloquea la respuesta)
+    _session_executor.submit(_persist_user_sync, uid, user_record, user_payload, user_doc.exists, firestore_data)
+
+    logger.info(
+        "auth.validate_session.hydration uid=%s firestore_doc=%s roles=%s source=%s profile_complete=%s",
+        uid,
+        bool(user_doc.exists),
+        user_payload.get("roles", []),
+        user_payload.get("roles_source"),
+        user_payload.get("profile_complete")
+    )
+
+    return {
+        "valid": True,
+        "user": user_payload,
+        "token_data": token_data,
+        "session_valid": True,
+        "verified_at": datetime.now().isoformat()
+    }
 
 # ============================================================================
 # FUNCIONES DE LOGOUT Y REVOCACIÓN

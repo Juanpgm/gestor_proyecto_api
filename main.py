@@ -47,6 +47,7 @@ from datetime import datetime
 import json
 import re
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse
 from shapely.geometry import shape as shapely_shape, Point as ShapelyPoint
 
@@ -103,6 +104,10 @@ except ImportError as e:
     AUTH_PUBLIC_PATHS = []
 
 # 🔐 FUNCIÓN HELPER PARA VERIFICAR AUTENTICACIÓN FIREBASE
+# Dedicated thread pool for Firebase token verification in route dependencies.
+# Keeps the default asyncio executor free for call_next / non-Firebase I/O.
+_route_auth_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="route-auth")
+
 async def verify_firebase_token(request: Request) -> dict:
     """
     Verifica el token de Firebase desde el header Authorization
@@ -123,26 +128,39 @@ async def verify_firebase_token(request: Request) -> dict:
     try:
         token = auth_header.split(" ")[1]
         
-        # Verificar token con Firebase
+        # Verificar token con Firebase en DEDICATED thread pool
         from firebase_admin import auth
-        decoded_token = auth.verify_id_token(token)
         
-        # Obtener datos adicionales del usuario desde Firestore
-        from database.firebase_config import get_firestore_client
-        firestore_client = get_firestore_client()
+        def _verify_sync():
+            decoded_token = auth.verify_id_token(token)
+            from database.firebase_config import get_firestore_client
+            firestore_client = get_firestore_client()
+            user_doc = firestore_client.collection('users').document(decoded_token['uid']).get()
+            user_data = {}
+            if user_doc.exists:
+                user_data = user_doc.to_dict()
+            return {
+                "uid": decoded_token['uid'],
+                "email": decoded_token.get('email'),
+                "email_verified": decoded_token.get('email_verified', False),
+                "firestore_data": user_data
+            }
         
-        user_doc = firestore_client.collection('users').document(decoded_token['uid']).get()
-        user_data = {}
-        if user_doc.exists:
-            user_data = user_doc.to_dict()
-        
-        return {
-            "uid": decoded_token['uid'],
-            "email": decoded_token.get('email'),
-            "email_verified": decoded_token.get('email_verified', False),
-            "firestore_data": user_data
-        }
-        
+        loop = asyncio.get_running_loop()
+        try:
+            return await asyncio.wait_for(
+                loop.run_in_executor(_route_auth_executor, _verify_sync),
+                timeout=10.0
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "success": False,
+                    "error": "Tiempo de espera agotado verificando autenticación",
+                    "code": "AUTH_TIMEOUT"
+                }
+            )
     except auth.InvalidIdTokenError:
         raise HTTPException(
             status_code=401,
@@ -1338,8 +1356,21 @@ async def health_check():
         
         # Verificar Firebase usando configuración funcional
         if FIREBASE_AVAILABLE:
-            # Test default project
-            firebase_status = validate_firebase_connection()
+            # Test default project with timeout on dedicated executor
+            # to avoid blocking when gRPC retries exhaust the default pool
+            try:
+                loop = asyncio.get_running_loop()
+                firebase_status = await asyncio.wait_for(
+                    loop.run_in_executor(_route_auth_executor, validate_firebase_connection),
+                    timeout=5.0
+                )
+            except asyncio.TimeoutError:
+                firebase_status = {
+                    "connected": True,
+                    "status": "timeout",
+                    "message": "Firebase check timed out (possible quota issue)",
+                    "project_id": os.getenv("FIREBASE_PROJECT_ID", "unknown")
+                }
             basic_response["services"]["firebase"] = firebase_status
             basic_response["services"]["scripts"] = {"available": SCRIPTS_AVAILABLE}
             
@@ -4155,7 +4186,7 @@ class SolicitudCambioUnidadProyectoRequest(BaseModel):
 
     class Config:
         extra = "allow"
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "upid": "UNP-1",
                 "aprobado": True,
@@ -4588,7 +4619,7 @@ class ModificarUnidadProyectoRequest(BaseModel):
 
     class Config:
         extra = "allow"
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "upid": "UNP-1",
                 "aprobado": True,
@@ -4626,7 +4657,7 @@ class ModificarIntervencionRequest(BaseModel):
 
     class Config:
         extra = "allow"
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "intervencion_id": "UP-001-INT-1",
                 "aprobado": False,
@@ -10647,7 +10678,7 @@ class SolicitudCambioEmprestitoRequest(BaseModel):
     motivo: Optional[str] = Field(None, description="Motivo de la solicitud de cambio")
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "tipo_registro": "contrato",
                 "referencia_id": "CONT-2024-001",
