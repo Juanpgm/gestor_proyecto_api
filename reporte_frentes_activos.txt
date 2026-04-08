@@ -1,0 +1,653 @@
+INFO:database.firebase_config:≡ƒöÉ Using configured project: unidad-cumplimiento-aa245
+INFO:numexpr.utils:Note: NumExpr detected 16 cores but "NUMEXPR_MAX_THREADS" not set, so enforcing safe limit of 8.
+INFO:numexpr.utils:NumExpr defaulting to 8 threads.
+INFO:api.scripts.emprestito_operations:Γ£à S3DocumentManager disponible - funcionalidad de carga de documentos habilitada
+INFO:database.firebase_config:≡ƒÜÇ Initializing Firebase: unidad-cumplimiento-aa245
+INFO:database.firebase_config:∩┐╜ Attempting Application Default Credentials...
+INFO:database.firebase_config:Γ£à Firebase initialized with Application Default Credentials
+WARNING:api.scripts.control_cambios_emprestito:Firebase no disponible para control de cambios
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1768323722.992585   11684 alts_credentials.cc:93] ALTS creds ignored. Not running on GCP and untrusted ALTS is not enabled.
+====================================================================================================
+AN├üLISIS COMPLETO: FRENTES ACTIVOS
+====================================================================================================
+∩┐╜ M├│dulo unidades_proyecto inicializado sin cache (programaci├│n funcional)
+Γ£à Emprestito operations imported successfully - AVAILABLE: True
+Γ£à Emprestito optimized functions loaded - OPTIMIZED_AVAILABLE: True
+Γ£à Proyectos presupuestales operations imported successfully - AVAILABLE: True
+Γ£à TVEC enrich operations imported successfully - AVAILABLE: True
+Γ£à Ordenes compra operations imported successfully - AVAILABLE: True
+Γ£à Flujo caja operations imported successfully - AVAILABLE: True
+Γ£à Captura 360 operations imported successfully - AVAILABLE: True
+≡ƒöä DEBUG: Cargando datos desde Firestore
+≡ƒöì DEBUG Doc 1: UNP-1
+   Keys: ['created_at', '_hash', 'intervenciones', 'bpin', 'comuna_corregimiento', 'has_geometry', 'geometry', 'lon', 'avance_obra', 'direccion']
+≡ƒöì DEBUG Doc 2: UNP-10
+   Keys: ['created_at', '_hash', 'intervenciones', 'bpin', 'comuna_corregimiento', 'has_geometry', 'geometry', 'lon', 'avance_obra', 'direccion']
+≡ƒöì DEBUG Doc 3: UNP-100
+   Keys: ['created_at', '_hash', 'intervenciones', 'bpin', 'comuna_corregimiento', 'has_geometry', 'geometry', 'lon', 'avance_obra', 'direccion']
+≡ƒù║∩╕Å DEBUG: Procesados 1322 docs, incluidos 1322 registros totales (con y sin geometr├¡a)
+
+====================================================================================================
+RESUMEN GENERAL
+====================================================================================================
+Total UNIDADES con frentes activos: 65
+Total INTERVENCIONES con frente activo: 88
+
+====================================================================================================
+DISTRIBUCI├ôN POR GEOMETR├ìA
+====================================================================================================
+Γ£à UNIDADES con geometr├¡a v├ílida: 49 (49 intervenciones)
+Γ¥î UNIDADES sin geometr├¡a v├ílida: 16 (39 intervenciones)
+
+====================================================================================================
+DETALLE: UNIDADES CON GEOMETR├ìA V├üLIDA (49 unidades)
+====================================================================================================
+
+1. UNP-110 - IPS - Agua Blanca
+   Centro Gestor: Secretar├¡a de Salud P├║blica
+   Ubicaci├│n: Aguablanca - COMUNA 11
+   Coordenadas: [-76.5187989, 3.4319773]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+2. UNP-112 - I.E. Libardo Madrid Valderrama
+   Centro Gestor: Secretar├¡a de Educaci├│n
+   Ubicaci├│n: Uni├│n de Vivienda Popular - COMUNA 16
+   Coordenadas: [-76.511665, 3.41203]
+   Intervenciones con frente activo (1):
+      1) Rehabilitaci├│n / Reforzamiento - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+3. UNP-113 - I.E. Libardo Madrid Valderrama
+   Centro Gestor: Secretar├¡a de Educaci├│n
+   Ubicaci├│n: Antonio Nari├▒o - COMUNA 16
+   Coordenadas: [-76.50841, 3.41684]
+   Intervenciones con frente activo (1):
+      1) Obra nueva - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+4. UNP-114 - I.E. Carlos Holmes Trujillo
+   Centro Gestor: Secretar├¡a de Educaci├│n
+   Ubicaci├│n: Rep├║blica de Israel - COMUNA 16
+   Coordenadas: [-76.510859, 3.406141]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+5. UNP-115 - I.E. Donald Rodrigo Tafur
+   Centro Gestor: Secretar├¡a de Educaci├│n
+   Ubicaci├│n: Uni├│n de Vivienda Popular - COMUNA 16
+   Coordenadas: [-76.512651, 3.41289]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+6. UNP-118 - I.E. Polit├⌐cnico Municipal de Cali
+   Centro Gestor: Secretar├¡a de Educaci├│n
+   Ubicaci├│n: Caldas - COMUNA 18
+   Coordenadas: [-76.549164, 3.395189]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+7. UNP-121 - IPS - Diamante
+   Centro Gestor: Secretar├¡a de Salud P├║blica
+   Ubicaci├│n: El Diamante - COMUNA 13
+   Coordenadas: [-76.5027364, 3.4193991]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+8. UNP-124 - I.E. Eustaquio Palacios
+   Centro Gestor: Secretar├¡a de Educaci├│n
+   Ubicaci├│n: El Lido - COMUNA 19
+   Coordenadas: [-76.552507, 3.421845]
+   Intervenciones con frente activo (1):
+      1) Rehabilitaci├│n / Reforzamiento - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+9. UNP-125 - I.E. Liceo Departamental
+   Centro Gestor: Secretar├¡a de Educaci├│n
+   Ubicaci├│n: El Cedro - COMUNA 19
+   Coordenadas: [-76.536751, 3.435893]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+10. UNP-128 - I.E. Eustaquio Palacios
+   Centro Gestor: Secretar├¡a de Educaci├│n
+   Ubicaci├│n: Silo├⌐ - COMUNA 20
+   Coordenadas: [-76.556922, 3.426566]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+11. UNP-136 - I.E. Desepaz
+   Centro Gestor: Secretar├¡a de Educaci├│n
+   Ubicaci├│n: Desepaz Invicali - COMUNA 21
+   Coordenadas: [-76.463352, 3.427323]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+12. UNP-140 - I.E. Felidia
+   Centro Gestor: Secretar├¡a de Educaci├│n
+   Ubicaci├│n: Felidia (Cabecera) - Felidia
+   Coordenadas: [-76.627903, 3.467604]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+13. UNP-142 - I.E. Golondrinas
+   Centro Gestor: Secretar├¡a de Educaci├│n
+   Ubicaci├│n: Golondrinas (Cabecera) - Golondrinas
+   Coordenadas: [-76.55174, 3.497367]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+14. UNP-144 - I.E. la Buitrera
+   Centro Gestor: Secretar├¡a de Educaci├│n
+   Ubicaci├│n: Buitrera (Cabecera) - La Buitrera
+   Coordenadas: [-76.56409, 3.3766405]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+15. UNP-148 - I.E. Francisco Jose Lloreda Mera
+   Centro Gestor: Secretar├¡a de Educaci├│n
+   Ubicaci├│n: La Elvira (Cabecera) - La Elvira
+   Coordenadas: [-76.607627, 3.520332]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+16. UNP-149 - I.E. la Leonera
+   Centro Gestor: Secretar├¡a de Educaci├│n
+   Ubicaci├│n: El Pajuil - La Leonera
+   Coordenadas: [-76.632019, 3.453399]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+17. UNP-152 - I.E. Montebello
+   Centro Gestor: Secretar├¡a de Educaci├│n
+   Ubicaci├│n: Campoalegre - Montebello
+   Coordenadas: [-76.555309, 3.471913]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+18. UNP-165 - IPS - los Lagos
+   Centro Gestor: Secretar├¡a de Salud P├║blica
+   Ubicaci├│n: Omar Torrijos - COMUNA 13
+   Coordenadas: [-76.4868522, 3.4266543]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+19. UNP-205 - IPS - Petecuy Iii
+   Centro Gestor: Secretar├¡a de Salud P├║blica
+   Ubicaci├│n: Petecuy III - COMUNA 06
+   Coordenadas: [-76.4813057, 3.4756801]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+20. UNP-207 - IPS - Alirio Mora
+   Centro Gestor: Secretar├¡a de Salud P├║blica
+   Ubicaci├│n: Alirio Mora Beltr├ín - COMUNA 14
+   Coordenadas: [-76.4807535, 3.4401423]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+21. UNP-211 - IPS - Pizamos
+   Centro Gestor: Secretar├¡a de Salud P├║blica
+   Ubicaci├│n: Pizamos I - COMUNA 21
+   Coordenadas: [-76.5038873, 3.3956876]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+22. UNP-212 - IPS - Cascajal
+   Centro Gestor: Secretar├¡a de Salud P├║blica
+   Ubicaci├│n: Cascajal - Corregimiento
+   Coordenadas: [-76.4934401, 3.3168969]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+23. UNP-213 - IPS - Golondrinas
+   Centro Gestor: Secretar├¡a de Salud P├║blica
+   Ubicaci├│n: Golondrinas - Corregimiento
+   Coordenadas: [-76.5533497, 3.4959823]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+24. UNP-214 - IPS - la Voragine
+   Centro Gestor: Secretar├¡a de Salud P├║blica
+   Ubicaci├│n: La Voragine - Corregimiento
+   Coordenadas: [-76.5917672, 3.3439569]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+25. UNP-216 - IPS - Charco Azul
+   Centro Gestor: Secretar├¡a de Salud P├║blica
+   Ubicaci├│n: Charco Azul - COMUNA 13
+   Coordenadas: [-76.4858078, 3.4403262]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+26. UNP-221 - I.E. Isaias Gamboa
+   Centro Gestor: Secretar├¡a de Educaci├│n
+   Ubicaci├│n: Terron Colorado - COMUNA 01
+   Coordenadas: [-76.555957, 3.451589]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+27. UNP-225 - I.E. Santa Cecilia
+   Centro Gestor: Secretar├¡a de Educaci├│n
+   Ubicaci├│n: Las Golondrinas - COMUNA 02
+   Coordenadas: [-76.537987, 3.462376]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+28. UNP-227 - IPS - Ciudad Cordoba
+   Centro Gestor: Secretar├¡a de Salud P├║blica
+   Ubicaci├│n: Ciudad C├│rdoba - COMUNA 15
+   Coordenadas: [-76.5143012, 3.3959662]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+29. UNP-233 - I.E. Normal Superior los Farallones
+   Centro Gestor: Secretar├¡a de Educaci├│n
+   Ubicaci├│n: Navarro - La Chanca - COMUNA 03
+   Coordenadas: [-76.543301, 3.4423955]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+30. UNP-234 - I.E. Veinte de Julio
+   Centro Gestor: Secretar├¡a de Educaci├│n
+   Ubicaci├│n: Sultana - Berl├¡n - San Francisco - COMUNA 04
+   Coordenadas: [-76.517177, 3.467612]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+31. UNP-238 - IPS - Fray Damian
+   Centro Gestor: Secretar├¡a de Salud P├║blica
+   Ubicaci├│n: Fray Dami├ín - COMUNA 03
+   Coordenadas: [-76.52777633, 3.4435775]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+32. UNP-241 - I.E. Simon Rodriguez
+   Centro Gestor: Secretar├¡a de Educaci├│n
+   Ubicaci├│n: El Sena - COMUNA 05
+   Coordenadas: [-76.503852, 3.465133]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+33. UNP-244 - I.E. Pedro Antonio Molina
+   Centro Gestor: Secretar├¡a de Educaci├│n
+   Ubicaci├│n: Jorge Eli├⌐cer Gait├ín - COMUNA 06
+   Coordenadas: [-76.484635, 3.472084]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+34. UNP-249 - IPS - Popular
+   Centro Gestor: Secretar├¡a de Salud P├║blica
+   Ubicaci├│n: Popular - COMUNA 04
+   Coordenadas: [-76.5093116, 3.472787]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+35. UNP-252 - I.E. Santa Fe
+   Centro Gestor: Secretar├¡a de Educaci├│n
+   Ubicaci├│n: La Floresta - COMUNA 08
+   Coordenadas: [-76.510453, 3.442719]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+36. UNP-253 - I.E. Juan de Ampudia
+   Centro Gestor: Secretar├¡a de Educaci├│n
+   Ubicaci├│n: Villa Colombia - COMUNA 08
+   Coordenadas: [-76.494676, 3.448409]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+37. UNP-254 - I.E. Villa Colombia
+   Centro Gestor: Secretar├¡a de Educaci├│n
+   Ubicaci├│n: El Troncal - COMUNA 08
+   Coordenadas: [-76.502158, 3.448096]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+38. UNP-260 - IPS - Puerto Mallarino
+   Centro Gestor: Secretar├¡a de Salud P├║blica
+   Ubicaci├│n: Puerto Mallarino - COMUNA 07
+   Coordenadas: [-76.4801527, 3.449432]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+39. UNP-263 - I.E. Carlos Holguin Lloreda
+   Centro Gestor: Secretar├¡a de Educaci├│n
+   Ubicaci├│n: Crist├│bal Col├│n - COMUNA 10
+   Coordenadas: [-76.52298, 3.410716]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+40. UNP-264 - I.E. Jose Maria Vivas Balcazar
+   Centro Gestor: Secretar├¡a de Educaci├│n
+   Ubicaci├│n: La Selva - COMUNA 10
+   Coordenadas: [-76.530654, 3.411182]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+41. UNP-265 - I.E. Rafael Navia Varon
+   Centro Gestor: Secretar├¡a de Educaci├│n
+   Ubicaci├│n: Departamental - COMUNA 10
+   Coordenadas: [-76.536205, 3.413665]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+42. UNP-271 - IPS - las Ceibas
+   Centro Gestor: Secretar├¡a de Salud P├║blica
+   Ubicaci├│n: Las Ceibas - COMUNA 07
+   Coordenadas: [-76.487183, 3.4577129]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+43. UNP-272 - I.E. Agustin Nieto Caballero
+   Centro Gestor: Secretar├¡a de Educaci├│n
+   Ubicaci├│n: El Jardin - COMUNA 11
+   Coordenadas: [-76.51825533, 3.42024433]
+   Intervenciones con frente activo (1):
+      1) Rehabilitaci├│n / Reforzamiento - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+44. UNP-273 - I.E. Boyaca
+   Centro Gestor: Secretar├¡a de Educaci├│n
+   Ubicaci├│n: La Independencia - COMUNA 11
+   Coordenadas: [-76.518457, 3.41922]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+45. UNP-274 - I.E. Ciudad Modelo
+   Centro Gestor: Secretar├¡a de Educaci├│n
+   Ubicaci├│n: Los Sauces - COMUNA 11
+   Coordenadas: [-76.513804, 3.417835]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+46. UNP-279 - I.E. el Diamante
+   Centro Gestor: Secretar├¡a de Educaci├│n
+   Ubicaci├│n: El Diamante - COMUNA 13
+   Coordenadas: [-76.501795, 3.419867]
+   Intervenciones con frente activo (1):
+      1) Obra nueva - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+47. UNP-282 - IPS - Belalcazar
+   Centro Gestor: Secretar├¡a de Salud P├║blica
+   Ubicaci├│n: Belalc├ízar - COMUNA 09
+   Coordenadas: [-76.5232804, 3.4386922]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+48. UNP-286 - I.E. Carlos Holguin Mallarino
+   Centro Gestor: Secretar├¡a de Educaci├│n
+   Ubicaci├│n: Mojica - COMUNA 15
+   Coordenadas: [-76.485606, 3.414261]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+49. UNP-287 - I.E. Gabriel Garcia Marquez
+   Centro Gestor: Secretar├¡a de Educaci├│n
+   Ubicaci├│n: Laureano G├│mez - COMUNA 15
+   Coordenadas: [-76.496019, 3.413599]
+   Intervenciones con frente activo (1):
+      1) Adecuaciones - En ejecuci├│n
+         A├▒o: 2025 | Frente: Frente activo
+
+====================================================================================================
+DETALLE: UNIDADES SIN GEOMETR├ìA V├üLIDA (16 unidades)
+====================================================================================================
+ΓÜá∩╕Å  ESTAS UNIDADES NO SE PUEDEN VISUALIZAR EN EL MAPA
+====================================================================================================
+
+≡ƒôì Departamento Administrativo de Gesti├│n del Medio Ambiente
+   Total unidades: 4 | Total intervenciones: 13
+   ------------------------------------------------------------------------------------------
+
+   1. UNP-84 - Parque Parroquia Santa Teresa de Jes├║s
+      Ubicaci├│n: Metropolitano del Norte - COMUNA 03
+      Coordenadas: [0, 0] ΓÜá∩╕Å  [SIN COORDENADAS REALES]
+      Intervenciones con frente activo (6):
+         1) Adecuaciones - En ejecuci├│n
+            A├▒o: 2024 | Frente: Frente activo
+         2) Adecuaciones - En ejecuci├│n
+            A├▒o: 2024 | Frente: Frente activo
+         3) Adecuaciones - En ejecuci├│n
+            A├▒o: 2024 | Frente: Frente activo
+         4) Adecuaciones - En ejecuci├│n
+            A├▒o: 2024 | Frente: Frente activo
+         5) Adecuaciones - En ejecuci├│n
+            A├▒o: 2024 | Frente: Frente activo
+         6) Adecuaciones - En ejecuci├│n
+            A├▒o: 2024 | Frente: Frente activo
+
+   2. UNP-85 - Zona Verde Ca├▒averalejo Seguros Patria Niza
+      Ubicaci├│n: Valle del Lili - COMUNA 05
+      Coordenadas: [0, 0] ΓÜá∩╕Å  [SIN COORDENADAS REALES]
+      Intervenciones con frente activo (5):
+         1) Adecuaciones - En ejecuci├│n
+            A├▒o: 2024 | Frente: Frente activo
+         2) Adecuaciones - En ejecuci├│n
+            A├▒o: 2024 | Frente: Frente activo
+         3) Adecuaciones - En ejecuci├│n
+            A├▒o: 2024 | Frente: Frente activo
+         4) Adecuaciones - En ejecuci├│n
+            A├▒o: 2024 | Frente: Frente activo
+         5) Adecuaciones - En ejecuci├│n
+            A├▒o: 2024 | Frente: Frente activo
+
+   3. UNP-87 - Parque del Barrio Manuela Beltran
+      Ubicaci├│n: Manuela Beltr├ín - COMUNA 17
+      Coordenadas: [0, 0] ΓÜá∩╕Å  [SIN COORDENADAS REALES]
+      Intervenciones con frente activo (1):
+         1) Adecuaciones - En ejecuci├│n
+            A├▒o: 2024 | Frente: Frente activo
+
+   4. UNP-88 - Separador Asturias, Kenedy, Nueva Floresta, Rodeo, Sindical
+      Ubicaci├│n: Crist├│bal Col├│n - COMUNA 12
+      Coordenadas: [0, 0] ΓÜá∩╕Å  [SIN COORDENADAS REALES]
+      Intervenciones con frente activo (1):
+         1) Adecuaciones - En ejecuci├│n
+            A├▒o: 2024 | Frente: Frente activo
+
+≡ƒôì Secretar├¡a de Cultura
+   Total unidades: 2 | Total intervenciones: 2
+   ------------------------------------------------------------------------------------------
+
+   1. UNP-11 - Parque Obrero
+      Ubicaci├│n: Obrero - COMUNA 09
+      Coordenadas: [0, 0] ΓÜá∩╕Å  [SIN COORDENADAS REALES]
+      Intervenciones con frente activo (1):
+         1) Obra nueva - En ejecuci├│n
+            A├▒o: 2024 | Frente: Frente activo
+
+   2. UNP-12 - Parque Cultural Parque Pac├¡fico
+      Ubicaci├│n: Berlin - COMUNA 02
+      Coordenadas: [0, 0] ΓÜá∩╕Å  [SIN COORDENADAS REALES]
+      Intervenciones con frente activo (1):
+         1) Obra nueva - En ejecuci├│n
+            A├▒o: 2024 | Frente: Frente activo
+
+≡ƒôì Secretar├¡a de Desarrollo Territorial y Participaci├│n Ciudadana
+   Total unidades: 1 | Total intervenciones: 8
+   ------------------------------------------------------------------------------------------
+
+   1. UNP-63 - C.a.l.i. 12
+      Ubicaci├│n: Parcelaciones Pance y la Mar├¡a - COMUNA 12
+      Coordenadas: [0, 0] ΓÜá∩╕Å  [SIN COORDENADAS REALES]
+      Intervenciones con frente activo (8):
+         1) Adecuaciones - En ejecuci├│n
+            A├▒o: 2025 | Frente: Frente activo
+         2) Adecuaciones - En ejecuci├│n
+            A├▒o: 2025 | Frente: Frente activo
+         3) Adecuaciones - En ejecuci├│n
+            A├▒o: 2025 | Frente: Frente activo
+         4) Adecuaciones - En ejecuci├│n
+            A├▒o: 2025 | Frente: Frente activo
+         5) Adecuaciones - En ejecuci├│n
+            A├▒o: 2026 | Frente: Frente activo
+         6) Adecuaciones - En ejecuci├│n
+            A├▒o: 2025 | Frente: Frente activo
+         7) Adecuaciones - En ejecuci├│n
+            A├▒o: 2025 | Frente: Frente activo
+         8) Adecuaciones - En ejecuci├│n
+            A├▒o: 2026 | Frente: Frente activo
+
+≡ƒôì Secretar├¡a del Deporte y la Recreaci├│n
+   Total unidades: 9 | Total intervenciones: 16
+   ------------------------------------------------------------------------------------------
+
+   1. UNP-21 - Cancha Multiple de Baloncesto Alfonso Lopez Ii
+      Ubicaci├│n: REMANSOS DE COMFANDI - COMUNA 10
+      Coordenadas: [0, 0] ΓÜá∩╕Å  [SIN COORDENADAS REALES]
+      Intervenciones con frente activo (2):
+         1) Adecuaciones - En ejecuci├│n
+            A├▒o: 2025 | Frente: Frente activo
+         2) Adecuaciones - En ejecuci├│n
+            A├▒o: 2025 | Frente: Frente activo
+
+   2. UNP-22 - Unidad Recreativa Brisas de los Alamos
+      Ubicaci├│n: Brisas de Los Alamos - COMUNA 02
+      Coordenadas: [0, 0] ΓÜá∩╕Å  [SIN COORDENADAS REALES]
+      Intervenciones con frente activo (1):
+         1) Adecuaciones - En ejecuci├│n
+            A├▒o: 2025 | Frente: Frente activo
+
+   3. UNP-24 - Cancha M├║ltiple Comuneros I Sector el Faro
+      Ubicaci├│n: QUINTAS DEL REFUGIO - COMUNA 10
+      Coordenadas: [0, 0] ΓÜá∩╕Å  [SIN COORDENADAS REALES]
+      Intervenciones con frente activo (4):
+         1) Adecuaciones - En ejecuci├│n
+            A├▒o: 2025 | Frente: Frente activo
+         2) Adecuaciones - En ejecuci├│n
+            A├▒o: 2025 | Frente: Frente activo
+         3) Adecuaciones - En ejecuci├│n
+            A├▒o: 2025 | Frente: Frente activo
+         4) Adecuaciones - En ejecuci├│n
+            A├▒o: 2025 | Frente: Frente activo
+
+   4. UNP-25 - Parque Recreativo la Nueva Base (cancha de Colores)
+      Ubicaci├│n: VILLA DEL PRADO SECTOR 6 - COMUNA 13
+      Coordenadas: [0, 0] ΓÜá∩╕Å  [SIN COORDENADAS REALES]
+      Intervenciones con frente activo (3):
+         1) Adecuaciones - En ejecuci├│n
+            A├▒o: 2025 | Frente: Frente activo
+         2) Adecuaciones - En ejecuci├│n
+            A├▒o: 2025 | Frente: Frente activo
+         3) Adecuaciones - En ejecuci├│n
+            A├▒o: 2025 | Frente: Frente activo
+
+   5. UNP-26 - Parque Recreativo Floralia I -la Virgen
+      Ubicaci├│n: Belisario Caicedo - COMUNA 18
+      Coordenadas: [0, 0] ΓÜá∩╕Å  [SIN COORDENADAS REALES]
+      Intervenciones con frente activo (1):
+         1) Adecuaciones - En ejecuci├│n
+            A├▒o: 2025 | Frente: Frente activo
+
+   6. UNP-30 - Cancha Multiple Barrio la Riviera
+      Ubicaci├│n: Nueva Floresta - COMUNA 12
+      Coordenadas: [0, 0] ΓÜá∩╕Å  [SIN COORDENADAS REALES]
+      Intervenciones con frente activo (2):
+         1) Adecuaciones - En ejecuci├│n
+            A├▒o: 2025 | Frente: Frente activo
+         2) Adecuaciones - En ejecuci├│n
+            A├▒o: 2025 | Frente: Frente activo
+
+   7. UNP-43 - Parque Recreativo Villa del Sol
+      Ubicaci├│n: Villa del Sol - COMUNA 05
+      Coordenadas: [0, 0] ΓÜá∩╕Å  [SIN COORDENADAS REALES]
+      Intervenciones con frente activo (1):
+         1) Adecuaciones - En ejecuci├│n
+            A├▒o: 2025 | Frente: Frente activo
+
+   8. UNP-45 - Escenario Prados de Oriente
+      Ubicaci├│n: Prados de Oriente - COMUNA 11
+      Coordenadas: [0, 0] ΓÜá∩╕Å  [SIN COORDENADAS REALES]
+      Intervenciones con frente activo (1):
+         1) Adecuaciones - En ejecuci├│n
+            A├▒o: 2025 | Frente: Frente activo
+
+   9. UNP-46 - Cancha Multiple Valle del Lili
+      Ubicaci├│n: Valle del Lili - COMUNA 14
+      Coordenadas: [0, 0] ΓÜá∩╕Å  [SIN COORDENADAS REALES]
+      Intervenciones con frente activo (1):
+         1) Adecuaciones - En ejecuci├│n
+            A├▒o: 2025 | Frente: Frente activo
+
+====================================================================================================
+LISTA DE UPIDs SIN GEOMETR├ìA V├üLIDA (para correcci├│n)
+====================================================================================================
+Total: 16 unidades
+
+UPIDs: UNP-11, UNP-12, UNP-21, UNP-22, UNP-24, UNP-25, UNP-26, UNP-30, UNP-43, UNP-45, UNP-46, UNP-63, UNP-84, UNP-85, UNP-87, UNP-88
+
+====================================================================================================
+EXPLICACI├ôN: ┬┐POR QU├ë EL FRONTEND MUESTRA MENOS?
+====================================================================================================
+
+El frontend muestra 56 porque est├í filtrando las unidades sin coordenadas v├ílidas.
+
+≡ƒôè MATEM├üTICA:
+   - Total unidades en endpoint: 65
+   - Unidades con geometr├¡a v├ílida: 49
+   - Unidades sin geometr├¡a v├ílida: 16
+   - Lo que muestra el frontend: 56
+
+≡ƒÆí AN├üLISIS:
+   Si el frontend filtra por has_valid_geometry=true, deber├¡a mostrar: 49
+   Pero muestra 56, lo que sugiere que:
+   
+   Opci├│n 1: Est├í excluyendo solo las 9 de "Secretar├¡a del Deporte" (65 - 9 = 56)
+   Opci├│n 2: Tiene alguna l├│gica personalizada que resulta en 56
+   
+ΓÜá∩╕Å  IMPORTANTE: Son 88 INTERVENCIONES,
+   distribuidas en 65 UNIDADES.
+   
+   Una unidad puede tener m├║ltiples intervenciones con frente activo.
+   El mapa muestra UNIDADES (puntos en el mapa), no intervenciones individuales.
+
+====================================================================================================
+FIN DEL AN├üLISIS
+====================================================================================================

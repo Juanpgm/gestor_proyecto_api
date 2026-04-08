@@ -1,0 +1,67 @@
+# ============================================
+# 🔥 GESTOR DE PROYECTOS API - FIREBASE ÚNICO
+# ============================================
+
+# Framework web
+fastapi==0.116.2
+uvicorn[standard]==0.32.0
+
+# Firebase Admin SDK con todas las dependencias
+firebase-admin==7.1.0
+google-cloud-firestore==2.21.0
+google-auth==2.40.3
+google-auth-oauthlib==1.2.0
+google-api-python-client==2.183.0
+
+# Google Cloud Workload Identity Federation
+google-cloud-secret-manager==2.24.0
+
+# Configuración
+python-dotenv==1.1.1
+
+# Validación de datos
+pydantic==2.11.9
+email-validator==2.3.0
+
+# Manejo de formularios y archivos
+python-multipart==0.0.22
+Pillow==12.1.1
+
+# Autenticación y seguridad
+PyJWT>=2.10.1
+cryptography==46.0.5
+
+# Utilidades para autenticación
+phonenumbers==8.13.50
+
+# Cliente HTTP para autenticación Firebase REST API
+aiohttp==3.13.3
+
+# APIs externas para empréstito
+sodapy==2.2.0
+pandas==2.2.3
+
+# Excel processing
+openpyxl==3.1.5
+
+# Geometría espacial para cruce con capas GeoJSON
+shapely==2.1.1
+
+# Google Sheets API para leer datos de Google Sheets
+gspread==6.0.2
+google-auth-oauthlib==1.2.0
+
+# Google Drive API para manejo de archivos de evidencia (integrado con versiones existentes)
+
+# AWS S3 para almacenamiento de documentos
+boto3==1.35.36
+
+# Rate limiting (OPCIONAL - deshabilitado temporalmente para Railway)
+# slowapi==0.1.9
+
+# APM and monitoring (OPCIONAL - deshabilitado temporalmente para Railway)
+# prometheus-client==0.21.0
+
+# Nota: Las siguientes dependencias son parte de la librería estándar de Python
+# y no necesitan ser instaladas: asyncio, dataclasses, functools, itertools,
+# hashlib, weakref, concurrent.futures
