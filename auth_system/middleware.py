@@ -24,6 +24,11 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
         self.public_paths = public_paths or PUBLIC_PATHS
     
     async def dispatch(self, request: Request, call_next):
+        # Permitir solicitudes OPTIONS (preflight CORS) sin autenticación
+        # para que CORSMiddleware pueda responder correctamente
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
         # Verificar si la ruta es pública
         path = request.url.path
         

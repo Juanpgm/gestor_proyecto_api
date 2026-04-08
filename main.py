@@ -101,6 +101,8 @@ except ImportError as e:
     DEFAULT_USER_ROLE = "publico"
     ROLE_HIERARCHY = {}
     AUTH_PUBLIC_PATHS = []
+    AuthorizationMiddleware = None
+    AuditLogMiddleware = None
 
 # 🔐 FUNCIÓN HELPER PARA VERIFICAR AUTENTICACIÓN FIREBASE
 async def verify_firebase_token(request: Request) -> dict:
@@ -170,8 +172,6 @@ async def verify_firebase_token(request: Request) -> dict:
                 "code": "AUTH_VERIFICATION_ERROR"
             }
         )
-    AuthorizationMiddleware = None
-    AuditLogMiddleware = None
 
 # Importar Firebase con configuración automática
 try:
