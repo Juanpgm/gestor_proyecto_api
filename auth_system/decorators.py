@@ -52,6 +52,11 @@ async def get_current_user(
             )
         
         user_data = user_doc.to_dict()
+        if not user_data:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Documento de usuario inválido o vacío"
+            )
         user_data['uid'] = user_uid
         
         # Verificar que el usuario esté activo

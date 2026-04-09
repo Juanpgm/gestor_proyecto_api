@@ -49,6 +49,8 @@ def validar_url_foto(url: str) -> bool:
 
 def validar_coordenadas_json(coord_json: str) -> tuple[bool, Optional[List]]:
     """Validar y parsear JSON de coordenadas"""
+    if not isinstance(coord_json, str) or not coord_json.strip():
+        return False, None
     try:
         coords = json.loads(coord_json)
         if not isinstance(coords, list) or len(coords) < 2:

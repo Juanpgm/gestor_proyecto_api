@@ -37,10 +37,9 @@ def get_project_id() -> str:
         logger.info(f"🔧 Using FIREBASE_PROJECT_ID from environment: {project_id}")
         return project_id
     
-    # 2. FORZAR uso del proyecto específico para desarrollo
-    # Este es el proyecto correcto que siempre debe usarse
+    # 2. Fallback al proyecto por defecto si no hay variable de entorno
     forced_project = "calitrack-44403"
-    logger.info(f"🔐 Using configured project: {forced_project}")
+    logger.warning(f"⚠️ FIREBASE_PROJECT_ID not set — falling back to default: {forced_project}. Set FIREBASE_PROJECT_ID env var in production.")
     return forced_project
     
     # Código anterior comentado para referencia:
@@ -195,6 +194,7 @@ def _init_with_workload_identity() -> firebase_admin.App:
     """Initialize with Workload Identity Federation with robust error handling"""
     wif_creds_json = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
     if wif_creds_json:
+        temp_creds_file = None
         try:
             import tempfile
             import json
@@ -216,24 +216,25 @@ def _init_with_workload_identity() -> firebase_admin.App:
             app = firebase_admin.initialize_app(cred, {'projectId': PROJECT_ID})
             logger.info("✅ Firebase initialized with Workload Identity Federation")
             return app
-            
-            app = firebase_admin.initialize_app(cred, {'projectId': PROJECT_ID})
-            logger.info("✅ Firebase initialized with Workload Identity Federation")
-            return app
-            
+
         except Exception as wif_error:
             logger.error(f"❌ Workload Identity initialization failed: {wif_error}")
             logger.info("🔄 Attempting Service Account fallback...")
-            # Clear the temp file if it was created
+            # Clear env var
             try:
-                if 'temp_creds_file' in locals():
-                    os.unlink(temp_creds_file)
                 if 'GOOGLE_APPLICATION_CREDENTIALS' in os.environ:
                     del os.environ['GOOGLE_APPLICATION_CREDENTIALS']
-            except:
+            except Exception:
                 pass
             # Raise error to trigger fallback
             raise RuntimeError(f"WIF failed, attempting fallback: {wif_error}")
+        finally:
+            # Always clean up temp file
+            if temp_creds_file:
+                try:
+                    os.unlink(temp_creds_file)
+                except Exception:
+                    pass
     
     # If no WIF credentials, try Application Default Credentials
     try:
@@ -309,8 +310,8 @@ def validate_firebase_connection() -> Dict[str, Any]:
             users_collection_exists = USERS_COLLECTION in [c.id for c in collections]
         except Exception as e:
             if "403" in str(e) or "Missing or insufficient permissions" in str(e):
-                logger.warning("⚠️ Firestore permissions limited - basic connection OK")
-                firestore_available = True  # Connection works, just no list permissions
+                logger.warning("⚠️ Firestore permissions limited - cannot list collections")
+                firestore_available = False
             else:
                 firestore_available = False
                 logger.error(f"❌ Firestore connection failed: {e}")
@@ -321,8 +322,8 @@ def validate_firebase_connection() -> Dict[str, Any]:
             auth_client.list_users(max_results=1)
         except Exception as e:
             if "403" in str(e) or "Missing or insufficient permissions" in str(e):
-                logger.warning("⚠️ Auth permissions limited - basic connection OK")
-                auth_available = True  # Connection works, just no list permissions
+                logger.warning("⚠️ Auth permissions limited - cannot list users")
+                auth_available = False
             else:
                 auth_available = False
                 logger.error(f"❌ Auth connection failed: {e}")

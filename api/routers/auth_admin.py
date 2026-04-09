@@ -124,8 +124,14 @@ async def list_users(
             sanitized = sanitize_user_data(user_data)
             users.append(sanitized)
         
-        # Contar total de usuarios
-        total_count = len(list(db.collection(FIREBASE_COLLECTIONS["users"]).stream()))
+        # Contar total de usuarios (aggregation query to avoid loading all docs)
+        try:
+            count_query = db.collection(FIREBASE_COLLECTIONS["users"]).count()
+            count_result = count_query.get()
+            total_count = count_result[0][0].value if count_result else 0
+        except Exception:
+            # Fallback: use offset + current page size as estimate
+            total_count = offset + len(users)
         
         return {
             "success": True,
@@ -155,7 +161,7 @@ async def list_super_admin_users(
     try:
         db = _get_db_or_raise()
         users_collection = db.collection(FIREBASE_COLLECTIONS["users"])
-        query = users_collection.where('roles', '==', 'super_admin')
+        query = users_collection.where('roles', 'array_contains', 'super_admin')
         users_ref = query.stream()
 
         all_super_admins = []
@@ -309,16 +315,16 @@ async def update_user_info(
         
         # Agregar metadata de actualización
         update_fields['updated_at'] = datetime.now(timezone.utc)
-        update_fields['updated_by'] = current_user['uid']
-        
+        update_fields['updated_by'] = current_user.get('uid')
+
         # Actualizar en Firestore
         user_ref.update(update_fields)
-        
+
         # Registrar en audit_logs
         db.collection(FIREBASE_COLLECTIONS["audit_logs"]).add({
             'timestamp': datetime.now(timezone.utc),
             'action': 'update_user_info',
-            'user_uid': current_user['uid'],
+            'user_uid': current_user.get('uid'),
             'user_email': current_user.get('email'),
             'target_user_uid': uid,
             'target_user_email': current_data.get('email'),
@@ -360,39 +366,39 @@ async def assign_roles_to_user(
     single_role = _extract_single_role(request.role)
 
     # Validar asignación de roles
-    if not validate_role_assignment(current_user['uid'], uid, [single_role]):
+    if not validate_role_assignment(current_user.get('uid', ''), uid, [single_role]):
         raise HTTPException(
             status_code=403,
             detail="No puedes asignarte el rol super_admin a ti mismo"
         )
-    
+
     try:
         db = get_firestore_client()
         user_ref = db.collection(FIREBASE_COLLECTIONS["users"]).document(uid)
         user_doc = user_ref.get()
-        
+
         if not user_doc.exists:
             raise HTTPException(status_code=404, detail="Usuario no encontrado")
-        
+
         # Validar que el rol existe
         if single_role not in ROLES:
             raise HTTPException(status_code=400, detail=f"El rol '{single_role}' no existe")
-        
+
         # Obtener roles anteriores
         old_roles = _normalize_roles(user_doc.to_dict().get('roles', []))
-        
+
         # Actualizar roles
         user_ref.update({
             'roles': single_role,
             'updated_at': datetime.now(timezone.utc),
-            'updated_by': current_user['uid']
+            'updated_by': current_user.get('uid')
         })
-        
+
         # Registrar en audit_logs
         db.collection(FIREBASE_COLLECTIONS["audit_logs"]).add({
             'timestamp': datetime.now(timezone.utc),
             'action': 'assign_roles',
-            'user_uid': current_user['uid'],
+            'user_uid': current_user.get('uid'),
             'user_email': current_user.get('email'),
             'target_user_uid': uid,
             'old_roles': old_roles,
@@ -508,21 +514,21 @@ async def grant_temporary_permission(
         temp_perms.append({
             'permission': request.permission,
             'expires_at': request.expires_at,
-            'granted_by': current_user['uid'],
+            'granted_by': current_user.get('uid'),
             'granted_at': datetime.now(timezone.utc),
             'reason': request.reason
         })
-        
+
         user_ref.update({
             'temporary_permissions': temp_perms,
             'updated_at': datetime.now(timezone.utc)
         })
-        
+
         # Registrar en audit_logs
         db.collection(FIREBASE_COLLECTIONS["audit_logs"]).add({
             'timestamp': datetime.now(timezone.utc),
             'action': 'grant_temporary_permission',
-            'user_uid': current_user['uid'],
+            'user_uid': current_user.get('uid'),
             'target_user_uid': uid,
             'permission': request.permission,
             'expires_at': request.expires_at,

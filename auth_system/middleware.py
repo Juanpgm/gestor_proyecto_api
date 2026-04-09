@@ -179,9 +179,15 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
                 log_entry["action"] = self._infer_action(request.method, request.url.path)
                 
                 # Fire-and-forget en dedicated thread pool — NO bloquea event loop
-                _middleware_executor.submit(
-                    lambda: db.collection(FIREBASE_COLLECTIONS["audit_logs"]).add(log_entry)
-                )
+                def _write_log():
+                    db.collection(FIREBASE_COLLECTIONS["audit_logs"]).add(log_entry)
+
+                def _on_log_done(future):
+                    exc = future.exception()
+                    if exc:
+                        logger.error("Error escribiendo audit log en Firestore: %s", exc)
+
+                _middleware_executor.submit(_write_log).add_done_callback(_on_log_done)
                 
             except Exception as e:
                 # No fallar el request si falla el logging

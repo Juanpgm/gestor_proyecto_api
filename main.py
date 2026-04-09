@@ -106,7 +106,7 @@ except ImportError as e:
 # 🔐 FUNCIÓN HELPER PARA VERIFICAR AUTENTICACIÓN FIREBASE
 # Dedicated thread pool for Firebase token verification in route dependencies.
 # Keeps the default asyncio executor free for call_next / non-Firebase I/O.
-_route_auth_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="route-auth")
+_route_auth_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="route-auth")
 
 async def verify_firebase_token(request: Request) -> dict:
     """
@@ -188,8 +188,6 @@ async def verify_firebase_token(request: Request) -> dict:
                 "code": "AUTH_VERIFICATION_ERROR"
             }
         )
-    AuthorizationMiddleware = None
-    AuditLogMiddleware = None
 
 # Importar Firebase con configuración automática
 try:
@@ -399,13 +397,7 @@ async def lifespan(app: FastAPI):
     print(f"Environment: {os.getenv('ENVIRONMENT', 'development')}")
     print(f"Firebase Project: {PROJECT_ID}")
     
-    # Inicializar Firebase de forma segura
-    if ensure_firebase_configured():
-        print("✅ Firebase initialized successfully")
-    else:
-        print("❌ Firebase initialization failed")
-    
-    # Inicializar Firebase automáticamente (sin fallar la app)
+    # Inicializar Firebase
     firebase_initialized = False
     if FIREBASE_AVAILABLE:
         try:
@@ -413,20 +405,29 @@ async def lifespan(app: FastAPI):
             if firebase_initialized:
                 print("✅ Firebase initialized successfully")
             else:
-                print(f"⚠️ Firebase initialization failed: {status.get('error', 'Unknown error')}")
+                error_msg = status.get('error', 'Unknown error')
+                print(f"❌ Firebase initialization failed: {error_msg}")
+                # En producción Firebase es crítico — no arrancar con funcionalidad limitada
+                if os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("PRODUCTION"):
+                    raise RuntimeError(f"Firebase required in production but failed: {error_msg}")
+        except RuntimeError:
+            raise
         except Exception as e:
-            print(f"⚠️ Firebase setup error: {e} - API will run in limited mode")
+            print(f"❌ Firebase setup error: {e}")
+            if os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("PRODUCTION"):
+                raise RuntimeError(f"Firebase required in production but failed: {e}")
             firebase_initialized = False
     else:
         print("⚠️ Firebase not available - API running in limited mode")
-        firebase_initialized = False
-    
+        logger.error("❌ Firebase is NOT available. All database endpoints will fail.")
+
     print(f"🚀 API starting with Firebase: {'✅ Connected' if firebase_initialized else '❌ Limited mode'}")
-    
+
     yield
-    
+
     # Shutdown
     print("Stopping API...")
+    _route_auth_executor.shutdown(wait=True)
 
 # ============================================
 # 📊 MÉTRICAS DE PROMETHEUS PARA MONITOREO APM
@@ -542,6 +543,22 @@ if SLOWAPI_AVAILABLE and limiter is not None and RateLimitExceeded is not None a
 else:
     print("⚠️ Rate limiting disabled - SlowAPI not available")
 
+# Global exception handler para errores no manejados
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Manejar excepciones no capturadas para evitar filtrar stack traces al cliente"""
+    logger.error(f"Unhandled exception on {request.method} {request.url.path}: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "success": False,
+            "error": "Error interno del servidor",
+            "message": "Ha ocurrido un error inesperado. Contacte al administrador.",
+            "code": "INTERNAL_SERVER_ERROR",
+            "timestamp": datetime.now().isoformat()
+        }
+    )
+
 # Función decorador opcional para rate limiting
 def optional_rate_limit(limit_string: str):
     """Decorador que aplica rate limiting solo si SlowAPI está disponible"""
@@ -555,14 +572,18 @@ def optional_rate_limit(limit_string: str):
         return func
     return decorator
 
-# 🚀 CACHE SIMPLE EN MEMORIA PARA OPTIMIZACIÓN
+# 🚀 CACHE SIMPLE EN MEMORIA PARA OPTIMIZACIÓN (thread-safe, bounded)
 from functools import lru_cache
 from datetime import timedelta
 import hashlib
+import threading
+from collections import OrderedDict
 
-# Cache simple en memoria (usar Redis en producción)
-_simple_cache = {}
-_cache_timestamps = {}
+# Cache thread-safe con límite de tamaño para evitar memory leaks
+_CACHE_MAX_SIZE = 1000
+_cache_lock = threading.Lock()
+_simple_cache: OrderedDict = OrderedDict()  # key -> (value, timestamp)
+_cache_timestamps: dict = {}  # kept for backward compat but managed under lock
 
 def get_cache_key(func_name: str, *args, **kwargs) -> str:
     """Generar clave de caché única"""
@@ -570,17 +591,29 @@ def get_cache_key(func_name: str, *args, **kwargs) -> str:
     return hashlib.md5(key_data.encode()).hexdigest()
 
 def get_from_cache(cache_key: str, max_age_seconds: int = 300):
-    """Obtener del caché si existe y es válido"""
-    if cache_key in _simple_cache:
-        cached_time = _cache_timestamps.get(cache_key)
-        if cached_time and (datetime.now() - cached_time).total_seconds() < max_age_seconds:
-            return _simple_cache[cache_key], True
+    """Obtener del caché si existe y es válido (thread-safe)"""
+    with _cache_lock:
+        if cache_key in _simple_cache:
+            cached_time = _cache_timestamps.get(cache_key)
+            if cached_time and (datetime.now() - cached_time).total_seconds() < max_age_seconds:
+                # Move to end (most recently used)
+                _simple_cache.move_to_end(cache_key)
+                return _simple_cache[cache_key], True
+            else:
+                # Expired entry — evict
+                _simple_cache.pop(cache_key, None)
+                _cache_timestamps.pop(cache_key, None)
     return None, False
 
 def set_in_cache(cache_key: str, value):
-    """Guardar en caché"""
-    _simple_cache[cache_key] = value
-    _cache_timestamps[cache_key] = datetime.now()
+    """Guardar en caché (thread-safe, bounded)"""
+    with _cache_lock:
+        # Evict oldest entries if cache is full
+        while len(_simple_cache) >= _CACHE_MAX_SIZE:
+            oldest_key, _ = _simple_cache.popitem(last=False)
+            _cache_timestamps.pop(oldest_key, None)
+        _simple_cache[cache_key] = value
+        _cache_timestamps[cache_key] = datetime.now()
 
 
 def _bool_from_env(name: str, default: bool = True) -> bool:
@@ -771,6 +804,25 @@ async def utf8_middleware(request: Request, call_next):
         response.headers["content-type"] = "application/json; charset=utf-8"
     
     return response
+
+# 🛡️ MIDDLEWARE PARA LIMITAR TAMAÑO DE REQUEST BODY (protección DoS)
+MAX_REQUEST_BODY_SIZE = 50 * 1024 * 1024  # 50 MB
+
+@app.middleware("http")
+async def limit_request_body_size(request: Request, call_next):
+    """Rechazar requests con body excesivamente grande"""
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > MAX_REQUEST_BODY_SIZE:
+        return JSONResponse(
+            status_code=413,
+            content={
+                "success": False,
+                "error": "Request body too large",
+                "message": f"El tamaño máximo permitido es {MAX_REQUEST_BODY_SIZE // (1024*1024)} MB",
+                "code": "PAYLOAD_TOO_LARGE"
+            }
+        )
+    return await call_next(request)
 
 # ⚡ MIDDLEWARE DE PERFORMANCE PARA AGREGAR HEADERS Y MEDIR TIEMPOS
 @app.middleware("http")
@@ -981,8 +1033,8 @@ async def timeout_middleware(request: Request, call_next):
             # 5 minutos para procesamiento masivo de SECOP
             timeout_seconds = 300.0
         elif request.url.path == "/emprestito/obtener-contratos-secop":
-            # 20 minutos para procesamiento completo de TODOS los contratos sin límite
-            timeout_seconds = 1200.0
+            # 2 minutos (Railway tiene límite de ~300s)
+            timeout_seconds = 120.0
         elif request.url.path == "/unidades-proyecto/calidad-datos/analizar":
             # 10 minutos para snapshot extensivo de calidad de datos
             timeout_seconds = 600.0
@@ -1366,7 +1418,7 @@ async def health_check():
                 )
             except asyncio.TimeoutError:
                 firebase_status = {
-                    "connected": True,
+                    "connected": False,
                     "status": "timeout",
                     "message": "Firebase check timed out (possible quota issue)",
                     "project_id": os.getenv("FIREBASE_PROJECT_ID", "unknown")
@@ -6238,12 +6290,12 @@ async def validate_session(
             try:
                 body = await request.json()
                 id_token = body.get("id_token")
-            except:
+            except (ValueError, TypeError, RuntimeError):
                 # Si no se puede parsear el JSON, intentar obtener como form data
                 try:
                     form = await request.form()
                     id_token = form.get("id_token")
-                except:
+                except (ValueError, TypeError, RuntimeError):
                     pass
         
         if not id_token:
@@ -9867,18 +9919,15 @@ async def eliminar_proceso_emprestito_endpoint(referencia_proceso: str):
         
         # Manejar respuesta según el resultado
         if not resultado.get("success"):
+            error_msg = resultado.get("error", "")
             # Si no se encontró el proceso
-            if "No se encontró" in resultado.get("error", ""):
-                raise HTTPException(
-                    status_code=404,
-                    detail=resultado
-                )
+            if "No se encontró" in error_msg:
+                raise HTTPException(status_code=404, detail=resultado)
+            # Si la función no está implementada
+            elif "no implementada" in error_msg.lower():
+                raise HTTPException(status_code=501, detail=resultado)
             else:
-                # Otros errores
-                raise HTTPException(
-                    status_code=500,
-                    detail=resultado
-                )
+                raise HTTPException(status_code=500, detail=resultado)
         
         # Respuesta exitosa
         return JSONResponse(
@@ -13979,7 +14028,13 @@ try:
 except Exception as e:
     print(f"⚠️ Warning: Could not include emprestito quality router: {e}")
 
-# NOTA: Router de Captura 360 ya fue incluido antes de las rutas dinámicas (ver línea ~2410)
+# Incluir router de Captura 360
+try:
+    from api.routers.captura_360_router import router as captura_360_router
+    app.include_router(captura_360_router)
+    print("✅ Captura 360 router included successfully")
+except Exception as e:
+    print(f"⚠️ Warning: Could not include captura 360 router: {e}")
 
 # ============================================================================
 
