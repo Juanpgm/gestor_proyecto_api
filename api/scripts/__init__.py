@@ -53,6 +53,7 @@ try:
         get_unidades_proyecto_attributes,
         get_filter_options,
         get_unidades_proyecto_summary,
+        get_unidades_proyecto_dashboard,
         validate_unidades_proyecto_collection,
     )
     UNIDADES_PROYECTO_AVAILABLE = True
@@ -612,6 +613,7 @@ __all__ = [
     "get_unidades_proyecto_attributes",
     "get_filter_options",
     "get_unidades_proyecto_summary",
+    "get_unidades_proyecto_dashboard",
     "validate_unidades_proyecto_collection",
     "get_unidades_proyecto_quality_metrics",
     

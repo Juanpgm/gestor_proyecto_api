@@ -1271,9 +1271,9 @@ async def get_unidades_proyecto_attributes(
         }
 
 
-async def get_unidades_proyecto_summary() -> Dict[str, Any]:
+async def get_unidades_proyecto_dashboard(filters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
-    Obtener resumen simple de las unidades de proyecto
+    Dashboard avanzado con KPIs, métricas y gráficos de unidades de proyecto.
     """
     try:
         # ============================================
@@ -1599,19 +1599,11 @@ async def get_unidades_proyecto_summary() -> Dict[str, Any]:
         # ============================================
         # 🏗️ KPI: FRENTES DE OBRA ACTIVOS
         # ============================================
-        frentes_activos_count = 0
-        unidades_con_frentes = set()
-        for feature in geometry_data:
-            props = feature.get('properties', {})
-            intervenciones = props.get('intervenciones', [])
-            for interv in intervenciones:
-                if interv.get('frente_activo') == 'Frente activo':
-                    frentes_activos_count += 1
-                    upid_val = props.get('upid')
-                    if upid_val:
-                        unidades_con_frentes.add(upid_val)
+        frentes_result = await get_frentes_activos()
+        frentes_activos_count = frentes_result.get('total_frentes_activos', 0)
+        unidades_con_frentes_count = frentes_result.get('total_unidades_con_frentes', 0)
         
-        print(f"📊 DEBUG: Frentes de obra activos calculados: {frentes_activos_count} en {len(unidades_con_frentes)} unidades")
+        print(f"📊 DEBUG: Frentes de obra activos calculados: {frentes_activos_count} en {unidades_con_frentes_count} unidades")
         
         # ============================================
         # 🏗️ ESTRUCTURA FINAL DEL DASHBOARD
@@ -1652,7 +1644,7 @@ async def get_unidades_proyecto_summary() -> Dict[str, Any]:
                 "eficiencia_ejecucion": round(len([a for a in avances_validos if a > 50]) / len(avances_validos) * 100, 1) if avances_validos else 0,
                 "proyectos_completados": len([a for a in avances_validos if a == 100]),
                 "frentes_obra_activos": frentes_activos_count,
-                "unidades_con_frentes_activos": len(unidades_con_frentes),
+                "unidades_con_frentes_activos": unidades_con_frentes_count,
                 "inversion_promedio_por_comuna": round(sum(presupuestos_validos) / len(comunas_corregimientos), 0) if presupuestos_validos and comunas_corregimientos else 0,
                 "diversidad_tipos": len(tipos_intervencion),
                 "cobertura_geografica": round(len(latitudes) / total_records * 100, 1) if total_records > 0 else 0,
@@ -1965,7 +1957,6 @@ async def get_frentes_activos() -> Dict[str, Any]:
                 continue
 
             interv = {
-                "estado": doc_data.get("estado"),
                 "tipo_intervencion": doc_data.get("tipo_intervencion"),
                 "avance_obra": doc_data.get("avance_obra")
             }

@@ -2537,10 +2537,6 @@ async def consultar_unidades_proyecto(
             query = query.where('barrio_vereda', '==', barrio_vereda)
             filters_applied += 1
             active_filters['barrio_vereda'] = barrio_vereda
-        if frente_activo:
-            query = query.where('frente_activo', '==', frente_activo)
-            filters_applied += 1
-            active_filters['frente_activo'] = frente_activo
         if fuente_financiacion:
             query = query.where('fuente_financiacion', '==', fuente_financiacion)
             filters_applied += 1
@@ -2597,10 +2593,14 @@ async def consultar_unidades_proyecto(
                 logger.info(f"📦 Procesados {doc_count} documentos...")
         
         logger.info(f"✅ Query completada: {doc_count} documentos obtenidos")
-        
+
+        # Filtro client-side por frente_activo (campo calculado, no almacenado en Firebase)
+        if frente_activo:
+            data = [d for d in data if d.get('frente_activo') == frente_activo]
+
         # Calcular tiempo de procesamiento
         elapsed_time = time.time() - start_time
-        
+
         # Respuesta optimizada
         response_data = {
             "success": True,
@@ -2631,6 +2631,56 @@ async def consultar_unidades_proyecto(
         raise HTTPException(
             status_code=500,
             detail=f"Error consultando colección: {str(e)}"
+        )
+
+# ============================================================================
+# ENDPOINT DE DASHBOARD (UNIDADES DE PROYECTO)
+# ============================================================================
+
+@app.get("/unidades-proyecto/dashboard", tags=["Unidades de Proyecto"], summary="🔵 Dashboard Avanzado de Unidades de Proyecto")
+@optional_rate_limit("30/minute")
+async def get_unidades_proyecto_dashboard_endpoint(
+    request: Request,
+    estado: Optional[str] = Query(None, description="Filtrar por estado"),
+    tipo_intervencion: Optional[str] = Query(None, description="Filtrar por tipo de intervención"),
+    nombre_centro_gestor: Optional[str] = Query(None, description="Filtrar por centro gestor"),
+    comuna_corregimiento: Optional[str] = Query(None, description="Filtrar por comuna o corregimiento"),
+    barrio_vereda: Optional[str] = Query(None, description="Filtrar por barrio o vereda"),
+):
+    """
+    ## 🔵 Dashboard Avanzado
+
+    Genera métricas, KPIs y distribuciones para dashboards y gráficos.
+    Incluye el KPI de **Frentes de Obra Activos** calculado dinámicamente.
+    """
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase not available")
+
+    try:
+        from api.scripts import get_unidades_proyecto_dashboard
+
+        filters = {}
+        if estado:
+            filters['estado'] = estado
+        if tipo_intervencion:
+            filters['tipo_intervencion'] = tipo_intervencion
+        if nombre_centro_gestor:
+            filters['nombre_centro_gestor'] = nombre_centro_gestor
+        if comuna_corregimiento:
+            filters['comuna_corregimiento'] = comuna_corregimiento
+        if barrio_vereda:
+            filters['barrio_vereda'] = barrio_vereda
+
+        result = await get_unidades_proyecto_dashboard(filters or None)
+        return create_utf8_response(result)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error en dashboard de unidades_proyecto: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error generando dashboard: {str(e)}"
         )
 
 # ============================================================================
@@ -3169,8 +3219,6 @@ async def get_intervenciones_filtradas_endpoint(
             query = query.where('cantidad', '==', cantidad)
         if clase_up:
             query = query.where('clase_up', '==', clase_up)
-        if estado:
-            query = query.where('estado', '==', estado)
         if fecha_fin:
             query = query.where('fecha_fin', '==', fecha_fin)
         if fecha_inicio:
@@ -3203,7 +3251,6 @@ async def get_intervenciones_filtradas_endpoint(
             "bpin",
             "cantidad",
             "clase_up",
-            "estado",
             "fecha_fin",
             "fecha_inicio",
             "fuente_financiacion",
@@ -3297,6 +3344,10 @@ async def get_intervenciones_filtradas_endpoint(
                 "tipo_equipamiento": record.get("tipo_equipamiento")
             }
             record["frente_activo"] = _clasificar_frente_activo(record, unidad_props)
+            
+            # Filtro client-side por estado (calculado dinámicamente)
+            if estado and record["estado"] != estado:
+                continue
             
             data.append(record)
 
@@ -3406,8 +3457,6 @@ async def exportar_intervenciones_xlsx(
             interv_query = interv_query.where('cantidad', '==', cantidad)
         if clase_up:
             interv_query = interv_query.where('clase_up', '==', clase_up)
-        if estado:
-            interv_query = interv_query.where('estado', '==', estado)
         if fecha_fin:
             interv_query = interv_query.where('fecha_fin', '==', fecha_fin)
         if fecha_inicio:
@@ -3435,6 +3484,8 @@ async def exportar_intervenciones_xlsx(
         if url_proceso:
             interv_query = interv_query.where('url_proceso', '==', url_proceso)
 
+        from api.scripts.unidades_proyecto import _calcular_estado, _clasificar_frente_activo
+
         export_rows = []
         for interv_doc in interv_query.stream():
             interv_data = interv_doc.to_dict() or {}
@@ -3445,6 +3496,26 @@ async def exportar_intervenciones_xlsx(
                 for key, value in normalized_data.items()
                 if key not in excluded_fields
             }
+
+            # Calcular avance_obra normalizado para el cálculo de estado
+            avance_raw = interv_data.get("avance_obra")
+            try:
+                avance_float = float(str(avance_raw).replace('%', '').strip()) if avance_raw is not None else None
+            except (ValueError, TypeError):
+                avance_float = None
+            row["avance_obra"] = avance_float
+
+            # Calcular estado y frente_activo dinámicamente (nunca desde Firebase)
+            row["estado"] = _calcular_estado(row)
+            unidad_props_xlsx = {
+                "clase_up": interv_data.get("clase_up"),
+                "tipo_equipamiento": interv_data.get("tipo_equipamiento")
+            }
+            row["frente_activo"] = _clasificar_frente_activo(row, unidad_props_xlsx)
+
+            # Filtro client-side por estado (calculado dinámicamente)
+            if estado and row["estado"] != estado:
+                continue
 
             upid_value = str(interv_data.get('upid') or '')
             location = upid_location_map.get(upid_value, {})
