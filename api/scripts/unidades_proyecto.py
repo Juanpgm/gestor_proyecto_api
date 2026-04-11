@@ -1852,11 +1852,14 @@ def _clasificar_frente_activo(intervencion: Dict[str, Any], unidad_props: Dict[s
     Clasificar si una intervención es un frente activo de obra civil relevante.
     
     Filtros de exclusión:
-    - Solo clases UP válidas (obras civiles relevantes)
+    - Solo clases UP válidas: "Obra vial" y "Obras equipamientos"
     - Excluye tipos de equipamiento no relevantes
     - Excluye tipos de intervención no relevantes
     - Excluye subsidios de cualquier tipo (clase_up o tipo_intervencion)
+    - Excluye presupuesto_base < 100,000,000
     """
+    PRESUPUESTO_MINIMO = 100_000_000
+
     tipos_equipamiento_excluidos = {
         'Vivienda mejoramiento',
         'Vivienda nueva',
@@ -1868,7 +1871,7 @@ def _clasificar_frente_activo(intervencion: Dict[str, Any], unidad_props: Dict[s
         'Estudios y diseños',
         'Transferencia directa'
     }
-    clases_validas = {'Obras equipamientos', 'Obra vial', 'Obra Vial', 'Espacio Público'}
+    clases_validas = {'Obras equipamientos', 'Obra vial', 'Obra Vial'}
     
     # Clases UP que son subsidios (excluir completamente)
     clases_subsidio = {'Subsidios'}
@@ -1884,6 +1887,11 @@ def _clasificar_frente_activo(intervencion: Dict[str, Any], unidad_props: Dict[s
     if clase_up and clase_up in clases_subsidio:
         return 'No aplica'
     if tipo_intervencion and 'subsidio' in str(tipo_intervencion).lower():
+        return 'No aplica'
+    
+    # Exclusión por presupuesto mínimo
+    presupuesto = _convert_to_float(intervencion.get('presupuesto_base'))
+    if presupuesto is None or presupuesto < PRESUPUESTO_MINIMO:
         return 'No aplica'
 
     condiciones_base = (
@@ -1957,8 +1965,10 @@ async def get_frentes_activos() -> Dict[str, Any]:
                 continue
 
             interv = {
+                "estado": doc_data.get("estado"),
                 "tipo_intervencion": doc_data.get("tipo_intervencion"),
-                "avance_obra": doc_data.get("avance_obra")
+                "avance_obra": doc_data.get("avance_obra"),
+                "presupuesto_base": doc_data.get("presupuesto_base")
             }
 
             frente_activo = _clasificar_frente_activo(interv, unidad_props)
