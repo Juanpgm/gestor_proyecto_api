@@ -3213,6 +3213,7 @@ async def get_intervenciones_filtradas_endpoint(
             "presupuesto_base",
             "referencia_contrato",
             "referencia_proceso",
+            "tipo_equipamiento",
             "tipo_intervencion",
             "unidad",
             "upid",
@@ -3285,6 +3286,18 @@ async def get_intervenciones_filtradas_endpoint(
             record = {field: doc_data.get(field) for field in fields}
             record["intervencion_id"] = record.get("intervencion_id") or doc.id
             record["avance_obra"] = coerce_float_value(record.get("avance_obra"))
+            
+            # Calcular estado dinámicamente desde avance_obra
+            from api.scripts.unidades_proyecto import _calcular_estado, _clasificar_frente_activo
+            record["estado"] = _calcular_estado(record)
+            
+            # Calcular frente_activo dinámicamente
+            unidad_props = {
+                "clase_up": record.get("clase_up"),
+                "tipo_equipamiento": record.get("tipo_equipamiento")
+            }
+            record["frente_activo"] = _clasificar_frente_activo(record, unidad_props)
+            
             data.append(record)
 
         return create_utf8_response({

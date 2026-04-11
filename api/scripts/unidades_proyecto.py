@@ -132,6 +132,13 @@ def transformar_documento_a_unidad_con_intervenciones(doc_data: Dict[str, Any]) 
     intervencion = crear_intervencion_desde_documento(doc_data, index=0)
     
     # Campos que pertenecen a la unidad (no a la intervención)
+    clase_up = doc_data.get('clase_up') or doc_data.get('clase_obra')
+    tipo_equipamiento = doc_data.get('tipo_equipamiento')
+    
+    # Enriquecer intervención con estado calculado y frente_activo
+    unidad_props = {'clase_up': clase_up, 'tipo_equipamiento': tipo_equipamiento}
+    intervencion = _enriquecer_intervencion(intervencion, unidad_props)
+    
     campos_unidad = {
         'upid': doc_data.get('upid'),
         'nombre_up': doc_data.get('nombre_up'),
@@ -141,9 +148,9 @@ def transformar_documento_a_unidad_con_intervenciones(doc_data: Dict[str, Any]) 
         'comuna_corregimiento': doc_data.get('comuna_corregimiento'),
         'departamento': doc_data.get('departamento'),
         'municipio': doc_data.get('municipio'),
-        'tipo_equipamiento': doc_data.get('tipo_equipamiento'),
+        'tipo_equipamiento': tipo_equipamiento,
         # 🔄 TRANSFORMACIÓN CLAVE: clase_obra → clase_up
-        'clase_up': doc_data.get('clase_obra'),  # Renombrar campo
+        'clase_up': clase_up,
         'nombre_centro_gestor': doc_data.get('nombre_centro_gestor'),
         'identificador': doc_data.get('identificador'),
         'geometry_type': doc_data.get('geometry_type'),
@@ -842,6 +849,16 @@ async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = Non
                             # Ya es diccionario
                             intervenciones_parsed.append(interv)
                     
+                    clase_up_val = doc_data.get('clase_up') or doc_data.get('clase_obra')
+                    tipo_equipamiento_val = doc_data.get('tipo_equipamiento')
+                    unidad_props_enrich = {'clase_up': clase_up_val, 'tipo_equipamiento': tipo_equipamiento_val}
+                    
+                    # Enriquecer cada intervención con estado calculado y frente_activo
+                    intervenciones_parsed = [
+                        _enriquecer_intervencion(interv, unidad_props_enrich)
+                        for interv in intervenciones_parsed
+                    ]
+                    
                     unidad_properties = {
                         'upid': doc_data.get('upid'),
                         'nombre_up': doc_data.get('nombre_up'),
@@ -851,12 +868,12 @@ async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = Non
                         'barrio_vereda_2': doc_data.get('barrio_vereda_2'),
                         'comuna_corregimiento': doc_data.get('comuna_corregimiento'),
                         'comuna_corregimiento_2': doc_data.get('comuna_corregimiento_2'),
-                        'tipo_equipamiento': doc_data.get('tipo_equipamiento'),
-                        'clase_up': doc_data.get('clase_up') or doc_data.get('clase_obra'),
+                        'tipo_equipamiento': tipo_equipamiento_val,
+                        'clase_up': clase_up_val,
                         'nombre_centro_gestor': doc_data.get('nombre_centro_gestor'),
                         'identificador': doc_data.get('identificador'),
                         'has_valid_geometry': geometry_found,
-                        'geometry_source': geometry_source,  # 🆕 NUEVO: Indica de dónde se obtuvo la geometría
+                        'geometry_source': geometry_source,
                         'n_intervenciones': doc_data.get('n_intervenciones', len(intervenciones_parsed)),
                         'intervenciones': intervenciones_parsed
                     }
@@ -1123,6 +1140,16 @@ async def get_unidades_proyecto_attributes(
                     elif isinstance(interv, dict):
                         # Ya es diccionario
                         intervenciones_parsed.append(interv)
+                
+                # Enriquecer cada intervención con estado calculado y frente_activo
+                clase_up_attr = attributes_record.get('clase_up') or attributes_record.get('clase_obra')
+                tipo_equip_attr = attributes_record.get('tipo_equipamiento')
+                unidad_props_attr = {'clase_up': clase_up_attr, 'tipo_equipamiento': tipo_equip_attr}
+                intervenciones_parsed = [
+                    _enriquecer_intervencion(interv, unidad_props_attr)
+                    for interv in intervenciones_parsed
+                ]
+                
                 attributes_record['intervenciones'] = intervenciones_parsed
             
             # 🔄 TRANSFORMACIÓN: Renombrar clase_obra a clase_up
@@ -1570,6 +1597,23 @@ async def get_unidades_proyecto_summary() -> Dict[str, Any]:
             }
         
         # ============================================
+        # 🏗️ KPI: FRENTES DE OBRA ACTIVOS
+        # ============================================
+        frentes_activos_count = 0
+        unidades_con_frentes = set()
+        for feature in geometry_data:
+            props = feature.get('properties', {})
+            intervenciones = props.get('intervenciones', [])
+            for interv in intervenciones:
+                if interv.get('frente_activo') == 'Frente activo':
+                    frentes_activos_count += 1
+                    upid_val = props.get('upid')
+                    if upid_val:
+                        unidades_con_frentes.add(upid_val)
+        
+        print(f"📊 DEBUG: Frentes de obra activos calculados: {frentes_activos_count} en {len(unidades_con_frentes)} unidades")
+        
+        # ============================================
         # 🏗️ ESTRUCTURA FINAL DEL DASHBOARD
         # ============================================
         dashboard_data = {
@@ -1607,6 +1651,8 @@ async def get_unidades_proyecto_summary() -> Dict[str, Any]:
             "kpis_negocio": {
                 "eficiencia_ejecucion": round(len([a for a in avances_validos if a > 50]) / len(avances_validos) * 100, 1) if avances_validos else 0,
                 "proyectos_completados": len([a for a in avances_validos if a == 100]),
+                "frentes_obra_activos": frentes_activos_count,
+                "unidades_con_frentes_activos": len(unidades_con_frentes),
                 "inversion_promedio_por_comuna": round(sum(presupuestos_validos) / len(comunas_corregimientos), 0) if presupuestos_validos and comunas_corregimientos else 0,
                 "diversidad_tipos": len(tipos_intervencion),
                 "cobertura_geografica": round(len(latitudes) / total_records * 100, 1) if total_records > 0 else 0,
@@ -1781,7 +1827,44 @@ async def get_intervenciones_filtradas(
         }
 
 
+def _calcular_estado(intervencion: Dict[str, Any]) -> str:
+    """
+    Calcular el estado de una intervención a partir de avance_obra.
+    
+    Reglas:
+    - avance_obra == 0 (o None) → "En alistamiento"
+    - 0 < avance_obra < 100 → "En ejecución"
+    - avance_obra == 100 → "Terminado"
+    - Si el estado existente es un valor especial imputado por el usuario
+      ("Suspendido", "Inaugurado"), se respeta tal cual.
+    """
+    # Estados imputados por el usuario que deben ser respetados
+    estados_usuario = {'Suspendido', 'Inaugurado'}
+    
+    estado_actual = intervencion.get('estado')
+    if estado_actual and str(estado_actual).strip() in estados_usuario:
+        return str(estado_actual).strip()
+    
+    avance_obra = _convert_to_float(intervencion.get('avance_obra'))
+    
+    if avance_obra is None or avance_obra == 0:
+        return 'En alistamiento'
+    elif avance_obra >= 100:
+        return 'Terminado'
+    else:  # 0 < avance_obra < 100
+        return 'En ejecución'
+
+
 def _clasificar_frente_activo(intervencion: Dict[str, Any], unidad_props: Dict[str, Any]) -> str:
+    """
+    Clasificar si una intervención es un frente activo de obra civil relevante.
+    
+    Filtros de exclusión:
+    - Solo clases UP válidas (obras civiles relevantes)
+    - Excluye tipos de equipamiento no relevantes
+    - Excluye tipos de intervención no relevantes
+    - Excluye subsidios de cualquier tipo (clase_up o tipo_intervencion)
+    """
     tipos_equipamiento_excluidos = {
         'Vivienda mejoramiento',
         'Vivienda nueva',
@@ -1794,11 +1877,22 @@ def _clasificar_frente_activo(intervencion: Dict[str, Any], unidad_props: Dict[s
         'Transferencia directa'
     }
     clases_validas = {'Obras equipamientos', 'Obra vial', 'Obra Vial', 'Espacio Público'}
+    
+    # Clases UP que son subsidios (excluir completamente)
+    clases_subsidio = {'Subsidios'}
 
     clase_up = unidad_props.get('clase_up')
     tipo_equipamiento = unidad_props.get('tipo_equipamiento')
     tipo_intervencion = intervencion.get('tipo_intervencion')
-    estado = intervencion.get('estado')
+    
+    # Calcular estado dinámicamente desde avance_obra
+    estado = _calcular_estado(intervencion)
+    
+    # Exclusión de subsidios: por clase_up o por tipo_intervencion que contenga "subsidio"
+    if clase_up and clase_up in clases_subsidio:
+        return 'No aplica'
+    if tipo_intervencion and 'subsidio' in str(tipo_intervencion).lower():
+        return 'No aplica'
 
     condiciones_base = (
         clase_up in clases_validas and
@@ -1811,6 +1905,17 @@ def _clasificar_frente_activo(intervencion: Dict[str, Any], unidad_props: Dict[s
     if estado == 'Suspendido' and condiciones_base:
         return 'Inactivo'
     return 'No aplica'
+
+
+def _enriquecer_intervencion(intervencion: Dict[str, Any], unidad_props: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Enriquecer una intervención con estado calculado y frente_activo.
+    No muta el dict original; retorna una copia con campos actualizados.
+    """
+    interv = dict(intervencion)
+    interv['estado'] = _calcular_estado(interv)
+    interv['frente_activo'] = _clasificar_frente_activo(interv, unidad_props)
+    return interv
 
 
 async def get_frentes_activos() -> Dict[str, Any]:
@@ -1861,7 +1966,8 @@ async def get_frentes_activos() -> Dict[str, Any]:
 
             interv = {
                 "estado": doc_data.get("estado"),
-                "tipo_intervencion": doc_data.get("tipo_intervencion")
+                "tipo_intervencion": doc_data.get("tipo_intervencion"),
+                "avance_obra": doc_data.get("avance_obra")
             }
 
             frente_activo = _clasificar_frente_activo(interv, unidad_props)
