@@ -6060,20 +6060,48 @@ async def crear_reporte_contrato(
         
         max_size = 10 * 1024 * 1024  # 10MB
         
+        # Extensiones permitidas (para validar por nombre cuando content_type es genérico)
+        extensiones_permitidas = {'.pdf', '.doc', '.docx', '.xls', '.xlsx', '.txt', '.csv', '.jpg', '.jpeg', '.png', '.gif'}
+        
+        # Mapeo de extensión a content_type correcto (fallback cuando el browser envía octet-stream)
+        extension_to_content_type = {
+            '.pdf': 'application/pdf',
+            '.doc': 'application/msword',
+            '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            '.xls': 'application/vnd.ms-excel',
+            '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            '.txt': 'text/plain',
+            '.csv': 'text/csv',
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.gif': 'image/gif',
+        }
+        
         for archivo in archivos_evidencia:
             # Validar tamaño
-            if archivo.size > max_size:
+            if archivo.size and archivo.size > max_size:
                 raise HTTPException(
                     status_code=400,
                     detail=f"Archivo {archivo.filename} excede el tamaño máximo de 10MB"
                 )
             
-            # Validar tipo de archivo
+            # Obtener extensión del archivo
+            import os as _os
+            _, ext = _os.path.splitext(archivo.filename or "")
+            ext_lower = ext.lower()
+            
+            # Validar tipo de archivo: primero por content_type, luego por extensión
+            content_type_final = archivo.content_type
             if archivo.content_type not in tipos_permitidos:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Tipo de archivo no permitido: {archivo.content_type} para {archivo.filename}"
-                )
+                # Fallback: validar por extensión del nombre del archivo
+                if ext_lower in extensiones_permitidas:
+                    content_type_final = extension_to_content_type.get(ext_lower, archivo.content_type)
+                else:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Tipo de archivo no permitido: {archivo.content_type} (extensión: {ext_lower}) para {archivo.filename}"
+                    )
             
             # Leer contenido del archivo
             contenido = await archivo.read()
@@ -6081,8 +6109,8 @@ async def crear_reporte_contrato(
             
             archivo_info = {
                 "filename": archivo.filename,
-                "content_type": archivo.content_type,
-                "size": archivo.size,
+                "content_type": content_type_final,
+                "size": archivo.size or len(contenido),
                 "content": contenido
             }
             archivos_validados.append(archivo_info)
