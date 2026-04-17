@@ -47,7 +47,7 @@ def kml_to_geojson(kml_path: str) -> dict:
 
         feature = {
             "type": "Feature",
-            "properties": {"Name": name, "Description": ""},
+            "properties": {"Name": "Microterritorios", "Description": name},
             "geometry": {
                 "type": "Polygon",
                 "coordinates": [ring],

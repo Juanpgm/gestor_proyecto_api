@@ -11,8 +11,8 @@
     {
       "type": "Feature",
       "properties": {
-        "Name": "Marroquín I",
-        "Description": ""
+        "Name": "Microterritorios",
+        "Description": "Marroquín I"
       },
       "geometry": {
         "type": "Polygon",
@@ -49,8 +49,8 @@
     {
       "type": "Feature",
       "properties": {
-        "Name": "Floralia",
-        "Description": ""
+        "Name": "Microterritorios",
+        "Description": "Floralia"
       },
       "geometry": {
         "type": "Polygon",
@@ -91,8 +91,8 @@
     {
       "type": "Feature",
       "properties": {
-        "Name": "Alto de los Chorros",
-        "Description": ""
+        "Name": "Microterritorios",
+        "Description": "Alto de los Chorros"
       },
       "geometry": {
         "type": "Polygon",
@@ -129,8 +129,8 @@
     {
       "type": "Feature",
       "properties": {
-        "Name": "Lleras Camargo - Tierra Blanca",
-        "Description": ""
+        "Name": "Microterritorios",
+        "Description": "Lleras Camargo - Tierra Blanca"
       },
       "geometry": {
         "type": "Polygon",
@@ -163,8 +163,8 @@
     {
       "type": "Feature",
       "properties": {
-        "Name": "Potrero Grande",
-        "Description": ""
+        "Name": "Microterritorios",
+        "Description": "Potrero Grande"
       },
       "geometry": {
         "type": "Polygon",
@@ -197,8 +197,8 @@
     {
       "type": "Feature",
       "properties": {
-        "Name": "Obrero",
-        "Description": ""
+        "Name": "Microterritorios",
+        "Description": "Obrero"
       },
       "geometry": {
         "type": "Polygon",
@@ -235,8 +235,8 @@
     {
       "type": "Feature",
       "properties": {
-        "Name": "El Poblado I",
-        "Description": ""
+        "Name": "Microterritorios",
+        "Description": "El Poblado I"
       },
       "geometry": {
         "type": "Polygon",
@@ -277,8 +277,8 @@
     {
       "type": "Feature",
       "properties": {
-        "Name": "El Retiro",
-        "Description": ""
+        "Name": "Microterritorios",
+        "Description": "El Retiro"
       },
       "geometry": {
         "type": "Polygon",
@@ -315,8 +315,8 @@
     {
       "type": "Feature",
       "properties": {
-        "Name": "Comuneros I",
-        "Description": ""
+        "Name": "Microterritorios",
+        "Description": "Comuneros I"
       },
       "geometry": {
         "type": "Polygon",
@@ -357,8 +357,8 @@
     {
       "type": "Feature",
       "properties": {
-        "Name": "El Vallado",
-        "Description": ""
+        "Name": "Microterritorios",
+        "Description": "El Vallado"
       },
       "geometry": {
         "type": "Polygon",

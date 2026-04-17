@@ -4364,20 +4364,19 @@ async def crear_solicitud_cambio_unidad_proyecto(
 
         changes = {key: value for key, value in body.items() if key not in {"upid", "aprobado"}}
 
-        # Recalcular campos geograficos cuando se envia geometry Point.
+        # Recalcular campos geograficos cuando se envia geometry.
         geometry_val = changes.get("geometry")
-        if isinstance(geometry_val, dict) and geometry_val.get("type") == "Point" and geometry_val.get("coordinates"):
-            coords = geometry_val["coordinates"]
+        if isinstance(geometry_val, dict) and geometry_val.get("type") and geometry_val.get("coordinates"):
             basemaps_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "basemaps")
             comuna = _buscar_en_geojson(
                 os.path.join(basemaps_dir, "comunas_corregimientos.geojson"),
-                "comuna_corregimiento", coords
+                "comuna_corregimiento", geometry_val
             )
             barrio = _buscar_en_geojson(
                 os.path.join(basemaps_dir, "barrios_veredas.geojson"),
-                "barrio_vereda", coords
+                "barrio_vereda", geometry_val
             )
-            proyectos = _buscar_proyectos_estrategicos(coords)
+            proyectos = _buscar_proyectos_estrategicos(geometry_val)
             if comuna:
                 changes["comuna_corregimiento"] = comuna
             if barrio:
@@ -4484,29 +4483,56 @@ async def crear_solicitud_cambio_intervencion(
         )
 
 
-def _buscar_en_geojson(geojson_path: str, property_name: str, point_coords: list) -> Optional[str]:
-    """Cruza un punto con una capa GeoJSON y retorna la propiedad del polígono que lo contiene."""
+def _normalizar_geometry(geometry_dict: dict) -> dict:
+    """Normaliza un dict de geometría GeoJSON: si coordinates es string, lo parsea a lista."""
+    coords = geometry_dict.get("coordinates")
+    if isinstance(coords, str):
+        try:
+            geometry_dict = dict(geometry_dict)
+            geometry_dict["coordinates"] = json.loads(coords)
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return geometry_dict
+
+
+def _buscar_en_geojson(geojson_path: str, property_name: str, point_coords_or_geometry=None) -> Optional[str]:
+    """Cruza una geometría GeoJSON con una capa y retorna la propiedad del polígono que la contiene.
+    Acepta [lon, lat] (legacy) o un dict GeoJSON geometry de cualquier tipo.
+    Para geometrías no-Point usa el centroide para determinar contención."""
     try:
         with open(geojson_path, "r", encoding="utf-8") as f:
             geojson_data = json.load(f)
-        point = ShapelyPoint(point_coords[0], point_coords[1])
+        if isinstance(point_coords_or_geometry, dict) and point_coords_or_geometry.get("type"):
+            geom = shapely_shape(_normalizar_geometry(point_coords_or_geometry))
+            test_point = geom.centroid if geom.geom_type != "Point" else geom
+        elif isinstance(point_coords_or_geometry, (list, tuple)):
+            test_point = ShapelyPoint(point_coords_or_geometry[0], point_coords_or_geometry[1])
+        else:
+            return None
         for feature in geojson_data.get("features", []):
             polygon = shapely_shape(feature["geometry"])
-            if polygon.contains(point):
+            if polygon.contains(test_point):
                 return feature.get("properties", {}).get(property_name)
     except Exception as e:
         logger.warning(f"Error cruzando geometría con {geojson_path}: {type(e).__name__}")
     return None
 
 
-def _buscar_proyectos_estrategicos(point_coords: list) -> list:
-    """Intersecta un punto con todos los GeoJSON en basemaps/proyectos_estrategicos/ y retorna lista de Name coincidentes."""
+def _buscar_proyectos_estrategicos(geometry_input) -> list:
+    """Intersecta una geometría GeoJSON con todos los GeoJSON en basemaps/proyectos_estrategicos/
+    y retorna lista de Name coincidentes.
+    Acepta [lon, lat] (legacy) o un dict GeoJSON geometry de cualquier tipo (Point, Polygon, LineString, etc.)."""
     nombres = []
     estrategicos_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "basemaps", "proyectos_estrategicos")
     if not os.path.isdir(estrategicos_dir):
         return []
     try:
-        point = ShapelyPoint(point_coords[0], point_coords[1])
+        if isinstance(geometry_input, dict) and geometry_input.get("type"):
+            geom = shapely_shape(_normalizar_geometry(geometry_input))
+        elif isinstance(geometry_input, (list, tuple)):
+            geom = ShapelyPoint(geometry_input[0], geometry_input[1])
+        else:
+            return []
         for filename in os.listdir(estrategicos_dir):
             if not filename.lower().endswith(".geojson"):
                 continue
@@ -4516,7 +4542,7 @@ def _buscar_proyectos_estrategicos(point_coords: list) -> list:
                     geojson_data = json.load(f)
                 for feature in geojson_data.get("features", []):
                     polygon = shapely_shape(feature["geometry"])
-                    if polygon.intersects(point):
+                    if polygon.intersects(geom):
                         name = feature.get("properties", {}).get("Name")
                         if name and name not in nombres:
                             nombres.append(name)
@@ -4585,19 +4611,18 @@ async def crear_unidad_proyecto(
 
         proyectos_estrategicos = []
 
-        if geometry and geometry.get("type") == "Point" and geometry.get("coordinates"):
-            coords = geometry["coordinates"]
+        if geometry and geometry.get("type") and geometry.get("coordinates"):
             comuna_corregimiento = _buscar_en_geojson(
                 os.path.join(basemaps_dir, "comunas_corregimientos.geojson"),
                 "comuna_corregimiento",
-                coords
+                geometry
             )
             barrio_vereda = _buscar_en_geojson(
                 os.path.join(basemaps_dir, "barrios_veredas.geojson"),
                 "barrio_vereda",
-                coords
+                geometry
             )
-            proyectos_estrategicos = _buscar_proyectos_estrategicos(coords)
+            proyectos_estrategicos = _buscar_proyectos_estrategicos(geometry)
 
         now_iso = datetime.now().isoformat()
 
@@ -4839,18 +4864,17 @@ async def modificar_unidad_proyecto(
 
         # --- Auto-detectar comuna, barrio y proyectos desde geometry ---
         geometry_val = changes.get("geometry")
-        if geometry_val and geometry_val.get("type") == "Point" and geometry_val.get("coordinates"):
-            coords = geometry_val["coordinates"]
+        if geometry_val and geometry_val.get("type") and geometry_val.get("coordinates"):
             basemaps_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "basemaps")
             comuna = _buscar_en_geojson(
                 os.path.join(basemaps_dir, "comunas_corregimientos.geojson"),
-                "comuna_corregimiento", coords
+                "comuna_corregimiento", geometry_val
             )
             barrio = _buscar_en_geojson(
                 os.path.join(basemaps_dir, "barrios_veredas.geojson"),
-                "barrio_vereda", coords
+                "barrio_vereda", geometry_val
             )
-            proyectos = _buscar_proyectos_estrategicos(coords)
+            proyectos = _buscar_proyectos_estrategicos(geometry_val)
             if comuna:
                 changes["comuna_corregimiento"] = comuna
             if barrio:
