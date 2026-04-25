@@ -1,5 +1,5 @@
 # ============================================
-# 🔥 GESTOR DE PROYECTOS API - FIREBASE ÚNICO
+# GESTOR DE PROYECTOS API - FIREBASE
 # ============================================
 
 # Framework web
@@ -56,8 +56,8 @@ google-auth-oauthlib==1.2.0
 # AWS S3 para almacenamiento de documentos
 boto3==1.35.36
 
-# Rate limiting (OPCIONAL - deshabilitado temporalmente para Railway)
-# slowapi==0.1.9
+# Rate limiting
+slowapi==0.1.9
 
 # APM and monitoring (OPCIONAL - deshabilitado temporalmente para Railway)
 # prometheus-client==0.21.0

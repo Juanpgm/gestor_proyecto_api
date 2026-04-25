@@ -102,6 +102,18 @@ except ImportError as e:
     print(f"Warning: Captura 360 models not available: {e}")
     CAPTURA_360_MODELS_AVAILABLE = False
 
+try:
+    from .general_models import (
+        ReportarBugRequest,
+        SolicitarEscaladaPrivilegiosRequest,
+        RealizarRecomendacionRequest,
+        ActualizarRecomendacionRequest,
+    )
+    GENERAL_MODELS_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: General models not available: {e}")
+    GENERAL_MODELS_AVAILABLE = False
+
 __all__ = [
     # Request models
     "UserRegistrationRequest",

@@ -57,9 +57,9 @@ try:
     from slowapi.util import get_remote_address
     from slowapi.errors import RateLimitExceeded
     SLOWAPI_AVAILABLE = True
-    print("✅ SlowAPI loaded successfully")
+    logger.info("SlowAPI loaded successfully")
 except ImportError as e:
-    print(f"⚠️ Warning: SlowAPI not available: {e} - Rate limiting disabled")
+    logger.warning(f" Warning: SlowAPI not available: {e} - Rate limiting disabled")
     SLOWAPI_AVAILABLE = False
     Limiter = None
     _rate_limit_exceeded_handler = None
@@ -74,7 +74,7 @@ Histogram = None
 Gauge = None
 generate_latest = None
 CONTENT_TYPE_LATEST = None
-print("⚠️ Prometheus metrics disabled (temporarily disabled for Railway compatibility)")
+logger.warning(" Prometheus metrics disabled (temporarily disabled for Railway compatibility)")
 
 # Importar para manejar tipos de Firebase
 try:
@@ -94,16 +94,16 @@ try:
     )
     from auth_system.middleware import AuthorizationMiddleware, AuditLogMiddleware
     AUTH_SYSTEM_AVAILABLE = True
-    print("✅ Auth system loaded successfully")
+    logger.info("Auth system loaded successfully")
 except ImportError as e:
-    print(f"⚠️ Warning: Auth system not available: {e}")
+    logger.warning(f" Warning: Auth system not available: {e}")
     AUTH_SYSTEM_AVAILABLE = False
     ROLES = {}
     DEFAULT_USER_ROLE = "publico"
     ROLE_HIERARCHY = {}
     AUTH_PUBLIC_PATHS = []
 
-# 🔐 FUNCIÓN HELPER PARA VERIFICAR AUTENTICACIÓN FIREBASE
+#  FUNCIÓN HELPER PARA VERIFICAR AUTENTICACIÓN FIREBASE
 # Dedicated thread pool for Firebase token verification in route dependencies.
 # Keeps the default asyncio executor free for call_next / non-Firebase I/O.
 _route_auth_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="route-auth")
@@ -199,15 +199,21 @@ try:
         validate_firebase_connection,
         get_firestore_client
     )
-    print(f"✅ Firebase auto-config loaded successfully - FIREBASE_AVAILABLE: {FIREBASE_AVAILABLE}")
+    logger.info(f"Firebase auto-config loaded successfully - FIREBASE_AVAILABLE: {FIREBASE_AVAILABLE}")
 except Exception as e:
-    print(f"❌ Warning: Firebase import failed: {e}")
+    logger.error(f"Warning: Firebase import failed: {e}")
     FIREBASE_AVAILABLE = False
     PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID", "NOT_CONFIGURED")
     configure_firebase = lambda: (False, {"error": "Not available"})
     ensure_firebase_configured = lambda: False
     validate_firebase_connection = lambda: {"connected": False, "error": "Not available"}
     get_firestore_client = lambda: None
+
+# Fail-fast: validate critical environment variables at startup
+_required_env_vars = ["FIREBASE_SERVICE_ACCOUNT_KEY", "SECRET_KEY"]
+_missing_vars = [v for v in _required_env_vars if not os.getenv(v)]
+if _missing_vars and (os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("PRODUCTION") or os.getenv("ENVIRONMENT") == "production"):
+    raise RuntimeError(f"Missing required environment variables: {_missing_vars}")
 
 # Importar scripts de forma segura
 try:
@@ -288,9 +294,9 @@ try:
         FLUJO_CAJA_OPERATIONS_AVAILABLE,
     )
     SCRIPTS_AVAILABLE = True
-    print(f"✅ Scripts imported successfully - SCRIPTS_AVAILABLE: {SCRIPTS_AVAILABLE}")
+    logger.info(f"Scripts imported successfully - SCRIPTS_AVAILABLE: {SCRIPTS_AVAILABLE}")
 except Exception as e:
-    print(f"❌ Warning: Scripts import failed: {e}")
+    logger.error(f"Warning: Scripts import failed: {e}")
     SCRIPTS_AVAILABLE = False
     USER_MANAGEMENT_AVAILABLE = False
     AUTH_OPERATIONS_AVAILABLE = False
@@ -329,9 +335,9 @@ try:
         FlujoCajaFilters,
         FLUJO_CAJA_MODELS_AVAILABLE,
     )
-    print(f"✅ User models imported successfully - USER_MODELS_AVAILABLE: {USER_MODELS_AVAILABLE}")
+    logger.info(f"User models imported successfully - USER_MODELS_AVAILABLE: {USER_MODELS_AVAILABLE}")
 except Exception as e:
-    print(f"❌ Warning: User models import failed: {e}")
+    logger.error(f"Warning: User models import failed: {e}")
     USER_MODELS_AVAILABLE = False
     
     # Crear clases dummy para evitar errores de NameError
@@ -403,25 +409,25 @@ async def lifespan(app: FastAPI):
         try:
             firebase_initialized, status = configure_firebase()
             if firebase_initialized:
-                print("✅ Firebase initialized successfully")
+                logger.info("Firebase initialized successfully")
             else:
                 error_msg = status.get('error', 'Unknown error')
-                print(f"❌ Firebase initialization failed: {error_msg}")
+                logger.error(f"Firebase initialization failed: {error_msg}")
                 # En producción Firebase es crítico — no arrancar con funcionalidad limitada
                 if os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("PRODUCTION"):
                     raise RuntimeError(f"Firebase required in production but failed: {error_msg}")
         except RuntimeError:
             raise
         except Exception as e:
-            print(f"❌ Firebase setup error: {e}")
+            logger.error(f"Firebase setup error: {e}")
             if os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("PRODUCTION"):
                 raise RuntimeError(f"Firebase required in production but failed: {e}")
             firebase_initialized = False
     else:
-        print("⚠️ Firebase not available - API running in limited mode")
-        logger.error("❌ Firebase is NOT available. All database endpoints will fail.")
+        logger.warning(" Firebase not available - API running in limited mode")
+        logger.error("[ERROR] Firebase is NOT available. All database endpoints will fail.")
 
-    print(f"🚀 API starting with Firebase: {'✅ Connected' if firebase_initialized else '❌ Limited mode'}")
+    logger.error(f"API starting with Firebase: {'Connected' if firebase_initialized else 'Limited mode'}")
 
     yield
 
@@ -430,7 +436,7 @@ async def lifespan(app: FastAPI):
     _route_auth_executor.shutdown(wait=True)
 
 # ============================================
-# 📊 MÉTRICAS DE PROMETHEUS PARA MONITOREO APM
+#  MÉTRICAS DE PROMETHEUS PARA MONITOREO APM
 # ============================================
 # Inicializar métricas como None por defecto
 REQUEST_COUNT = None
@@ -484,10 +490,10 @@ if PROMETHEUS_AVAILABLE and Counter is not None:
             'Total de cache misses',
             ['endpoint']
         )
-        print("✅ Prometheus metrics initialized")
+        logger.info("Prometheus metrics initialized")
     except ValueError as e:
         # ValueError típicamente ocurre cuando la métrica ya está registrada (múltiples workers)
-        print(f"⚠️ Warning: Prometheus metrics already registered (multi-worker): {e}")
+        logger.warning(f" Warning: Prometheus metrics already registered (multi-worker): {e}")
         print("   Metrics will be disabled for this worker to prevent conflicts")
         REQUEST_COUNT = None
         REQUEST_LATENCY = None
@@ -496,7 +502,7 @@ if PROMETHEUS_AVAILABLE and Counter is not None:
         CACHE_HITS = None
         CACHE_MISSES = None
     except Exception as e:
-        print(f"⚠️ Warning: Failed to initialize Prometheus metrics: {e}")
+        logger.warning(f" Warning: Failed to initialize Prometheus metrics: {e}")
         print("   Continuing without metrics...")
         REQUEST_COUNT = None
         REQUEST_LATENCY = None
@@ -505,22 +511,22 @@ if PROMETHEUS_AVAILABLE and Counter is not None:
         CACHE_HITS = None
         CACHE_MISSES = None
 else:
-    print("⚠️ Prometheus metrics disabled")
+    logger.warning(" Prometheus metrics disabled")
 
 # ============================================
-# 🚦 RATE LIMITER PARA PREVENIR ABUSO
+#  RATE LIMITER PARA PREVENIR ABUSO
 # ============================================
 if SLOWAPI_AVAILABLE:
     limiter = Limiter(key_func=get_remote_address)
-    print("✅ Rate limiter initialized")
+    logger.info("Rate limiter initialized")
 else:
     limiter = None
-    print("⚠️ Rate limiting disabled")
+    logger.warning(" Rate limiting disabled")
 
 # Crear instancia de FastAPI con lifespan y soporte UTF-8
 app = FastAPI(
     title="Gestor de Proyectos API",
-    description="API para gestión de proyectos con Firebase/Firestore - Soporte completo UTF-8 🇪🇸",
+    description="API para gestión de proyectos con Firebase/Firestore - Soporte completo UTF-8 ",
     version="1.0.0",
     lifespan=lifespan,
     swagger_ui_parameters={
@@ -539,9 +545,9 @@ app = FastAPI(
 if SLOWAPI_AVAILABLE and limiter is not None and RateLimitExceeded is not None and _rate_limit_exceeded_handler is not None:
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-    print("✅ Rate limiting registered with FastAPI")
+    logger.info("Rate limiting registered with FastAPI")
 else:
-    print("⚠️ Rate limiting disabled - SlowAPI not available")
+    logger.warning(" Rate limiting disabled - SlowAPI not available")
 
 # Global exception handler para errores no manejados
 @app.exception_handler(Exception)
@@ -567,53 +573,14 @@ def optional_rate_limit(limit_string: str):
             try:
                 return limiter.limit(limit_string)(func)
             except Exception as e:
-                print(f"⚠️ Warning: Could not apply rate limit to {func.__name__}: {e}")
+                logger.warning(f" Warning: Could not apply rate limit to {func.__name__}: {e}")
                 return func
         return func
     return decorator
 
-# 🚀 CACHE SIMPLE EN MEMORIA PARA OPTIMIZACIÓN (thread-safe, bounded)
+# CACHE: delegado a api.core.cache (modular, thread-safe, LRU eviction)
 from functools import lru_cache
-from datetime import timedelta
-import hashlib
-import threading
-from collections import OrderedDict
-
-# Cache thread-safe con límite de tamaño para evitar memory leaks
-_CACHE_MAX_SIZE = 1000
-_cache_lock = threading.Lock()
-_simple_cache: OrderedDict = OrderedDict()  # key -> (value, timestamp)
-_cache_timestamps: dict = {}  # kept for backward compat but managed under lock
-
-def get_cache_key(func_name: str, *args, **kwargs) -> str:
-    """Generar clave de caché única"""
-    key_data = f"{func_name}:{str(args)}:{str(sorted(kwargs.items()))}"
-    return hashlib.md5(key_data.encode()).hexdigest()
-
-def get_from_cache(cache_key: str, max_age_seconds: int = 300):
-    """Obtener del caché si existe y es válido (thread-safe)"""
-    with _cache_lock:
-        if cache_key in _simple_cache:
-            cached_time = _cache_timestamps.get(cache_key)
-            if cached_time and (datetime.now() - cached_time).total_seconds() < max_age_seconds:
-                # Move to end (most recently used)
-                _simple_cache.move_to_end(cache_key)
-                return _simple_cache[cache_key], True
-            else:
-                # Expired entry — evict
-                _simple_cache.pop(cache_key, None)
-                _cache_timestamps.pop(cache_key, None)
-    return None, False
-
-def set_in_cache(cache_key: str, value):
-    """Guardar en caché (thread-safe, bounded)"""
-    with _cache_lock:
-        # Evict oldest entries if cache is full
-        while len(_simple_cache) >= _CACHE_MAX_SIZE:
-            oldest_key, _ = _simple_cache.popitem(last=False)
-            _cache_timestamps.pop(oldest_key, None)
-        _simple_cache[cache_key] = value
-        _cache_timestamps[cache_key] = datetime.now()
+from api.core.cache import get_cache_key, get_from_cache, set_in_cache, async_cache
 
 
 def _bool_from_env(name: str, default: bool = True) -> bool:
@@ -682,46 +649,7 @@ def _generate_presigned_s3_url(bucket: str, key: str, credentials_path: str = ""
     except Exception:
         return None
 
-def async_cache(ttl_seconds: int = 300):
-    """
-    Decorador para cachear funciones async con TTL (Time To Live)
-    Uso: @async_cache(ttl_seconds=600)
-    
-    IMPORTANTE: Cachea el resultado ANTES de cualquier middleware (gzip, etc)
-    """
-    def decorator(func):
-        from functools import wraps
-        import copy
-        
-        @wraps(func)
-        async def wrapper(*args, **kwargs):
-            # Generar clave de caché única basada en función y argumentos
-            cache_key = get_cache_key(func.__name__, *args, **kwargs)
-            
-            # Intentar obtener del caché
-            cached_value, is_valid = get_from_cache(cache_key, ttl_seconds)
-            if is_valid:
-                logger.info(f"✅ Cache hit for {func.__name__}")
-                # Retornar copia profunda para evitar mutaciones
-                try:
-                    return copy.deepcopy(cached_value)
-                except:
-                    return cached_value
-            
-            # Si no está en caché, ejecutar función
-            logger.info(f"⚠️ Cache miss for {func.__name__} - ejecutando función")
-            result = await func(*args, **kwargs)
-            
-            # Guardar en caché solo si es serializable
-            try:
-                set_in_cache(cache_key, result)
-            except Exception as e:
-                logger.warning(f"No se pudo cachear resultado de {func.__name__}: {e}")
-            
-            return result
-        
-        return wrapper
-    return decorator
+# async_cache esta importado desde api.core.cache (ver importacion arriba)
 
 # Configurar CORS - Optimizado para Vercel + Railway + Netlify + Live Server
 def get_cors_origins():
@@ -793,7 +721,7 @@ def get_cors_origin_regex():
     combined_pattern = "|".join(f"({pattern})" for pattern in vercel_patterns)
     return combined_pattern
 
-# 🔤 MIDDLEWARE UTF-8 PARA CARACTERES ESPECIALES
+#  MIDDLEWARE UTF-8 PARA CARACTERES ESPECIALES
 @app.middleware("http")
 async def utf8_middleware(request: Request, call_next):
     """Middleware para asegurar encoding UTF-8 en todas las respuestas"""
@@ -805,7 +733,7 @@ async def utf8_middleware(request: Request, call_next):
     
     return response
 
-# 🛡️ MIDDLEWARE PARA LIMITAR TAMAÑO DE REQUEST BODY (protección DoS)
+#  MIDDLEWARE PARA LIMITAR TAMAÑO DE REQUEST BODY (protección DoS)
 MAX_REQUEST_BODY_SIZE = 50 * 1024 * 1024  # 50 MB
 
 @app.middleware("http")
@@ -824,7 +752,7 @@ async def limit_request_body_size(request: Request, call_next):
         )
     return await call_next(request)
 
-# ⚡ MIDDLEWARE DE PERFORMANCE PARA AGREGAR HEADERS Y MEDIR TIEMPOS
+#  MIDDLEWARE DE PERFORMANCE PARA AGREGAR HEADERS Y MEDIR TIEMPOS
 @app.middleware("http")
 async def performance_middleware(request: Request, call_next):
     """Middleware para mejorar performance y agregar headers útiles"""
@@ -851,10 +779,10 @@ async def performance_middleware(request: Request, call_next):
     
     return response
 
-# 🌐 CONFIGURACIÓN DE CORS
+#  CONFIGURACIÓN DE CORS
 cors_origins = get_cors_origins()
 cors_origin_regex = get_cors_origin_regex()
-print(f"🌐 CORS configured for {len(cors_origins)} specific origins + regex patterns for Vercel variants")
+print(f" CORS configured for {len(cors_origins)} specific origins + regex patterns for Vercel variants")
 
 # Configuración restrictiva con orígenes específicos + regex para variantes de Vercel
 # Permite credentials (cookies, tokens) de manera segura
@@ -881,14 +809,14 @@ app.add_middleware(
     max_age=600,  # Cache de preflight requests por 10 minutos
 )
 
-# 🗜️ GZIP COMPRESSION HABILITADO (optimiza respuestas grandes)
+#  GZIP COMPRESSION HABILITADO (optimiza respuestas grandes)
 from fastapi.middleware.gzip import GZipMiddleware
 app.add_middleware(GZipMiddleware, minimum_size=1000)  # Comprimir respuestas > 1KB
-print("🗜️ GZIP compression enabled for responses > 1KB")
+print(" GZIP compression enabled for responses > 1KB")
 
-# 🔐 MIDDLEWARE DE AUTENTICACIÓN Y AUTORIZACIÓN
-print(f"🔍 AUTH_SYSTEM_AVAILABLE: {AUTH_SYSTEM_AVAILABLE}")
-print(f"🔍 AuthorizationMiddleware: {AuthorizationMiddleware}")
+#  MIDDLEWARE DE AUTENTICACIÓN Y AUTORIZACIÓN
+logger.info(f"AUTH_SYSTEM_AVAILABLE: {AUTH_SYSTEM_AVAILABLE}")
+logger.info(f"AuthorizationMiddleware: {AuthorizationMiddleware}")
 if AUTH_SYSTEM_AVAILABLE and AuthorizationMiddleware is not None:
     # Definir rutas públicas (combinar con las del sistema de auth)
     public_paths = [
@@ -912,12 +840,12 @@ if AUTH_SYSTEM_AVAILABLE and AuthorizationMiddleware is not None:
         # NOTA: /admin/users ahora requiere autenticación directa
     ]
     
-    print(f"📋 Public paths configured: {public_paths}")
+    logger.info(f"Public paths configured: {public_paths}")
     app.add_middleware(
         AuthorizationMiddleware,
         public_paths=public_paths
     )
-    print("✅ Authorization middleware enabled")
+    logger.info("Authorization middleware enabled")
     
     # Middleware de auditoría (opcional, configurar según necesidad)
     if AuditLogMiddleware is not None:
@@ -925,20 +853,20 @@ if AUTH_SYSTEM_AVAILABLE and AuthorizationMiddleware is not None:
             AuditLogMiddleware,
             enable_logging=True  # Cambiar a False para deshabilitar logging automático
         )
-        print("✅ Audit log middleware enabled")
+        logger.info("Audit log middleware enabled")
 else:
-    print("⚠️ Authorization middleware disabled - Auth system not available")
+    logger.warning(" Authorization middleware disabled - Auth system not available")
 
-# 📁 SERVIR ARCHIVOS ESTÁTICOS (HTML, JS, CSS para testing)
+#  SERVIR ARCHIVOS ESTÁTICOS (HTML, JS, CSS para testing)
 # Verificar si existe la carpeta static
 static_path = os.path.join(os.path.dirname(__file__), "static")
 if os.path.isdir(static_path):
     app.mount("/static", StaticFiles(directory=static_path), name="static")
-    print(f"✅ Static files mounted at /static from {static_path}")
+    logger.info(f"Static files mounted at /static from {static_path}")
 else:
-    print(f"⚠️ Static directory not found at {static_path}")
+    logger.warning(f" Static directory not found at {static_path}")
 
-# ⏱️ MIDDLEWARE DE TIMING Y MONITOREO APM
+# ⏱ MIDDLEWARE DE TIMING Y MONITOREO APM
 import time
 
 @app.middleware("http")
@@ -982,48 +910,16 @@ async def monitoring_middleware(request: Request, call_next):
     
     # Log solo endpoints lentos (> 3s)
     if process_time > 3.0:
-        logger.warning(f"⚠️ Slow endpoint: {endpoint} - {process_time:.3f}s (status: {status_code})")
+        logger.warning(f"[WARNING] Slow endpoint: {endpoint} - {process_time:.3f}s (status: {status_code})")
     
     return response
 
-print("⏱️ Monitoring middleware enabled (APM + Timing)")
+print("Monitoring middleware enabled (APM + Timing)")
 
-# � FUNCIONES UTILITARIAS PARA UTF-8
-def create_utf8_response(content: Dict[str, Any], status_code: int = 200) -> JSONResponse:
-    """Crear respuesta JSON con encoding UTF-8 explícito"""
-    return JSONResponse(
-        content=content,
-        status_code=status_code,
-        headers={"Content-Type": "application/json; charset=utf-8"},
-        media_type="application/json"
-    )
+# FUNCIONES UTILITARIAS UTF-8 Y FIREBASE: delegadas a api.core.responses (modular)
+from api.core.responses import create_utf8_response, handle_utf8_text, clean_firebase_data
 
-def handle_utf8_text(text: str) -> str:
-    """Asegurar que el texto mantenga caracteres UTF-8"""
-    if isinstance(text, str):
-        return text.encode('utf-8').decode('utf-8')
-    return str(text)
-
-def clean_firebase_data(data):
-    """
-    Limpia datos de Firebase para serialización JSON
-    Convierte DatetimeWithNanoseconds y otros tipos no serializables
-    """
-    if isinstance(data, dict):
-        cleaned = {}
-        for key, value in data.items():
-            cleaned[key] = clean_firebase_data(value)
-        return cleaned
-    elif isinstance(data, list):
-        return [clean_firebase_data(item) for item in data]
-    elif FIREBASE_TYPES_AVAILABLE and isinstance(data, DatetimeWithNanoseconds):
-        return data.isoformat()
-    elif isinstance(data, datetime):
-        return data.isoformat()
-    else:
-        return data
-
-# �🛠️ MIDDLEWARE DE TIMEOUT PARA PREVENIR COLGADAS
+#  MIDDLEWARE DE TIMEOUT PARA PREVENIR COLGADAS
 @app.middleware("http")
 async def timeout_middleware(request: Request, call_next):
     """Middleware para prevenir que las requests se cuelguen"""
@@ -1090,13 +986,13 @@ async def timeout_middleware(request: Request, call_next):
 async def read_root():
     """Endpoint raíz con información básica de la API"""
     response_data = {
-        "message": "Gestor de Proyectos API 🇪🇸",
+        "message": "Gestor de Proyectos API ",
         "description": "API con soporte completo para UTF-8 y caracteres en español",
         "version": "1.0.0",
         "timestamp": datetime.now().isoformat(),
         "last_updated": "2025-10-04T00:00:00Z",  # API last update date
         "firebase_project": PROJECT_ID,
-        "status": "funcionando ✅",
+        "status": "funcionando [OK]",
         "encoding": "UTF-8",
         "spanish_support": "Sí - Acentos: á é í ó ú, Ñ, diéresis: ü",
         "documentation": "/docs",
@@ -1195,7 +1091,7 @@ async def read_root():
 @app.get("/metrics", tags=["Monitoring"])
 async def metrics():
     """
-    📊 Endpoint de Métricas de Prometheus
+     Endpoint de Métricas de Prometheus
     
     Expone métricas de la aplicación en formato Prometheus para monitoreo APM:
     - gestor_api_requests_total: Contador de requests por endpoint, método y status
@@ -1213,11 +1109,11 @@ async def metrics():
     from fastapi.responses import Response
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
-@app.get("/ping", tags=["General"], summary="🔵 Ping Simple")
+@app.get("/ping", tags=["General"], summary=" Ping Simple")
 async def ping():
-    """🔵 GET | ❤️ Health Check | Health check super simple para Railway con soporte UTF-8"""
+    """ GET |  Health Check | Health check super simple para Railway con soporte UTF-8"""
     response_data = {
-        "status": "ok ✅", 
+        "status": "ok [OK]", 
         "message": "Servidor funcionando correctamente",
         "encoding": "UTF-8",
         "spanish_test": "ñáéíóúü ¡¿",
@@ -1234,7 +1130,7 @@ async def cors_test(request: Request):
     
     response_data = {
         "success": True,
-        "message": "CORS test successful ✅",
+        "message": "CORS test successful [OK]",
         "origin": origin,
         "user_agent": user_agent[:100] + "..." if len(user_agent) > 100 else user_agent,
         "cors_configured": True,
@@ -1284,7 +1180,7 @@ async def test_utf8():
     """Endpoint de prueba específico para caracteres UTF-8 en español"""
     test_data = {
         "encoding": "UTF-8",
-        "status": "Funcionando correctamente ✅",
+        "status": "Funcionando correctamente [OK]",
         "test_cases": {
             "vocales_acentuadas": "á é í ó ú",
             "vocales_mayusculas": "Á É Í Ó Ú",
@@ -1382,9 +1278,9 @@ async def railway_debug():
             "timestamp": datetime.now().isoformat()
         }
 
-@app.get("/health", tags=["General"], summary="🔵 Estado de Salud API")
+@app.get("/health", tags=["General"], summary=" Estado de Salud API")
 async def health_check():
-    """🔵 GET | ❤️ Health Check | Verificar estado de salud de la API"""
+    """ GET |  Health Check | Verificar estado de salud de la API"""
     
     # Intentar obtener del cache (TTL 30 segundos para health check)
     cache_key = get_cache_key("health_check")
@@ -1470,26 +1366,26 @@ async def get_all_nombres_centros_gestores_unique():
     **Propósito**: Retorna una lista de valores únicos del campo "nombre_centro_gestor" 
     de la colección "proyectos_presupuestales".
     
-    ### ✅ Casos de uso:
+    ### [OK] Casos de uso:
     - Poblar dropdowns y selectores en formularios
     - Filtros dinámicos en dashboards
     - Validación de centros gestores existentes
     - Reportes por centro gestor
     - Análisis de distribución institucional
     
-    ### 📊 Características:
+    ###  Características:
     - Valores únicos ordenados alfabéticamente
     - Filtrado automático de valores vacíos o nulos
     - Conteo total de centros gestores únicos
     - Optimizado para carga rápida
     
-    ### 🔧 Optimizaciones:
+    ###  Optimizaciones:
     - Eliminación de duplicados usando set()
     - Normalización de espacios en blanco
     - Ordenamiento alfabético para mejor UX
     - Filtrado de valores vacíos
     
-    ### 📝 Ejemplo de uso:
+    ###  Ejemplo de uso:
     ```javascript
     const response = await fetch('/centros-gestores/nombres-unicos');
     const data = await response.json();
@@ -1502,7 +1398,7 @@ async def get_all_nombres_centros_gestores_unique():
     }
     ```
     
-    ### 💡 Casos de uso prácticos:
+    ###  Casos de uso prácticos:
     - **Formularios**: Autocomplete de centros gestores
     - **Dashboards**: Filtros dinámicos por institución
     - **Reportes**: Agrupación por centro gestor
@@ -1583,23 +1479,8 @@ class ActualizarRecomendacionRequest(BaseModel):
     beneficio_esperado: Optional[str] = Field(None, description="Beneficio esperado de la recomendación")
 
 
-def _timestamp_colombia_iso() -> str:
-    """Generar timestamp ISO en hora Colombia (UTC-5)."""
-    try:
-        from zoneinfo import ZoneInfo
-        tz_colombia = ZoneInfo("America/Bogota")
-    except Exception:
-        from datetime import timezone as _timezone, timedelta as _timedelta
-        tz_colombia = _timezone(_timedelta(hours=-5))
-    return datetime.now(tz_colombia).isoformat()
-
-
-def _payload_to_dict(payload: Optional[BaseModel]) -> Dict[str, Any]:
-    """Serializa payload Pydantic y elimina campos nulos."""
-    if payload is None:
-        return {}
-    data = payload.model_dump(exclude_unset=True) if hasattr(payload, "model_dump") else payload.dict(exclude_unset=True)
-    return {key: value for key, value in data.items() if value is not None}
+# _timestamp_colombia_iso y _payload_to_dict: delegados a api.core.responses
+from api.core.responses import timestamp_colombia_iso as _timestamp_colombia_iso, payload_to_dict as _payload_to_dict
 
 
 def _get_general_collection(collection_name: str):
@@ -1710,7 +1591,7 @@ def _delete_general_record(collection_name: str, registro_id: str) -> Dict[str, 
     }
 
 
-@app.post("/reportar-bug", tags=["General"], summary="🟢 POST | Reportar Bug")
+@app.post("/reportar-bug", tags=["General"], summary=" POST | Reportar Bug")
 async def reportar_bug(
     payload: Optional[ReportarBugRequest] = Body(None, description="Campos opcionales del reporte de bug")
 ):
@@ -1723,7 +1604,7 @@ async def reportar_bug(
         raise HTTPException(status_code=500, detail=f"Error reportando bug: {str(e)}")
 
 
-@app.get("/reportar-bug", tags=["General"], summary="🔵 GET | Consultar Reportes de Bug")
+@app.get("/reportar-bug", tags=["General"], summary=" GET | Consultar Reportes de Bug")
 async def get_reportes_bug(
     registro_id: Optional[str] = Query(None, description="ID del registro a consultar"),
     limit: int = Query(50, ge=1, le=200, description="Cantidad máxima de registros")
@@ -1737,7 +1618,7 @@ async def get_reportes_bug(
         raise HTTPException(status_code=500, detail=f"Error consultando reportes de bug: {str(e)}")
 
 
-@app.put("/reportar-bug/{registro_id}", tags=["General"], summary="🟠 PUT | Actualizar Reporte de Bug")
+@app.put("/reportar-bug/{registro_id}", tags=["General"], summary=" PUT | Actualizar Reporte de Bug")
 async def update_reportar_bug(
     registro_id: str,
     payload: Optional[ReportarBugRequest] = Body(None, description="Campos opcionales para actualizar")
@@ -1751,7 +1632,7 @@ async def update_reportar_bug(
         raise HTTPException(status_code=500, detail=f"Error actualizando reporte de bug: {str(e)}")
 
 
-@app.delete("/reportar-bug/{registro_id}", tags=["General"], summary="🔴 DELETE | Eliminar Reporte de Bug")
+@app.delete("/reportar-bug/{registro_id}", tags=["General"], summary=" DELETE | Eliminar Reporte de Bug")
 async def delete_reportar_bug(registro_id: str):
     try:
         result = _delete_general_record("general_reportes_bug", registro_id)
@@ -1762,7 +1643,7 @@ async def delete_reportar_bug(registro_id: str):
         raise HTTPException(status_code=500, detail=f"Error eliminando reporte de bug: {str(e)}")
 
 
-@app.post("/solicitar-escalada-privilegios", tags=["General"], summary="🟢 POST | Solicitar Escalada de Privilegios")
+@app.post("/solicitar-escalada-privilegios", tags=["General"], summary=" POST | Solicitar Escalada de Privilegios")
 async def solicitar_escalada_privilegios(
     payload: Optional[SolicitarEscaladaPrivilegiosRequest] = Body(None, description="Campos opcionales de la solicitud")
 ):
@@ -1775,7 +1656,7 @@ async def solicitar_escalada_privilegios(
         raise HTTPException(status_code=500, detail=f"Error solicitando escalada de privilegios: {str(e)}")
 
 
-@app.get("/solicitar-escalada-privilegios", tags=["General"], summary="🔵 GET | Consultar Solicitudes de Escalada")
+@app.get("/solicitar-escalada-privilegios", tags=["General"], summary=" GET | Consultar Solicitudes de Escalada")
 async def get_solicitudes_escalada_privilegios(
     registro_id: Optional[str] = Query(None, description="ID del registro a consultar"),
     limit: int = Query(50, ge=1, le=200, description="Cantidad máxima de registros")
@@ -1789,7 +1670,7 @@ async def get_solicitudes_escalada_privilegios(
         raise HTTPException(status_code=500, detail=f"Error consultando solicitudes de escalada: {str(e)}")
 
 
-@app.put("/solicitar-escalada-privilegios/{registro_id}", tags=["General"], summary="🟠 PUT | Actualizar Solicitud de Escalada")
+@app.put("/solicitar-escalada-privilegios/{registro_id}", tags=["General"], summary=" PUT | Actualizar Solicitud de Escalada")
 async def update_solicitar_escalada_privilegios(
     registro_id: str,
     payload: Optional[SolicitarEscaladaPrivilegiosRequest] = Body(None, description="Campos opcionales para actualizar")
@@ -1803,7 +1684,7 @@ async def update_solicitar_escalada_privilegios(
         raise HTTPException(status_code=500, detail=f"Error actualizando solicitud de escalada: {str(e)}")
 
 
-@app.delete("/solicitar-escalada-privilegios/{registro_id}", tags=["General"], summary="🔴 DELETE | Eliminar Solicitud de Escalada")
+@app.delete("/solicitar-escalada-privilegios/{registro_id}", tags=["General"], summary=" DELETE | Eliminar Solicitud de Escalada")
 async def delete_solicitar_escalada_privilegios(registro_id: str):
     try:
         result = _delete_general_record("general_solicitudes_escalada_privilegios", registro_id)
@@ -1814,7 +1695,7 @@ async def delete_solicitar_escalada_privilegios(registro_id: str):
         raise HTTPException(status_code=500, detail=f"Error eliminando solicitud de escalada: {str(e)}")
 
 
-@app.post("/realizar-recomendacion", tags=["General"], summary="🟢 POST | Realizar Recomendación")
+@app.post("/realizar-recomendacion", tags=["General"], summary=" POST | Realizar Recomendación")
 async def realizar_recomendacion(
     payload: RealizarRecomendacionRequest = Body(..., description="Campos de la recomendación")
 ):
@@ -1827,7 +1708,7 @@ async def realizar_recomendacion(
         raise HTTPException(status_code=500, detail=f"Error registrando recomendación: {str(e)}")
 
 
-@app.get("/realizar-recomendacion", tags=["General"], summary="🔵 GET | Consultar Recomendaciones")
+@app.get("/realizar-recomendacion", tags=["General"], summary=" GET | Consultar Recomendaciones")
 async def get_recomendaciones(
     registro_id: Optional[str] = Query(None, description="ID del registro a consultar"),
     limit: int = Query(50, ge=1, le=200, description="Cantidad máxima de registros")
@@ -1841,7 +1722,7 @@ async def get_recomendaciones(
         raise HTTPException(status_code=500, detail=f"Error consultando recomendaciones: {str(e)}")
 
 
-@app.put("/realizar-recomendacion/{registro_id}", tags=["General"], summary="🟠 PUT | Actualizar Recomendación")
+@app.put("/realizar-recomendacion/{registro_id}", tags=["General"], summary=" PUT | Actualizar Recomendación")
 async def update_recomendacion(
     registro_id: str,
     payload: Optional[ActualizarRecomendacionRequest] = Body(None, description="Campos opcionales para actualizar")
@@ -1855,7 +1736,7 @@ async def update_recomendacion(
         raise HTTPException(status_code=500, detail=f"Error actualizando recomendación: {str(e)}")
 
 
-@app.delete("/realizar-recomendacion/{registro_id}", tags=["General"], summary="🔴 DELETE | Eliminar Recomendación")
+@app.delete("/realizar-recomendacion/{registro_id}", tags=["General"], summary=" DELETE | Eliminar Recomendación")
 async def delete_recomendacion(registro_id: str):
     try:
         result = _delete_general_record("general_recomendaciones", registro_id)
@@ -2011,7 +1892,7 @@ def _aplicar_campos_proyectos(data: List[Dict[str, Any]], campos: Optional[str])
 
     return filtered
 
-@app.get("/proyectos-presupuestales/all", tags=["Proyectos de Inversión"], summary="🔵 Todos los Proyectos Presupuestales")
+@app.get("/proyectos-presupuestales/all", tags=["Proyectos de Inversión"], summary=" Todos los Proyectos Presupuestales")
 @optional_rate_limit("40/minute")  # Máximo 40 requests por minuto (endpoint costoso)
 async def get_proyectos_all(
     request: Request,
@@ -2020,23 +1901,23 @@ async def get_proyectos_all(
     campos: Optional[str] = Query(None, description="Campos a retornar separados por coma (ej: bpin,bp,nombre_centro_gestor)")
 ):
     """
-    ## 🔵 GET | 📋 Listados | Obtener Todos los Proyectos Presupuestales
+    ##  GET |  Listados | Obtener Todos los Proyectos Presupuestales
     
     **Propósito**: Retorna todos los documentos de la colección "proyectos_presupuestales".
     
-    ### ✅ Casos de uso:
+    ### [OK] Casos de uso:
     - Obtener listado completo de proyectos presupuestales
     - Exportación de datos para análisis
     - Integración con sistemas externos
     - Reportes y dashboards de proyectos de inversión
     
-    ### 📊 Información incluida:
+    ###  Información incluida:
     - Todos los campos disponibles en la colección
     - ID del documento para referencia
     - Conteo total de registros
     - Timestamp de la consulta
     
-    ### 📝 Ejemplo de uso:
+    ###  Ejemplo de uso:
     ```javascript
     const response = await fetch('/proyectos-presupuestales/all');
     const data = await response.json();
@@ -2083,7 +1964,7 @@ async def get_proyectos_all(
             detail=f"Error procesando proyectos presupuestales: {str(e)}"
         )
 
-@app.get("/proyectos-presupuestales/bpin/{bpin}", tags=["Proyectos de Inversión"], summary="🔵 Proyectos por BPIN")
+@app.get("/proyectos-presupuestales/bpin/{bpin}", tags=["Proyectos de Inversión"], summary=" Proyectos por BPIN")
 async def get_proyectos_by_bpin(
     bpin: str,
     limit: int = Query(200, ge=1, le=5000, description="Número máximo de registros a retornar"),
@@ -2091,28 +1972,28 @@ async def get_proyectos_by_bpin(
     campos: Optional[str] = Query(None, description="Campos a retornar separados por coma")
 ):
     """
-    ## 🔵 GET | 🔍 Consultas | Obtener Proyectos por BPIN
+    ##  GET |  Consultas | Obtener Proyectos por BPIN
     
     **Propósito**: Retorna proyectos presupuestales filtrados por código BPIN específico.
     
-    ### ✅ Casos de uso:
+    ### [OK] Casos de uso:
     - Búsqueda de proyectos por código BPIN específico
     - Consulta de detalles de proyecto individual
     - Validación de existencia de BPIN
     - Integración con sistemas de seguimiento presupuestal
     
-    ### 🔍 Filtrado:
+    ###  Filtrado:
     - **Campo**: `bpin` (coincidencia exacta)
     - **Tipo**: String - Código único del proyecto
     - **Sensible a mayúsculas**: Sí
     
-    ### 📊 Información incluida:
+    ###  Información incluida:
     - Todos los campos del proyecto que coincida con el BPIN
     - ID del documento para referencia
     - Conteo de registros encontrados
     - Información del filtro aplicado
     
-    ### 📝 Ejemplo de uso:
+    ###  Ejemplo de uso:
     ```javascript
     const bpin = "2023000123456";
     const response = await fetch(`/proyectos-presupuestales/bpin/${bpin}`);
@@ -2124,7 +2005,7 @@ async def get_proyectos_by_bpin(
     }
     ```
     
-    ### 💡 Notas:
+    ###  Notas:
     - Si no se encuentra ningún proyecto, retorna array vacío
     - El BPIN debe ser exacto (sin espacios adicionales)
     - Típicamente retorna 0 o 1 resultado (BPIN único)
@@ -2183,24 +2064,24 @@ async def get_proyectos_by_bp(
     
     **Propósito**: Retorna proyectos presupuestales filtrados por código BP específico.
     
-    ### ✅ Casos de uso:
+    ### [OK] Casos de uso:
     - Búsqueda de proyectos por código BP específico
     - Consulta de proyectos relacionados por BP
     - Análisis de agrupación presupuestal
     - Reportes por código de proyecto base
     
-    ### 🔍 Filtrado:
+    ###  Filtrado:
     - **Campo**: `bp` (coincidencia exacta)
     - **Tipo**: String - Código base del proyecto
     - **Sensible a mayúsculas**: Sí
     
-    ### 📊 Información incluida:
+    ###  Información incluida:
     - Todos los campos de los proyectos que coincidan con el BP
     - ID del documento para referencia
     - Conteo de registros encontrados
     - Información del filtro aplicado
     
-    ### 📝 Ejemplo de uso:
+    ###  Ejemplo de uso:
     ```javascript
     const bp = "BP-2023-001";
     const response = await fetch(`/proyectos-presupuestales/bp/${bp}`);
@@ -2213,7 +2094,7 @@ async def get_proyectos_by_bp(
     }
     ```
     
-    ### 💡 Notas:
+    ###  Notas:
     - Puede retornar múltiples proyectos (un BP puede tener varios proyectos)
     - Si no se encuentra ningún proyecto, retorna array vacío
     - El BP debe ser exacto (sin espacios adicionales)
@@ -2272,26 +2153,26 @@ async def get_proyectos_by_centro_gestor(
     
     **Propósito**: Retorna proyectos presupuestales filtrados por nombre del centro gestor específico.
     
-    ### ✅ Casos de uso:
+    ### [OK] Casos de uso:
     - Consulta de proyectos por dependencia responsable
     - Reportes por entidad gestora
     - Dashboard por centro de responsabilidad
     - Análisis de distribución institucional
     - Seguimiento de proyectos por secretaría/departamento
     
-    ### 🔍 Filtrado:
+    ###  Filtrado:
     - **Campo**: `nombre_centro_gestor` (coincidencia exacta)
     - **Tipo**: String - Nombre completo del centro gestor
     - **Sensible a mayúsculas**: Sí
     - **Espacios**: Sensible a espacios adicionales
     
-    ### 📊 Información incluida:
+    ###  Información incluida:
     - Todos los campos de los proyectos del centro gestor
     - ID del documento para referencia
     - Conteo de registros encontrados
     - Información del filtro aplicado
     
-    ### 📝 Ejemplo de uso:
+    ###  Ejemplo de uso:
     ```javascript
     const centroGestor = "Secretaría de Salud";
     const response = await fetch(`/proyectos-presupuestales/centro-gestor/${encodeURIComponent(centroGestor)}`);
@@ -2303,13 +2184,13 @@ async def get_proyectos_by_centro_gestor(
     }
     ```
     
-    ### 💡 Notas:
+    ###  Notas:
     - Típicamente retorna múltiples proyectos por centro gestor
     - El nombre debe ser exacto (use `/centros-gestores/nombres-unicos` para obtener nombres válidos)
     - Para nombres con espacios, usar `encodeURIComponent()` en el frontend
     - Si no se encuentra ningún proyecto, retorna array vacío
     
-    ### 🔗 Endpoint relacionado:
+    ###  Endpoint relacionado:
     - `GET /centros-gestores/nombres-unicos` - Para obtener lista de centros gestores válidos
     """
     if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
@@ -2358,7 +2239,7 @@ async def get_proyectos_by_centro_gestor(
 # ENDPOINT DE UNIDADES DE PROYECTO
 # ============================================================================
 
-@app.get("/unidades-proyecto", tags=["Unidades de Proyecto"], summary="🔵 Consultar Unidades de Proyecto")
+@app.get("/unidades-proyecto", tags=["Unidades de Proyecto"], summary=" Consultar Unidades de Proyecto")
 @optional_rate_limit("60/minute")
 async def consultar_unidades_proyecto(
     request: Request,
@@ -2381,7 +2262,7 @@ async def consultar_unidades_proyecto(
     offset: Optional[int] = Query(None, ge=0, description="Offset para paginación"),
 ):
     """
-    ## 🔵 Consultar Unidades de Proyecto
+    ##  Consultar Unidades de Proyecto
     
     **Propósito**: Acceso directo a la colección `unidades_proyecto` en Firebase.
     
@@ -2458,11 +2339,11 @@ async def consultar_unidades_proyecto(
     
     ### Optimizaciones de Rendimiento
     
-    - 🚀 **Streaming eficiente** de documentos Firestore
-    - ⚡ **Procesamiento batch** optimizado
-    - 📦 **Compresión automática** de respuestas
-    - 🎯 **Queries con índices** Firestore
-    - 🔄 **Retry automático** en caso de errores transitorios
+    -  **Streaming eficiente** de documentos Firestore
+    -  **Procesamiento batch** optimizado
+    -  **Compresión automática** de respuestas
+    -  **Queries con índices** Firestore
+    -  **Retry automático** en caso de errores transitorios
     
     **Índices Firestore recomendados:**
     ```
@@ -2485,7 +2366,7 @@ async def consultar_unidades_proyecto(
         from database.firebase_config import get_firestore_client
         import google.cloud.firestore
         
-        logger.info(f"🔍 Consulta unidades_proyecto iniciada")
+        logger.info(f" Consulta unidades_proyecto iniciada")
         
         # Obtener cliente Firestore
         db = get_firestore_client()
@@ -2495,10 +2376,10 @@ async def consultar_unidades_proyecto(
                 detail="No se pudo conectar a Firestore"
             )
         
-        logger.info(f"✅ Cliente Firestore obtenido")
+        logger.info(f"[OK] Cliente Firestore obtenido")
         
             # Construir query optimizada
-        logger.info(f"📊 Construyendo query para unidades_proyecto...")
+        logger.info(f" Construyendo query para unidades_proyecto...")
         query = db.collection('unidades_proyecto')
         
         # Aplicar filtros
@@ -2554,7 +2435,7 @@ async def consultar_unidades_proyecto(
             filters_applied += 1
             active_filters['ano'] = ano
         
-        logger.info(f"🔍 Filtros aplicados: {filters_applied}")
+        logger.info(f" Filtros aplicados: {filters_applied}")
         
         # Aplicar límite (max 10000, default 100 para velocidad)
         query_limit = min(limit or 100, 10000)
@@ -2564,7 +2445,7 @@ async def consultar_unidades_proyecto(
         if offset:
             query = query.offset(offset)
         
-        logger.info(f"⚡ Ejecutando query (limit={query_limit}, offset={offset or 0})...")
+        logger.info(f" Ejecutando query (limit={query_limit}, offset={offset or 0})...")
         
         # Ejecutar query
         docs = query.stream()
@@ -2594,9 +2475,9 @@ async def consultar_unidades_proyecto(
             
             # Log progreso cada 50 docs
             if doc_count % 50 == 0:
-                logger.info(f"📦 Procesados {doc_count} documentos...")
+                logger.info(f" Procesados {doc_count} documentos...")
         
-        logger.info(f"✅ Query completada: {doc_count} documentos obtenidos")
+        logger.info(f"[OK] Query completada: {doc_count} documentos obtenidos")
         
         # Calcular tiempo de procesamiento
         elapsed_time = time.time() - start_time
@@ -2620,14 +2501,14 @@ async def consultar_unidades_proyecto(
             "timestamp": datetime.now().isoformat()
         }
         
-        logger.info(f"🎯 Respuesta generada en {elapsed_time:.3f}s - {len(data)} documentos")
+        logger.info(f" Respuesta generada en {elapsed_time:.3f}s - {len(data)} documentos")
         
         return create_utf8_response(response_data)
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Error consultando unidades_proyecto: {str(e)}")
+        logger.error(f"[ERROR] Error consultando unidades_proyecto: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail=f"Error consultando colección: {str(e)}"
@@ -2637,7 +2518,7 @@ async def consultar_unidades_proyecto(
 # ENDPOINT DE DASHBOARD (UNIDADES DE PROYECTO)
 # ============================================================================
 
-@app.get("/unidades-proyecto/dashboard", tags=["Unidades de Proyecto"], summary="🔵 Dashboard Avanzado de Unidades de Proyecto")
+@app.get("/unidades-proyecto/dashboard", tags=["Unidades de Proyecto"], summary=" Dashboard Avanzado de Unidades de Proyecto")
 @optional_rate_limit("30/minute")
 async def get_unidades_proyecto_dashboard_endpoint(
     request: Request,
@@ -2648,7 +2529,7 @@ async def get_unidades_proyecto_dashboard_endpoint(
     barrio_vereda: Optional[str] = Query(None, description="Filtrar por barrio o vereda"),
 ):
     """
-    ## 🔵 Dashboard Avanzado
+    ##  Dashboard Avanzado
 
     Genera métricas, KPIs y distribuciones para dashboards y gráficos.
     Incluye el KPI de **Frentes de Obra Activos** calculado dinámicamente.
@@ -2677,7 +2558,7 @@ async def get_unidades_proyecto_dashboard_endpoint(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Error en dashboard de unidades_proyecto: {str(e)}")
+        logger.error(f"[ERROR] Error en dashboard de unidades_proyecto: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail=f"Error generando dashboard: {str(e)}"
@@ -2687,7 +2568,7 @@ async def get_unidades_proyecto_dashboard_endpoint(
 # ENDPOINT DE CALIDAD DE DATOS (UNIDADES DE PROYECTO)
 # ============================================================================
 
-@app.get("/unidades-proyecto/calidad-datos", tags=["Unidades de Proyecto"], summary="🔵 Métricas de Calidad de Datos (ISO/DAMA)")
+@app.get("/unidades-proyecto/calidad-datos", tags=["Unidades de Proyecto"], summary=" Métricas de Calidad de Datos (ISO/DAMA)")
 @optional_rate_limit("30/minute")
 async def get_unidades_proyecto_calidad_datos(
     request: Request,
@@ -2697,7 +2578,7 @@ async def get_unidades_proyecto_calidad_datos(
     auto_generate: bool = Query(True, description="Si no hay snapshot, genera uno automáticamente")
 ):
     """
-    ## 🔵 Resumen de Calidad de Datos (Snapshot)
+    ##  Resumen de Calidad de Datos (Snapshot)
 
     Consulta el resumen de calidad persistido en Firestore para `unidades_proyecto`
     e `intervenciones_unidades_proyecto` usando snapshots controlados.
@@ -2726,7 +2607,7 @@ async def get_unidades_proyecto_calidad_datos(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Error en métricas de calidad de unidades_proyecto: {str(e)}")
+        logger.error(f"[ERROR] Error en métricas de calidad de unidades_proyecto: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail=f"Error generando métricas de calidad: {str(e)}"
@@ -2736,7 +2617,7 @@ async def get_unidades_proyecto_calidad_datos(
 @app.post(
     "/unidades-proyecto/calidad-datos/analizar",
     tags=["Unidades de Proyecto"],
-    summary="🟢 Ejecutar Análisis Extensivo de Calidad (Snapshot)"
+    summary=" Ejecutar Análisis Extensivo de Calidad (Snapshot)"
 )
 @optional_rate_limit("10/minute")
 async def post_unidades_proyecto_calidad_datos_analizar(
@@ -2759,7 +2640,7 @@ async def post_unidades_proyecto_calidad_datos_analizar(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Error generando snapshot de calidad: {str(e)}")
+        logger.error(f"[ERROR] Error generando snapshot de calidad: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail=f"Error generando snapshot de calidad: {str(e)}"
@@ -2769,7 +2650,7 @@ async def post_unidades_proyecto_calidad_datos_analizar(
 @app.get(
     "/unidades-proyecto/calidad-datos/registros",
     tags=["Unidades de Proyecto"],
-    summary="🔵 Diagnóstico por Registro (Paginado)"
+    summary=" Diagnóstico por Registro (Paginado)"
 )
 @optional_rate_limit("30/minute")
 async def get_unidades_proyecto_calidad_datos_registros(
@@ -2804,7 +2685,7 @@ async def get_unidades_proyecto_calidad_datos_registros(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Error consultando detalle de calidad paginado: {str(e)}")
+        logger.error(f"[ERROR] Error consultando detalle de calidad paginado: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail=f"Error consultando detalle de calidad paginado: {str(e)}"
@@ -2814,7 +2695,7 @@ async def get_unidades_proyecto_calidad_datos_registros(
 @app.get(
     "/unidades-proyecto/calidad-datos/issues",
     tags=["Unidades de Proyecto"],
-    summary="🔵 Issues Individuales de Calidad (Paginado)"
+    summary=" Issues Individuales de Calidad (Paginado)"
 )
 @optional_rate_limit("30/minute")
 async def get_unidades_proyecto_calidad_datos_issues(
@@ -2854,7 +2735,7 @@ async def get_unidades_proyecto_calidad_datos_issues(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Error consultando issues de calidad: {str(e)}")
+        logger.error(f"[ERROR] Error consultando issues de calidad: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail=f"Error consultando issues de calidad: {str(e)}"
@@ -2864,7 +2745,7 @@ async def get_unidades_proyecto_calidad_datos_issues(
 @app.get(
     "/unidades-proyecto/calidad-datos/historial",
     tags=["Unidades de Proyecto"],
-    summary="🔵 Historial de Snapshots de Calidad"
+    summary=" Historial de Snapshots de Calidad"
 )
 @optional_rate_limit("30/minute")
 async def get_unidades_proyecto_calidad_datos_historial(
@@ -2884,7 +2765,7 @@ async def get_unidades_proyecto_calidad_datos_historial(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Error consultando historial de calidad: {str(e)}")
+        logger.error(f"[ERROR] Error consultando historial de calidad: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail=f"Error consultando historial de calidad: {str(e)}"
@@ -2894,7 +2775,7 @@ async def get_unidades_proyecto_calidad_datos_historial(
 @app.get(
     "/unidades-proyecto/calidad-datos/centros-gestores",
     tags=["Unidades de Proyecto"],
-    summary="🔵 Diagnóstico Agrupado por Centro Gestor (Paginado)"
+    summary=" Diagnóstico Agrupado por Centro Gestor (Paginado)"
 )
 @optional_rate_limit("30/minute")
 async def get_unidades_proyecto_calidad_datos_centros_gestores(
@@ -2927,7 +2808,7 @@ async def get_unidades_proyecto_calidad_datos_centros_gestores(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Error consultando calidad agrupada por centro gestor: {str(e)}")
+        logger.error(f"[ERROR] Error consultando calidad agrupada por centro gestor: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail=f"Error consultando calidad agrupada por centro gestor: {str(e)}"
@@ -2937,7 +2818,7 @@ async def get_unidades_proyecto_calidad_datos_centros_gestores(
 @app.get(
     "/unidades-proyecto/calidad-datos/centros-gestores/faltantes",
     tags=["Unidades de Proyecto"],
-    summary="🔵 Candidatos de Corrección: nombre_centro_gestor Faltante"
+    summary=" Candidatos de Corrección: nombre_centro_gestor Faltante"
 )
 @optional_rate_limit("30/minute")
 async def get_unidades_proyecto_calidad_datos_centros_gestores_faltantes(
@@ -2968,7 +2849,7 @@ async def get_unidades_proyecto_calidad_datos_centros_gestores_faltantes(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Error consultando candidatos faltantes de centro gestor: {str(e)}")
+        logger.error(f"[ERROR] Error consultando candidatos faltantes de centro gestor: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail=f"Error consultando candidatos faltantes de centro gestor: {str(e)}"
@@ -2978,16 +2859,16 @@ async def get_unidades_proyecto_calidad_datos_centros_gestores_faltantes(
 # ENDPOINT PARA ARTEFACTO DE CAPTURA #360
 # ============================================================================
 
-@app.get("/unidades-proyecto/init-360", tags=["Artefacto de Captura #360"], summary="🔵 GET | 📋 Listados | Datos Iniciales para Captura #360")
+@app.get("/unidades-proyecto/init-360", tags=["Artefacto de Captura #360"], summary=" GET |  Listados | Datos Iniciales para Captura #360")
 @optional_rate_limit("60/minute")
 async def get_unidades_proyecto_init_360(request: Request):
     """
-    ## 🔵 GET | 📋 Listados | Obtener Datos Iniciales para Artefacto de Captura #360
+    ##  GET |  Listados | Obtener Datos Iniciales para Artefacto de Captura #360
     
     **Propósito**: Retorna registros de la colección "unidades_proyecto" filtrados según 
     criterios específicos para el artefacto de captura #360.
     
-    ### ✅ Campos retornados:
+    ### [OK] Campos retornados:
     - upid
     - nombre_up
     - nombre_up_detalle
@@ -2999,7 +2880,7 @@ async def get_unidades_proyecto_init_360(request: Request):
     - geometry (datos geoespaciales del registro)
     - direccion
     
-    ### 🚫 Exclusiones aplicadas:
+    ###  Exclusiones aplicadas:
     
     **Por clase_up**:
     - "Interventoría"
@@ -3017,13 +2898,13 @@ async def get_unidades_proyecto_init_360(request: Request):
     - "Estudios y diseños"
     - "Transferencia directa"
     
-    ### 📊 Información incluida en la respuesta:
+    ###  Información incluida en la respuesta:
     - Lista de registros que cumplen los criterios
     - Conteo total de registros retornados
     - Timestamp de la consulta
     - Criterios de exclusión aplicados
     
-    ### 📝 Ejemplo de uso:
+    ###  Ejemplo de uso:
     ```javascript
     const response = await fetch('/unidades-proyecto/init-360');
     const data = await response.json();
@@ -3146,7 +3027,7 @@ async def get_unidades_proyecto_init_360(request: Request):
 
 
 
-@app.get("/intervenciones", tags=["Unidades de Proyecto"], summary="🔵 GET | Filtrar Intervenciones")
+@app.get("/intervenciones", tags=["Unidades de Proyecto"], summary=" GET | Filtrar Intervenciones")
 @optional_rate_limit("60/minute")
 async def get_intervenciones_filtradas_endpoint(
     avance_obra: Optional[float] = Query(None, description="Avance de obra"),
@@ -3169,7 +3050,7 @@ async def get_intervenciones_filtradas_endpoint(
     url_proceso: Optional[str] = Query(None, description="URL proceso")
 ):
     """
-    ## 🔵 GET | Filtrar Intervenciones
+    ##  GET | Filtrar Intervenciones
     
     **Propósito**: Filtrar intervenciones desde la colección
     `intervenciones_unidades_proyecto` y retornar solo las unidades que cumplen.
@@ -3385,7 +3266,7 @@ async def get_intervenciones_filtradas_endpoint(
 @app.get(
     "/unidades-proyecto/intervenciones/export-xlsx",
     tags=["Unidades de Proyecto"],
-    summary="📥 Exportar Intervenciones a XLSX"
+    summary=" Exportar Intervenciones a XLSX"
 )
 async def exportar_intervenciones_xlsx(
     avance_obra: Optional[float] = Query(None, description="Avance de obra"),
@@ -3546,7 +3427,7 @@ async def exportar_intervenciones_xlsx(
 @app.get(
     "/avances_unidades_proyecto",
     tags=["Unidades de Proyecto"],
-    summary="🔵 GET | Leer avances de Unidades de Proyecto",
+    summary=" GET | Leer avances de Unidades de Proyecto",
     response_description="Lista de avances con enlaces normalizados para imágenes y documentos",
     responses={
         200: {
@@ -3892,7 +3773,7 @@ async def get_avances_unidades_proyecto(
 @app.delete(
     "/avances_unidades_proyecto",
     tags=["Unidades de Proyecto"],
-    summary="🔴 DELETE | Eliminar avance UP y soportes S3"
+    summary=" DELETE | Eliminar avance UP y soportes S3"
 )
 @optional_rate_limit("30/minute")
 async def eliminar_avance_unidades_proyecto(
@@ -4055,7 +3936,7 @@ async def eliminar_avance_unidades_proyecto(
 @app.get(
     "/solicitudes_cambios_unidades_proyecto",
     tags=["Unidades de Proyecto"],
-    summary="🔵 GET | Consultar Solicitudes de Cambios de Unidades de Proyecto"
+    summary=" GET | Consultar Solicitudes de Cambios de Unidades de Proyecto"
 )
 @optional_rate_limit("60/minute")
 async def consultar_solicitudes_cambios_unidades_proyecto(
@@ -4178,7 +4059,7 @@ async def consultar_solicitudes_cambios_unidades_proyecto(
 @app.get(
     "/solicitudes_cambios_intervenciones",
     tags=["Unidades de Proyecto"],
-    summary="🔵 GET | Consultar Solicitudes de Cambios de Intervenciones"
+    summary=" GET | Consultar Solicitudes de Cambios de Intervenciones"
 )
 @optional_rate_limit("60/minute")
 async def consultar_solicitudes_cambios_intervenciones(
@@ -4337,7 +4218,7 @@ class SolicitudCambioUnidadProyectoRequest(BaseModel):
         }
 
 
-@app.post("/solicitudes_cambios_unidad_proyecto", tags=["Unidades de Proyecto"], summary="🟢 POST | Solicitud de cambios en Unidad de Proyecto")
+@app.post("/solicitudes_cambios_unidad_proyecto", tags=["Unidades de Proyecto"], summary=" POST | Solicitud de cambios en Unidad de Proyecto")
 @optional_rate_limit("30/minute")
 async def crear_solicitud_cambio_unidad_proyecto(
     request: Request,
@@ -4410,7 +4291,7 @@ async def crear_solicitud_cambio_unidad_proyecto(
         )
 
 
-@app.post("/solicitudes_cambios_intervencion", tags=["Unidades de Proyecto"], summary="🟢 POST | Solicitud de cambios en Intervención")
+@app.post("/solicitudes_cambios_intervencion", tags=["Unidades de Proyecto"], summary=" POST | Solicitud de cambios en Intervención")
 @optional_rate_limit("30/minute")
 async def crear_solicitud_cambio_intervencion(
     request: Request,
@@ -4553,7 +4434,7 @@ def _buscar_proyectos_estrategicos(geometry_input) -> list:
     return nombres
 
 
-@app.post("/crear_unidad_proyecto", tags=["Unidades de Proyecto"], summary="🟢 POST | Crear Unidad de Proyecto",
+@app.post("/crear_unidad_proyecto", tags=["Unidades de Proyecto"], summary=" POST | Crear Unidad de Proyecto",
     description=(
         "Crea una nueva Unidad de Proyecto. Variables auto-calculadas:\n\n"
         "- **upid**: se genera automáticamente (último UNP-### + 1)\n"
@@ -4657,7 +4538,7 @@ async def crear_unidad_proyecto(
         )
 
 
-@app.post("/crear_intervencion", tags=["Unidades de Proyecto"], summary="🟢 POST | Crear Intervención")
+@app.post("/crear_intervencion", tags=["Unidades de Proyecto"], summary=" POST | Crear Intervención")
 @optional_rate_limit("30/minute")
 async def crear_intervencion(
     request: Request,
@@ -4829,7 +4710,7 @@ class ModificarIntervencionRequest(BaseModel):
         }
 
 
-@app.put("/modificar/unidad_proyecto", tags=["Unidades de Proyecto"], summary="🟠 PUT | Modificar Unidad de Proyecto")
+@app.put("/modificar/unidad_proyecto", tags=["Unidades de Proyecto"], summary=" PUT | Modificar Unidad de Proyecto")
 @optional_rate_limit("30/minute")
 async def modificar_unidad_proyecto(
     request: Request,
@@ -4925,7 +4806,7 @@ async def modificar_unidad_proyecto(
         )
 
 
-@app.put("/modificar/intervencion", tags=["Unidades de Proyecto"], summary="🟠 PUT | Modificar Intervención")
+@app.put("/modificar/intervencion", tags=["Unidades de Proyecto"], summary=" PUT | Modificar Intervención")
 @optional_rate_limit("30/minute")
 async def modificar_intervencion(
     request: Request,
@@ -5011,7 +4892,7 @@ async def modificar_intervencion(
         )
 
 
-@app.delete("/eliminar_unidad_proyecto", tags=["Unidades de Proyecto"], summary="🔴 DELETE | Eliminar Unidad de Proyecto")
+@app.delete("/eliminar_unidad_proyecto", tags=["Unidades de Proyecto"], summary=" DELETE | Eliminar Unidad de Proyecto")
 @optional_rate_limit("30/minute")
 async def eliminar_unidad_proyecto(
     request: Request,
@@ -5049,7 +4930,7 @@ async def eliminar_unidad_proyecto(
         )
 
 
-@app.delete("/eliminar_intervencion", tags=["Unidades de Proyecto"], summary="🔴 DELETE | Eliminar Intervención")
+@app.delete("/eliminar_intervencion", tags=["Unidades de Proyecto"], summary=" DELETE | Eliminar Intervención")
 @optional_rate_limit("30/minute")
 async def eliminar_intervencion(
     request: Request,
@@ -5091,7 +4972,7 @@ async def eliminar_intervencion(
         )
 
 
-@app.post("/registrar_avance_up", tags=["Unidades de Proyecto"], summary="🟢 POST | Registrar Avance UP")
+@app.post("/registrar_avance_up", tags=["Unidades de Proyecto"], summary=" POST | Registrar Avance UP")
 @optional_rate_limit("30/minute")
 async def registrar_avance_up(
     request: Request,
@@ -5106,7 +4987,7 @@ async def registrar_avance_up(
     ))
 ):
     """
-    ## 🟢 POST | Registrar avance de unidad de proyecto
+    ##  POST | Registrar avance de unidad de proyecto
 
     - Campo unificado `soportes`: acepta imágenes y documentos mezclados, sin límite de cantidad
     - **Imágenes**: detectadas por extensión → compresión JPEG progresiva optimizada para web →
@@ -5458,12 +5339,12 @@ async def registrar_avance_up(
 @app.post(
     "/intervenciones/sincronizar-links-secop",
     tags=["Unidades de Proyecto"],
-    summary="🟢 POST | Sincronizar Links SECOP de Intervenciones (incremental)",
+    summary=" POST | Sincronizar Links SECOP de Intervenciones (incremental)",
 )
 @optional_rate_limit("5/minute")
 async def sincronizar_links_secop_intervenciones(request: Request):
     """
-    ## 🟢 POST | Sincronizar Links SECOP de Intervenciones (carga incremental)
+    ##  POST | Sincronizar Links SECOP de Intervenciones (carga incremental)
 
     Lee `referencia_proceso` y `referencia_contrato` de cada documento en
     `intervenciones_unidades_proyecto`, consulta en **paralelo** las APIs de SECOP
@@ -5471,7 +5352,7 @@ async def sincronizar_links_secop_intervenciones(request: Request):
     de cada referencia y guarda los resultados en la colección
     `intervenciones_unidades_proyecto_links`.
 
-    ### 🔄 Carga incremental:
+    ###  Carga incremental:
     Solo procesa documentos que:
     - **No** existen todavía en `intervenciones_unidades_proyecto_links`, **o**
     - Han cambiado su `referencia_proceso` o `referencia_contrato` respecto al
@@ -5479,7 +5360,7 @@ async def sincronizar_links_secop_intervenciones(request: Request):
 
     Los documentos sin cambios se omiten para optimizar el tiempo de respuesta.
 
-    ### 📦 Estructura guardada en `intervenciones_unidades_proyecto_links`:
+    ###  Estructura guardada en `intervenciones_unidades_proyecto_links`:
     Incluye **todos** los campos originales de `intervenciones_unidades_proyecto`
     más los campos adicionales de links SECOP:
     ```json
@@ -5508,7 +5389,7 @@ async def sincronizar_links_secop_intervenciones(request: Request):
     }
     ```
 
-    ### 📊 Respuesta:
+    ###  Respuesta:
     ```json
     {
         "success": true,
@@ -5678,7 +5559,7 @@ async def sincronizar_links_secop_intervenciones(request: Request):
                 if url:
                     return url
         except Exception as exc:
-            logger.warning(f"❌ Error consultando SECOP {dataset}/{campo_where}='{referencia}': {exc}")
+            logger.warning(f"[ERROR] Error consultando SECOP {dataset}/{campo_where}='{referencia}': {exc}")
         return ""
 
     def _get_link_proceso_sync(referencia: str) -> str:
@@ -5686,18 +5567,18 @@ async def sincronizar_links_secop_intervenciones(request: Request):
         if not referencia:
             return ""
         # 1) Intento principal: buscar en dataset de procesos
-        logger.info(f"🔍 SECOP Procesos: buscando referencia_del_proceso='{referencia}'")
+        logger.info(f" SECOP Procesos: buscando referencia_del_proceso='{referencia}'")
         url = _buscar_en_dataset_sync(DATASET_PROCESOS, "referencia_del_proceso", referencia)
         if url:
-            logger.info(f"✅ SECOP Procesos: {referencia} → {url[:80]}{'...' if len(url) > 80 else ''}")
+            logger.info(f"[OK] SECOP Procesos: {referencia} → {url[:80]}{'...' if len(url) > 80 else ''}")
             return url
         # 2) Fallback: buscar la misma referencia en dataset de contratos
-        logger.info(f"🔄 SECOP Fallback: buscando referencia_del_contrato='{referencia}' en contratos")
+        logger.info(f" SECOP Fallback: buscando referencia_del_contrato='{referencia}' en contratos")
         url = _buscar_en_dataset_sync(DATASET_CONTRATOS, "referencia_del_contrato", referencia)
         if url:
-            logger.info(f"✅ SECOP Fallback Contratos: {referencia} → {url[:80]}{'...' if len(url) > 80 else ''}")
+            logger.info(f"[OK] SECOP Fallback Contratos: {referencia} → {url[:80]}{'...' if len(url) > 80 else ''}")
             return url
-        logger.info(f"⚠️ SECOP Procesos: {referencia} → sin resultados en ambos datasets")
+        logger.info(f"[WARNING] SECOP Procesos: {referencia} → sin resultados en ambos datasets")
         return ""
 
     def _get_link_contrato_sync(referencia: str) -> str:
@@ -5705,18 +5586,18 @@ async def sincronizar_links_secop_intervenciones(request: Request):
         if not referencia:
             return ""
         # 1) Intento principal: buscar en dataset de contratos
-        logger.info(f"🔍 SECOP Contratos: buscando referencia_del_contrato='{referencia}'")
+        logger.info(f" SECOP Contratos: buscando referencia_del_contrato='{referencia}'")
         url = _buscar_en_dataset_sync(DATASET_CONTRATOS, "referencia_del_contrato", referencia)
         if url:
-            logger.info(f"✅ SECOP Contratos: {referencia} → {url[:80]}{'...' if len(url) > 80 else ''}")
+            logger.info(f"[OK] SECOP Contratos: {referencia} → {url[:80]}{'...' if len(url) > 80 else ''}")
             return url
         # 2) Fallback: buscar la misma referencia en dataset de procesos
-        logger.info(f"🔄 SECOP Fallback: buscando referencia_del_proceso='{referencia}' en procesos")
+        logger.info(f" SECOP Fallback: buscando referencia_del_proceso='{referencia}' en procesos")
         url = _buscar_en_dataset_sync(DATASET_PROCESOS, "referencia_del_proceso", referencia)
         if url:
-            logger.info(f"✅ SECOP Fallback Procesos: {referencia} → {url[:80]}{'...' if len(url) > 80 else ''}")
+            logger.info(f"[OK] SECOP Fallback Procesos: {referencia} → {url[:80]}{'...' if len(url) > 80 else ''}")
             return url
-        logger.info(f"⚠️ SECOP Contratos: {referencia} → sin resultados en ambos datasets")
+        logger.info(f"[WARNING] SECOP Contratos: {referencia} → sin resultados en ambos datasets")
         return ""
 
     llamadas_secop_ahorradas = 0
@@ -5757,7 +5638,7 @@ async def sincronizar_links_secop_intervenciones(request: Request):
             url_orig = item["url_proceso_original"]
             if url_orig.startswith("http"):
                 link_proceso = url_orig
-                logger.info(f"🔗 Fallback url_proceso original: {item['intervencion_id']} → {url_orig[:80]}")
+                logger.info(f" Fallback url_proceso original: {item['intervencion_id']} → {url_orig[:80]}")
 
         return {**item, "link_proceso": link_proceso, "link_contrato": link_contrato}
 
@@ -5775,7 +5656,7 @@ async def sincronizar_links_secop_intervenciones(request: Request):
                 completado = False
                 pendientes = len(a_procesar) - lote_inicio
                 motivo_corte = f"Tiempo límite interno alcanzado ({elapsed:.1f}s/{TIMEOUT_INTERNO}s)"
-                logger.warning(f"⏱️ {motivo_corte}. Guardados hasta ahora: {nuevos} nuevos, {actualizados} actualizados.")
+                logger.warning(f"⏱ {motivo_corte}. Guardados hasta ahora: {nuevos} nuevos, {actualizados} actualizados.")
                 break
 
             lote = a_procesar[lote_inicio:lote_inicio + MAX_PARALELO]
@@ -5793,7 +5674,7 @@ async def sincronizar_links_secop_intervenciones(request: Request):
                         "error": str(resultado),
                     })
                     logger.error(
-                        f"❌ Error sincronizando links SECOP para {item['intervencion_id']}: {resultado}"
+                        f"[ERROR] Error sincronizando links SECOP para {item['intervencion_id']}: {resultado}"
                     )
                     continue
 
@@ -5822,7 +5703,7 @@ async def sincronizar_links_secop_intervenciones(request: Request):
                         "error": str(exc),
                     })
                     logger.error(
-                        f"❌ Error guardando link para {resultado['intervencion_id']}: {exc}"
+                        f"[ERROR] Error guardando link para {resultado['intervencion_id']}: {exc}"
                     )
 
             lotes_procesados += 1
@@ -5835,7 +5716,7 @@ async def sincronizar_links_secop_intervenciones(request: Request):
     except Exception as exc_global:
         completado = False
         motivo_corte = f"Error inesperado: {str(exc_global)[:200]}"
-        logger.error(f"❌ Error global en sincronización SECOP: {exc_global}")
+        logger.error(f"[ERROR] Error global en sincronización SECOP: {exc_global}")
 
     # ── SIEMPRE devolver métricas, completado o no ───────────────────────────
     elapsed_total = round(_time.monotonic() - _inicio_total, 2)
@@ -5869,7 +5750,7 @@ async def sincronizar_links_secop_intervenciones(request: Request):
 @app.get(
     "/intervenciones/links-secop",
     tags=["Unidades de Proyecto"],
-    summary="🔵 GET | Leer Links SECOP de Intervenciones",
+    summary=" GET | Leer Links SECOP de Intervenciones",
 )
 @optional_rate_limit("30/minute")
 async def leer_links_secop_intervenciones(
@@ -5879,7 +5760,7 @@ async def leer_links_secop_intervenciones(
     referencia_contrato: Optional[str] = Query(None, description="Filtrar por referencia de contrato"),
 ):
     """
-    ## 🔵 GET | Leer Links SECOP de Intervenciones
+    ##  GET | Leer Links SECOP de Intervenciones
 
     Consulta los datos almacenados en `intervenciones_unidades_proyecto_links`.
     Retorna todos los registros o filtra opcionalmente por:
@@ -5984,24 +5865,24 @@ async def crear_reporte_contrato(
     archivos_evidencia: List[UploadFile] = File(..., description="Archivos de evidencia (PDF, DOC, DOCX, XLS, XLSX, TXT, CSV, JPG, PNG, GIF)")
 ):
     """
-    ## 📊 Crear Reporte de Contrato con Evidencias y Upload de Archivos
+    ##  Crear Reporte de Contrato con Evidencias y Upload de Archivos
     
     **Propósito**: Endpoint unificado para crear reportes de seguimiento de contratos 
     con carga de archivos y estructura de carpetas organizada.
     
-    ### ✅ IMPORTANTE - AWS S3:
+    ### [OK] IMPORTANTE - AWS S3:
     - **Estado actual**: PRODUCCIÓN - Subida real de archivos funcionando
     - **Configuración**: AWS S3 con buckets separados por tipo
     - **Archivos**: Imágenes y documentos quedan con URL pública lista para frontend
     
-    ### ✅ Características principales:
+    ### [OK] Características principales:
     - **Carga de archivos**: Upload directo de archivos de evidencia
     - **Estructura automática**: Carpetas organizadas por contrato y fecha  
     - **Firebase**: Almacenamiento en colección `reportes_contratos`
     - **Timestamp automático**: Fecha de reporte generada automáticamente
     - **Decimales**: Soporte para avances con decimales (ej: 75.5)
     
-    ### 📋 Parámetros (Form Data):
+    ###  Parámetros (Form Data):
     - **referencia_contrato**: Referencia del contrato (obligatorio)
     - **observaciones**: Descripción detallada del avance (obligatorio)
     - **avance_fisico**: Porcentaje de avance físico 0-100 con decimales (obligatorio)
@@ -6011,27 +5892,27 @@ async def crear_reporte_contrato(
     - **alertas_tipo_alerta**: Tipos de alerta separados por coma (opcional)
     - **archivos_evidencia**: Archivos de evidencia para subir (obligatorio, múltiples archivos)
     
-        ### 📁 Estructura de almacenamiento en S3:
+        ###  Estructura de almacenamiento en S3:
     ```
-        📁 reportes_contratos_fotos/{referencia_contrato}/{YYYY-MM-DD}/...
-        📁 reportes_contratos_documentos/{referencia_contrato}/{YYYY-MM-DD}/...
+         reportes_contratos_fotos/{referencia_contrato}/{YYYY-MM-DD}/...
+         reportes_contratos_documentos/{referencia_contrato}/{YYYY-MM-DD}/...
     ```
     
-    ### 🔒 Validaciones aplicadas:
+    ###  Validaciones aplicadas:
     - **Archivos**: Tipos permitidos (PDF, DOC, DOCX, XLS, XLSX, JPG, PNG, GIF)
     - **Tamaño**: Máximo 10MB por archivo
     - **Cantidad**: Al menos 1 archivo requerido
     - **Avances**: Rango 0-100 con decimales (ej: 75.5)
     - **Nombres**: Caracteres especiales manejados automáticamente
     
-    ### 🚀 Proceso automático:
+    ###  Proceso automático:
     1. Validar archivos subidos
     2. Clasificar archivos por extensión (imagen/documento)
     3. Subir a S3 en bucket/prefix correspondiente
     5. Guardar metadata en Firebase con timestamp actual
     6. Retornar URLs y confirmación
     
-    ### � Ejemplo de uso con HTML Form:
+    ###  Ejemplo de uso con HTML Form:
     ```html
     <form method="POST" enctype="multipart/form-data">
         <input name="referencia_contrato" value="CONTRATO-2025-001" required>
@@ -6192,22 +6073,22 @@ async def crear_reporte_contrato(
 @app.get("/reportes_contratos/", tags=["Interoperabilidad con Artefacto de Seguimiento"])
 async def obtener_reportes_contratos(request: Request):
     """
-    ## 📋 Obtener Todos los Reportes de Contratos
+    ##  Obtener Todos los Reportes de Contratos
     
     **Propósito**: Obtener listado completo de todos los reportes de contratos almacenados en Firebase.
     Muestra todos los registros de la colección `reportes_contratos` con `nombre_centro_gestor` y `bp` 
     actualizados desde las colecciones de empréstito cuando sea necesario.
     
-    ### 🔄 Integración con colecciones de empréstito:
+    ###  Integración con colecciones de empréstito:
     - Si un reporte no tiene `nombre_centro_gestor` o está vacío, se busca automáticamente 
       en las colecciones `contratos_emprestito`, `ordenes_compra_emprestito` y 
       `convenios_transferencias_emprestito` usando `referencia_contrato` como clave
     - Si un reporte no tiene `bp` o está vacío, se hereda automáticamente desde las mismas colecciones
     
-    ### 📊 Ordenamiento:
+    ###  Ordenamiento:
     Los resultados se ordenan por `fecha_reporte` descendente (más recientes primero).
     
-    ### 💡 Casos de uso:
+    ###  Casos de uso:
     - Obtener listado completo para dashboard de seguimiento
     - Vista general de todos los reportes generados con datos completos
     - Administración y auditoría de reportes con información del centro gestor
@@ -6254,18 +6135,18 @@ async def obtener_reportes_contratos(request: Request):
 @app.get("/reportes_contratos/centro_gestor/{nombre_centro_gestor}", tags=["Interoperabilidad con Artefacto de Seguimiento"])
 async def obtener_reportes_por_centro_gestor(nombre_centro_gestor: str):
     """
-    ## � Obtener Reportes por Centro Gestor
+    ##  Obtener Reportes por Centro Gestor
     
     **Propósito**: Obtener reportes filtrados por nombre del centro gestor.
     Los resultados se ordenan por fecha de reporte descendente.
     
-    ### 📋 Parámetros:
+    ###  Parámetros:
     - **nombre_centro_gestor**: Nombre del centro gestor para filtrar reportes
     
-    ### � Ordenamiento:
+    ###  Ordenamiento:
     Los resultados se ordenan por `fecha_reporte` descendente (más recientes primero).
     
-    ### 💡 Casos de uso:
+    ###  Casos de uso:
     - Consultar reportes específicos de un centro gestor
     - Dashboard por centro de responsabilidad
     - Seguimiento por área organizacional
@@ -6301,18 +6182,18 @@ async def obtener_reportes_por_centro_gestor(nombre_centro_gestor: str):
 @app.get("/reportes_contratos/referencia/{referencia_contrato}", tags=["Interoperabilidad con Artefacto de Seguimiento"])
 async def obtener_reportes_por_referencia_contrato(referencia_contrato: str):
     """
-    ## 📄 Obtener Reportes por Referencia de Contrato
+    ##  Obtener Reportes por Referencia de Contrato
     
     **Propósito**: Obtener reportes específicos de un contrato usando su referencia.
     Los resultados se ordenan por fecha de reporte descendente.
     
-    ### 📋 Parámetros:
+    ###  Parámetros:
     - **referencia_contrato**: Referencia específica del contrato
     
-    ### 📊 Ordenamiento:
+    ###  Ordenamiento:
     Los resultados se ordenan por `fecha_reporte` descendente (más recientes primero).
     
-    ### 💡 Casos de uso:
+    ###  Casos de uso:
     - Historial completo de reportes de un contrato específico
     - Seguimiento detallado por contrato
     - Auditoría de reportes por referencia
@@ -6351,7 +6232,7 @@ async def obtener_reportes_por_referencia_contrato(referencia_contrato: str):
 # ============================================================================
 
 def check_user_management_availability():
-    """✅ FUNCIONAL: Verificación simple sin lógica redundante"""
+    """[OK] FUNCIONAL: Verificación simple sin lógica redundante"""
     if not (FIREBASE_AVAILABLE and USER_MANAGEMENT_AVAILABLE):
         raise HTTPException(
             status_code=503,
@@ -6366,24 +6247,24 @@ async def validate_session(
     request: Request
 ):
     """
-    ## 🔐 Validación de Sesión Activa para Next.js
+    ##  Validación de Sesión Activa para Next.js
     
     Valida si un token de ID de Firebase es válido y obtiene información completa del usuario.
     Optimizado para integración con Next.js y Firebase Auth SDK del frontend.
     
-    ### ✅ Casos de uso:
+    ### [OK] Casos de uso:
     - Middleware de autenticación en Next.js
     - Verificación de permisos antes de acciones sensibles
     - Obtener datos actualizados del usuario
     - Validar sesiones activas desde el frontend
     
-    ### 🔧 Proceso:
+    ###  Proceso:
     1. Verifica token de Firebase desde Authorization header o body
     2. Valida estado del usuario (activo/deshabilitado)
     3. Obtiene datos completos de perfil desde Firestore
     4. Verifica permisos y roles
     
-    ### 📝 Ejemplo de uso desde Next.js:
+    ###  Ejemplo de uso desde Next.js:
     ```javascript
     // En tu frontend NextJS
     import { getAuth } from 'firebase/auth';
@@ -6497,7 +6378,7 @@ async def validate_session(
 @app.post("/auth/login", tags=["Administración y Control de Accesos"])
 async def login_user(login_data: UserLoginRequest):
     """
-    ## 🔐 Autenticación de Usuario con Email y Contraseña
+    ##  Autenticación de Usuario con Email y Contraseña
     
     Valida credenciales de usuario usando Firebase Authentication.
     Requiere email y contraseña válidos para permitir el acceso.
@@ -6528,7 +6409,7 @@ async def login_user(login_data: UserLoginRequest):
         if result.get("success"):
             clean_user_data = clean_firebase_data(result.get("user", {}))
             
-            # ✅ PREPARAR RESPUESTA CON CUSTOM TOKEN
+            # [OK] PREPARAR RESPUESTA CON CUSTOM TOKEN
             response_data = {
                 "success": True,
                 "user": clean_user_data,
@@ -6538,7 +6419,7 @@ async def login_user(login_data: UserLoginRequest):
                 "timestamp": datetime.now().isoformat()
             }
             
-            # ✅ AGREGAR CUSTOM TOKEN SI ESTÁ DISPONIBLE
+            # [OK] AGREGAR CUSTOM TOKEN SI ESTÁ DISPONIBLE
             if "custom_token" in result and result["custom_token"]:
                 response_data["custom_token"] = result["custom_token"]
                 response_data["token_usage"] = result.get("token_usage", "Use signInWithCustomToken() en Firebase Auth SDK")
@@ -6547,15 +6428,15 @@ async def login_user(login_data: UserLoginRequest):
             if "alternative_auth" in result:
                 response_data["alternative_auth"] = result["alternative_auth"]
             
-            # 🔍 LOG TEMPORAL PARA DEBUGGING
+            #  LOG TEMPORAL PARA DEBUGGING
             import logging
             logger = logging.getLogger(__name__)
-            logger.info(f"🔍 LOGIN RESPONSE KEYS: {list(response_data.keys())}")
-            logger.info(f"⚠️  custom_token present: {'custom_token' in response_data}")
+            logger.info(f" LOGIN RESPONSE KEYS: {list(response_data.keys())}")
+            logger.info(f"[WARNING]  custom_token present: {'custom_token' in response_data}")
             if 'custom_token' in response_data:
-                logger.info(f"✅ Token preview: {response_data['custom_token'][:50]}...")
+                logger.info(f"[OK] Token preview: {response_data['custom_token'][:50]}...")
             else:
-                logger.warning(f"⚠️  No custom_token - Alternative auth available: {'alternative_auth' in response_data}")
+                logger.warning(f"[WARNING]  No custom_token - Alternative auth available: {'alternative_auth' in response_data}")
             
             return JSONResponse(
                 content=response_data,
@@ -6622,7 +6503,7 @@ async def login_user(login_data: UserLoginRequest):
 @app.get("/auth/register/health-check", tags=["Administración y Control de Accesos"])
 async def register_health_check():
     """
-    ## 🔍 Health Check para Registro de Usuario
+    ##  Health Check para Registro de Usuario
     
     Verifica que todos los servicios necesarios para el registro estén disponibles.
     Útil para diagnosticar problemas en producción.
@@ -6726,14 +6607,14 @@ async def register_health_check():
 @app.post("/auth/register", tags=["Administración y Control de Accesos"], status_code=status.HTTP_201_CREATED)
 async def register_user(registration_data: UserRegistrationRequest):
     """
-    ✅ **REGISTRO DE USUARIO - VERSIÓN FUNCIONAL SIMPLIFICADA**
+    [OK] **REGISTRO DE USUARIO - VERSIÓN FUNCIONAL SIMPLIFICADA**
     
     **Fail Fast**: Si no hay Service Account configurado, falla inmediatamente
     **Sin Cache**: Cada request es independiente
     **Funcional**: Sin efectos colaterales entre registros
     """
     
-    # � FAIL FAST: Verificar Service Account inmediatamente
+    #  FAIL FAST: Verificar Service Account inmediatamente
     if not FIREBASE_AVAILABLE:
         environment = os.getenv("ENVIRONMENT", "development")
         if environment == "production":
@@ -6755,7 +6636,7 @@ async def register_user(registration_data: UserRegistrationRequest):
         )
     
     try:
-        # ✅ PROGRAMACIÓN FUNCIONAL: Una sola responsabilidad
+        # [OK] PROGRAMACIÓN FUNCIONAL: Una sola responsabilidad
         result = await create_user_account(
             email=registration_data.email,
             password=registration_data.password,
@@ -6765,7 +6646,7 @@ async def register_user(registration_data: UserRegistrationRequest):
             send_email_verification=True
         )
         
-        # ✅ FAIL FAST: Si hay error, fallar inmediatamente
+        # [OK] FAIL FAST: Si hay error, fallar inmediatamente
         if not result.get("success", False):
             raise HTTPException(
                 status_code=400,
@@ -6776,7 +6657,7 @@ async def register_user(registration_data: UserRegistrationRequest):
                 }
             )
         
-        # ✅ FUNCIONAL: Transformar datos sin mutación
+        # [OK] FUNCIONAL: Transformar datos sin mutación
         return {
             "success": True,
             "user": clean_firebase_data(result.get("user", {})),
@@ -6787,7 +6668,7 @@ async def register_user(registration_data: UserRegistrationRequest):
     except HTTPException:
         raise
     except Exception as e:
-        # ✅ SIMPLE: Error handling directo
+        # [OK] SIMPLE: Error handling directo
         raise HTTPException(
             status_code=500,
             detail={
@@ -6805,32 +6686,32 @@ async def change_password(
     new_password: str = Form(..., description="Nueva contraseña")
 ):
     """
-    ## 🔒 Cambio de Contraseña
+    ##  Cambio de Contraseña
     
     Actualiza contraseñas de usuarios con validaciones de seguridad completas.
     **Requiere autenticación con token de Firebase.**
     
-    ### 🔐 Autenticación requerida:
+    ###  Autenticación requerida:
     - Header: `Authorization: Bearer <firebase_id_token>`
     
-    ### ✅ Casos de uso:
+    ### [OK] Casos de uso:
     - Reset de contraseña por administrador
     - Cambio forzado por políticas de seguridad
     - Actualización por compromiso de cuenta
     
-    ### 🔧 Validaciones:
+    ###  Validaciones:
     - Verificación de existencia del usuario
     - Validación de fortaleza de contraseña (8+ caracteres, mayúsculas, minúsculas, números, símbolos)
     - Actualización en Firebase Auth
     - Registro de timestamp en Firestore
     - Contador de cambios de contraseña
     
-    ### 🛡️ Seguridad:
+    ###  Seguridad:
     - Solo administradores pueden cambiar contraseñas
     - Histórico de cambios para auditoría
     - Notificación automática al usuario
     
-    ### 📝 Ejemplo de uso:
+    ###  Ejemplo de uso:
     ```javascript
     const passwordData = {
       uid: "Zx9mK2pQ8RhV3nL7jM4uX1qW6tY0sA5e",
@@ -6847,7 +6728,7 @@ async def change_password(
     ```
     """
     try:
-        # 🔐 VERIFICAR AUTENTICACIÓN FIREBASE
+        #  VERIFICAR AUTENTICACIÓN FIREBASE
         current_user = await verify_firebase_token(request)
         check_user_management_availability()
         
@@ -6903,23 +6784,23 @@ async def change_password(
 @app.get("/auth/config", tags=["Integración con el Frontend (NextJS)"])
 async def get_firebase_config():
     """
-    ## � Configuración Básica de Firebase para Frontend
+    ##  Configuración Básica de Firebase para Frontend
     
     **ENDPOINT PÚBLICO** - Acceso directo desde frontend.
     
     Proporciona configuración mínima necesaria para Firebase Auth en frontend.
     
-    ### �️ Seguridad:
+    ###  Seguridad:
     - Información pública solamente
     - Datos mínimos necesarios para SDK
     - Sin exposición de endpoints internos
     - Sin detalles de configuración sensibles
     
-    ### � Información incluida:
+    ###  Información incluida:
     - Project ID de Firebase (público)
     - Auth Domain de Firebase (público)
     
-    ### 🎯 Uso:
+    ###  Uso:
     - Inicialización de Firebase SDK en frontend
     - Configuración de autenticación client-side
     """
@@ -6937,23 +6818,23 @@ async def get_firebase_config():
 @app.get("/auth/workload-identity/status", tags=["Administración y Control de Accesos"])
 async def get_workload_identity_status():
     """
-    ## 🔍 Estado de Autenticación con Google Cloud
+    ##  Estado de Autenticación con Google Cloud
     
     **ENDPOINT DE DIAGNÓSTICO** - Verifica el estado de autenticación con Google Cloud.
     
-    ### 📊 Información incluida:
+    ###  Información incluida:
     - Estado de Service Account Key o Workload Identity
     - Validez de credenciales con Google Cloud
     - Configuración de Firebase
     - Nivel de seguridad actual
     
-    ### 🛠️ Útil para:
+    ###  Útil para:
     - Verificar configuración después de deployment en Railway
     - Diagnóstico de problemas de autenticación
     - Auditoría de seguridad
     - Monitoreo del sistema
     
-    ### ⚠️ Nota:
+    ### [WARNING] Nota:
     Este endpoint es principalmente para diagnóstico. En producción,
     considera eliminar o restringir acceso por seguridad.
     """
@@ -6985,19 +6866,19 @@ async def google_auth_unified(
     google_token: str = Form(..., description="ID Token de Google Sign-In")
 ):
     """
-    ## 🔐 Autenticación Google - ENDPOINT ÚNICO
+    ##  Autenticación Google - ENDPOINT ÚNICO
     
     **EL ÚNICO ENDPOINT** que necesitas para autenticación Google completa.
     
-    ### 🎯 **Funcionalidad Completa:**
-    - ✅ Verifica token automáticamente con Workload Identity
-    - ✅ Crea usuarios nuevos automáticamente
-    - ✅ Actualiza usuarios existentes
-    - ✅ Valida dominio @cali.gov.co
-    - ✅ Retorna información completa del usuario
-    - ✅ Máxima seguridad sin configuración manual
+    ###  **Funcionalidad Completa:**
+    - [OK] Verifica token automáticamente con Workload Identity
+    - [OK] Crea usuarios nuevos automáticamente
+    - [OK] Actualiza usuarios existentes
+    - [OK] Valida dominio @cali.gov.co
+    - [OK] Retorna información completa del usuario
+    - [OK] Máxima seguridad sin configuración manual
     
-    ### � **Uso desde Frontend:**
+    ###  **Uso desde Frontend:**
     ```javascript
     // Después de Google Sign-In
     function handleGoogleAuth(response) {
@@ -7009,20 +6890,20 @@ async def google_auth_unified(
         .then(res => res.json())
         .then(data => {
             if (data.success) {
-                console.log('✅ Autenticado:', data.user);
+                console.log('[OK] Autenticado:', data.user);
                 // Tu lógica aquí
             }
         });
     }
     ```
     
-    ### 📱 **Compatible con:**
+    ###  **Compatible con:**
     - React, Vue, Angular, NextJS
     - Aplicaciones móviles
     - Progressive Web Apps
     - Cualquier framework que haga HTTP requests
     
-    ### 🔒 **Seguridad:**
+    ###  **Seguridad:**
     - Workload Identity Federation
     - Sin credenciales en código
     - Verificación automática con Google
@@ -7096,29 +6977,29 @@ async def delete_user(
     soft_delete: Optional[bool] = Query(default=None, description="Eliminación lógica (true) o física (false)")
 ):
     """
-    ## 🗑️ Eliminación de Usuario
+    ##  Eliminación de Usuario
     
     Elimina cuentas con opciones flexibles de soft delete (recomendado) o hard delete.
     **Requiere autenticación con token de Firebase.**
     
-    ### 🔐 Autenticación requerida:
+    ###  Autenticación requerida:
     - Header: `Authorization: Bearer <firebase_id_token>`
     
-    ### ✅ Casos de uso:
+    ### [OK] Casos de uso:
     - Desvinculación de empleados (soft delete)
     - Limpieza de cuentas de prueba (hard delete)
     - Cumplimiento de políticas de retención de datos
     
-    ### 🔧 Tipos de eliminación:
+    ###  Tipos de eliminación:
     - **Soft delete (predeterminado)**: Deshabilita usuario, mantiene datos para auditoría
     - **Hard delete**: Elimina completamente de Firebase Auth y Firestore
     
-    ### 🛡️ Protecciones:
+    ###  Protecciones:
     - No permite eliminar el último administrador del sistema
     - Validación de permisos para hard delete
     - Registro de auditoría de eliminaciones
     
-    ### 📝 Ejemplos de uso:
+    ###  Ejemplos de uso:
     ```javascript
     // Eliminación lógica (recomendada)
     const response = await fetch('/auth/user/Zx9mK2pQ8RhV3nL7jM4uX1qW6tY0sA5e?soft_delete=true', {
@@ -7138,7 +7019,7 @@ async def delete_user(
     ```
     """
     try:
-        # 🔐 VERIFICAR AUTENTICACIÓN FIREBASE
+        #  VERIFICAR AUTENTICACIÓN FIREBASE
         current_user = await verify_firebase_token(request)
         
         check_user_management_availability()
@@ -7203,15 +7084,15 @@ async def list_system_users(
     limit: int = Query(default=100, ge=1, le=1000, description="Límite de resultados por página")
 ):
     """
-    ## 📋 Listado de Usuarios desde Firestore
+    ##  Listado de Usuarios desde Firestore
     
     Lee directamente la colección "users" de Firestore y devuelve todos los usuarios registrados.
     **Requiere autenticación con token de Firebase.**
     
-    ### 🔐 Autenticación requerida:
+    ###  Autenticación requerida:
     - Header: `Authorization: Bearer <firebase_id_token>`
     
-    ### � Información incluida:
+    ###  Información incluida:
     - UID del usuario
     - Email y nombre completo
     - Teléfono y centro gestor
@@ -7220,7 +7101,7 @@ async def list_system_users(
     - Proveedores de autenticación
     - Estadísticas de login
     
-    ### 📝 Ejemplo de uso:
+    ###  Ejemplo de uso:
     ```javascript
     const response = await fetch('/admin/users?limit=50', {
       headers: {
@@ -7233,7 +7114,7 @@ async def list_system_users(
     ```
     """
     try:
-        # 🔐 VERIFICAR AUTENTICACIÓN FIREBASE
+        #  VERIFICAR AUTENTICACIÓN FIREBASE
         current_user = await verify_firebase_token(request)
 
         from auth_system.permissions import get_user_permissions
@@ -7370,10 +7251,10 @@ try:
         PagoEmprestitoRequest,
         PagoEmprestitoResponse
     )
-    print(f"✅ Empréstito imports successful - AVAILABLE: {EMPRESTITO_OPERATIONS_AVAILABLE}")
-    print(f"✅ TVEC enrich imports successful - AVAILABLE: {TVEC_ENRICH_OPERATIONS_AVAILABLE}")
+    logger.info(f"Empréstito imports successful - AVAILABLE: {EMPRESTITO_OPERATIONS_AVAILABLE}")
+    logger.info(f"TVEC enrich imports successful - AVAILABLE: {TVEC_ENRICH_OPERATIONS_AVAILABLE}")
 except ImportError as e:
-    print(f"❌ Warning: Empréstito or TVEC imports failed: {e}")
+    logger.error(f"Warning: Empréstito or TVEC imports failed: {e}")
     EMPRESTITO_OPERATIONS_AVAILABLE = False
     TVEC_ENRICH_OPERATIONS_AVAILABLE = False
 
@@ -7389,7 +7270,7 @@ def check_emprestito_availability():
             }
         )
 
-@app.post("/emprestito/cargar-proceso", tags=["Gestión de Empréstito"], summary="🟢 Cargar Proceso de Empréstito")
+@app.post("/emprestito/cargar-proceso", tags=["Gestión de Empréstito"], summary=" Cargar Proceso de Empréstito")
 async def cargar_proceso_emprestito(
     referencia_proceso: str = Form(..., description="Referencia del proceso (obligatorio)"),
     nombre_centro_gestor: str = Form(..., description="Centro gestor responsable (obligatorio)"),
@@ -7401,45 +7282,45 @@ async def cargar_proceso_emprestito(
     valor_proyectado: Optional[float] = Form(None, description="Valor proyectado (opcional)")
 ):
     """
-    ## � POST | 📥 Carga de Datos | Cargar Proceso de Empréstito
+    ##  POST |  Carga de Datos | Cargar Proceso de Empréstito
     
     Endpoint unificado para carga de procesos de empréstito con detección automática 
     de plataforma (SECOP/TVEC) y validación de duplicados.
     
-    ### ✅ Funcionalidades principales:
+    ### [OK] Funcionalidades principales:
     - **Detección automática**: Identifica si es SECOP o TVEC basado en el campo `plataforma`
     - **Validación de duplicados**: Verifica existencia previa usando `referencia_proceso`
     - **Integración API**: Obtiene datos completos desde APIs externas (SECOP/TVEC)
     - **Almacenamiento inteligente**: Guarda en colección apropiada según plataforma
     
-    ### 🔍 Detección de plataforma:
+    ###  Detección de plataforma:
     **SECOP**: "SECOP", "SECOP II", "SECOP I", "SECOP 2", "SECOP 1" y variantes
     **TVEC**: "TVEC" y variantes
     
-    ### 📊 Almacenamiento por plataforma:
+    ###  Almacenamiento por plataforma:
     - **SECOP** → Colección: `procesos_emprestito`
     - **TVEC** → Colección: `ordenes_compra_emprestito`
     
-    ### 🛡️ Validación de duplicados:
+    ###  Validación de duplicados:
     Busca `referencia_proceso` en ambas colecciones antes de crear nuevo registro.
     
-    ### ⚙️ Campos obligatorios:
+    ###  Campos obligatorios:
     - `referencia_proceso`: Referencia del proceso
     - `nombre_centro_gestor`: Centro gestor responsable
     - `nombre_banco`: Nombre del banco
     - `plataforma`: Plataforma (SECOP/TVEC)
     
-    ### 📝 Campos opcionales:
+    ###  Campos opcionales:
     - `bp`: Código BP
     - `nombre_resumido_proceso`: Nombre resumido
     - `id_paa`: ID PAA
     - `valor_proyectado`: Valor proyectado
     
-    ### 🔗 Integración con APIs:
+    ###  Integración con APIs:
     **SECOP**: Obtiene datos desde API de datos abiertos (p6dx-8zbt)
     **TVEC**: Obtiene datos desde API TVEC (rgxm-mmea)
     
-    ### 📋 Ejemplo de request:
+    ###  Ejemplo de request:
     ```json
     {
         "referencia_proceso": "SCMGSU-CM-003-2024",
@@ -7516,7 +7397,7 @@ async def cargar_proceso_emprestito(
         # Si es un proceso SECOP, intentar actualizar con datos completos automáticamente
         if resultado.get("plataforma_detectada") == "SECOP" and resultado.get("coleccion") == "procesos_emprestito":
             try:
-                logger.info(f"🔄 Actualizando automáticamente proceso SECOP: {referencia_proceso}")
+                logger.info(f" Actualizando automáticamente proceso SECOP: {referencia_proceso}")
                 resultado_actualizacion = await actualizar_proceso_emprestito_completo(referencia_proceso)
                 
                 if resultado_actualizacion.get("success"):
@@ -7526,17 +7407,17 @@ async def cargar_proceso_emprestito(
                         "changes_summary": resultado_actualizacion.get("changes_summary", [])[:5],  # Máximo 5 cambios en resumen
                         "message": f"Proceso actualizado automáticamente con {resultado_actualizacion.get('changes_count', 0)} campos adicionales"
                     }
-                    logger.info(f"✅ Actualización automática exitosa: {resultado_actualizacion.get('changes_count', 0)} cambios")
+                    logger.info(f"[OK] Actualización automática exitosa: {resultado_actualizacion.get('changes_count', 0)} cambios")
                 else:
                     respuesta_base["actualizacion_completa"] = {
                         "success": False,
                         "error": resultado_actualizacion.get("error", "Error desconocido"),
                         "message": "No se pudo actualizar automáticamente con datos completos"
                     }
-                    logger.warning(f"⚠️ Actualización automática falló: {resultado_actualizacion.get('error')}")
+                    logger.warning(f"[WARNING] Actualización automática falló: {resultado_actualizacion.get('error')}")
                     
             except Exception as e:
-                logger.warning(f"⚠️ Error en actualización automática: {e}")
+                logger.warning(f"[WARNING] Error en actualización automática: {e}")
                 respuesta_base["actualizacion_completa"] = {
                     "success": False,
                     "error": str(e),
@@ -7563,7 +7444,7 @@ async def cargar_proceso_emprestito(
             }
         )
 
-@app.post("/emprestito/cargar-orden-compra", tags=["Gestión de Empréstito"], summary="🟢 Cargar Orden de Compra")
+@app.post("/emprestito/cargar-orden-compra", tags=["Gestión de Empréstito"], summary=" Cargar Orden de Compra")
 async def cargar_orden_compra_emprestito(
     numero_orden: str = Form(..., description="Número de la orden de compra (obligatorio)"),
     nombre_centro_gestor: str = Form(..., description="Centro gestor responsable (obligatorio)"),
@@ -7573,31 +7454,31 @@ async def cargar_orden_compra_emprestito(
     bp: Optional[str] = Form(None, description="Código BP (opcional)")
 ):
     """
-    ## � POST | 📥 Carga de Datos | Cargar Orden de Compra de Empréstito
+    ##  POST |  Carga de Datos | Cargar Orden de Compra de Empréstito
     
     Endpoint para carga directa de órdenes de compra de empréstito en la colección 
     `ordenes_compra_emprestito` sin procesamiento de APIs externas.
     
-    ### ✅ Funcionalidades principales:
+    ### [OK] Funcionalidades principales:
     - **Carga directa**: Registra directamente en `ordenes_compra_emprestito`
     - **Validación de duplicados**: Verifica existencia previa usando `numero_orden`
     - **Validación de campos**: Verifica que todos los campos obligatorios estén presentes
     - **Timestamps automáticos**: Agrega fecha de creación y actualización
     
-    ### ⚙️ Campos obligatorios:
+    ###  Campos obligatorios:
     - `numero_orden`: Número único de la orden de compra
     - `nombre_centro_gestor`: Centro gestor responsable
     - `nombre_banco`: Nombre del banco
     - `nombre_resumido_proceso`: Nombre resumido del proceso
     - `valor_proyectado`: Valor proyectado en pesos colombianos
     
-    ### 📝 Campos opcionales:
+    ###  Campos opcionales:
     - `bp`: Código BP
     
-    ### 🛡️ Validación de duplicados:
+    ###  Validación de duplicados:
     Busca `numero_orden` en la colección `ordenes_compra_emprestito` antes de crear nuevo registro.
     
-    ### 📊 Estructura de datos guardados:
+    ###  Estructura de datos guardados:
     ```json
     {
         "numero_orden": "OC-2024-001",
@@ -7613,7 +7494,7 @@ async def cargar_orden_compra_emprestito(
     }
     ```
     
-    ### 📋 Ejemplo de request:
+    ###  Ejemplo de request:
     ```json
     {
         "numero_orden": "OC-SALUD-003-2024",
@@ -7625,7 +7506,7 @@ async def cargar_orden_compra_emprestito(
     }
     ```
     
-    ### ✅ Respuesta exitosa (201):
+    ### [OK] Respuesta exitosa (201):
     ```json
     {
         "success": true,
@@ -7636,7 +7517,7 @@ async def cargar_orden_compra_emprestito(
     }
     ```
     
-    ### ❌ Respuesta de duplicado (409):
+    ### [ERROR] Respuesta de duplicado (409):
     ```json
     {
         "success": false,
@@ -7719,7 +7600,7 @@ async def cargar_orden_compra_emprestito(
             }
         )
 
-@app.post("/emprestito/cargar-convenio-transferencia", tags=["Gestión de Empréstito"], summary="🟢 Cargar Convenio de Transferencia")
+@app.post("/emprestito/cargar-convenio-transferencia", tags=["Gestión de Empréstito"], summary=" Cargar Convenio de Transferencia")
 async def cargar_convenio_transferencia_emprestito(
     referencia_contrato: str = Form(..., description="Referencia del contrato/convenio (obligatorio)"),
     nombre_centro_gestor: str = Form(..., description="Centro gestor responsable (obligatorio)"),
@@ -7740,25 +7621,25 @@ async def cargar_convenio_transferencia_emprestito(
     nombre_resumido_proceso: str = Form(..., description="Nombre resumido del proceso (obligatorio)")
 ):
     """
-    ## 📝 POST | 📥 Carga de Datos | Cargar Convenio de Transferencia de Empréstito
+    ##  POST |  Carga de Datos | Cargar Convenio de Transferencia de Empréstito
     
     Endpoint para carga directa de convenios de transferencia de empréstito en la colección 
     `convenios_transferencias_emprestito` sin procesamiento de APIs externas.
     
-    ### ✅ Funcionalidades principales:
+    ### [OK] Funcionalidades principales:
     - **Carga directa**: Registra directamente en `convenios_transferencias_emprestito`
     - **Validación de duplicados**: Verifica existencia previa usando `referencia_contrato`
     - **Validación de campos**: Verifica que todos los campos obligatorios estén presentes
     - **Timestamps automáticos**: Agrega fecha de creación y actualización
     
-    ### ⚙️ Campos obligatorios:
+    ###  Campos obligatorios:
     - `referencia_contrato`: Referencia única del contrato/convenio
     - `nombre_centro_gestor`: Centro gestor responsable
     - `banco`: Nombre del banco
     - `objeto_contrato`: Descripción del objeto del contrato
     - `valor_contrato`: Valor del contrato en pesos colombianos
     
-    ### 📝 Campos opcionales:
+    ###  Campos opcionales:
     - `bp`: Código BP
     - `bpin`: Código BPIN (Banco de Programas y Proyectos de Inversión Nacional)
     - `valor_convenio`: Valor específico del convenio
@@ -7771,10 +7652,10 @@ async def cargar_convenio_transferencia_emprestito(
     - `estado_contrato`: Estado actual del contrato
     - `sector`: Sector al que pertenece
     
-    ### 🛡️ Validación de duplicados:
+    ###  Validación de duplicados:
     Busca `referencia_contrato` en la colección `convenios_transferencias_emprestito` antes de crear nuevo registro.
     
-    ### 📊 Estructura de datos guardados:
+    ###  Estructura de datos guardados:
     ```json
     {
         "referencia_contrato": "CONV-2024-001",
@@ -7800,7 +7681,7 @@ async def cargar_convenio_transferencia_emprestito(
     }
     ```
     
-    ### 📋 Ejemplo de request:
+    ###  Ejemplo de request:
     ```json
     {
         "referencia_contrato": "CONV-SALUD-003-2024",
@@ -7815,7 +7696,7 @@ async def cargar_convenio_transferencia_emprestito(
     }
     ```
     
-    ### ✅ Respuesta exitosa (201):
+    ### [OK] Respuesta exitosa (201):
     ```json
     {
         "success": true,
@@ -7826,7 +7707,7 @@ async def cargar_convenio_transferencia_emprestito(
     }
     ```
     
-    ### ❌ Respuesta de duplicado (409):
+    ### [ERROR] Respuesta de duplicado (409):
     ```json
     {
         "success": false,
@@ -7924,13 +7805,13 @@ async def cargar_convenio_transferencia_emprestito(
 @app.delete(
     "/emprestito/eliminar-orden-compra/{numero_orden}",
     tags=["Gestión de Empréstito"],
-    summary="🔴 Eliminar Orden de Compra"
+    summary=" Eliminar Orden de Compra"
 )
 async def eliminar_orden_compra_emprestito(
     numero_orden: str = Path(..., description="Número de orden a eliminar")
 ):
     """
-    ## 🗑️ DELETE | 📥 Gestión de Datos | Eliminar Orden de Compra de Empréstito
+    ##  DELETE |  Gestión de Datos | Eliminar Orden de Compra de Empréstito
 
     Elimina un registro de la colección `ordenes_compra_emprestito` usando `numero_orden`
     como criterio de búsqueda.
@@ -7998,13 +7879,13 @@ async def eliminar_orden_compra_emprestito(
 @app.delete(
     "/emprestito/eliminar-convenio-transferencia/{referencia_contrato}",
     tags=["Gestión de Empréstito"],
-    summary="🔴 Eliminar Convenio de Transferencia"
+    summary=" Eliminar Convenio de Transferencia"
 )
 async def eliminar_convenio_transferencia_emprestito(
     referencia_contrato: str = Path(..., description="Referencia de contrato del convenio a eliminar")
 ):
     """
-    ## 🗑️ DELETE | 📥 Gestión de Datos | Eliminar Convenio de Transferencia de Empréstito
+    ##  DELETE |  Gestión de Datos | Eliminar Convenio de Transferencia de Empréstito
 
     Elimina un registro de la colección `convenios_transferencias_emprestito`
     usando `referencia_contrato` como criterio de búsqueda.
@@ -8068,7 +7949,7 @@ async def eliminar_convenio_transferencia_emprestito(
             }
         )
 
-@app.put("/emprestito/modificar-convenio-transferencia", tags=["Gestión de Empréstito"], summary="🟠 Modificar Convenio de Transferencia")
+@app.put("/emprestito/modificar-convenio-transferencia", tags=["Gestión de Empréstito"], summary=" Modificar Convenio de Transferencia")
 async def modificar_convenio_transferencia_emprestito(
     doc_id: str = Form(..., description="ID del documento a modificar (obligatorio)"),
     referencia_contrato: Optional[str] = Form(None, description="Referencia del contrato/convenio (opcional)"),
@@ -8090,22 +7971,22 @@ async def modificar_convenio_transferencia_emprestito(
     nombre_resumido_proceso: Optional[str] = Form(None, description="Nombre resumido del proceso (opcional)")
 ):
     """
-    ## 🟠 PUT | ✏️ Actualización | Modificar Convenio de Transferencia de Empréstito
+    ##  PUT |  Actualización | Modificar Convenio de Transferencia de Empréstito
     
     Endpoint para modificar cualquier campo de un convenio de transferencia existente 
     en la colección `convenios_transferencias_emprestito`.
     
-    ### ✅ Funcionalidades principales:
+    ### [OK] Funcionalidades principales:
     - **Actualización flexible**: Permite modificar cualquier campo del convenio
     - **Actualización parcial**: Solo se actualizan los campos proporcionados
     - **Validación de existencia**: Verifica que el documento exista antes de actualizar
     - **Timestamp automático**: Actualiza automáticamente `fecha_actualizacion`
     - **Preservación de datos**: Los campos no proporcionados mantienen sus valores originales
     
-    ### ⚙️ Campo obligatorio:
+    ###  Campo obligatorio:
     - `doc_id`: ID del documento de Firestore que se desea modificar
     
-    ### 📝 Campos opcionales (todos):
+    ###  Campos opcionales (todos):
     Cualquiera de estos campos puede ser actualizado:
     - `referencia_contrato`: Referencia del contrato/convenio
     - `nombre_centro_gestor`: Centro gestor responsable
@@ -8125,7 +8006,7 @@ async def modificar_convenio_transferencia_emprestito(
     - `sector`: Sector al que pertenece
     - `nombre_resumido_proceso`: Nombre resumido del proceso
     
-    ### 📋 Ejemplo de request (actualización parcial):
+    ###  Ejemplo de request (actualización parcial):
     ```json
     {
         "doc_id": "abc123def456",
@@ -8134,7 +8015,7 @@ async def modificar_convenio_transferencia_emprestito(
     }
     ```
     
-    ### ✅ Respuesta exitosa (200):
+    ### [OK] Respuesta exitosa (200):
     ```json
     {
         "success": true,
@@ -8146,7 +8027,7 @@ async def modificar_convenio_transferencia_emprestito(
     }
     ```
     
-    ### ❌ Respuesta de error (404):
+    ### [ERROR] Respuesta de error (404):
     ```json
     {
         "success": false,
@@ -8155,7 +8036,7 @@ async def modificar_convenio_transferencia_emprestito(
     }
     ```
     
-    ### 🔗 Endpoints relacionados:
+    ###  Endpoints relacionados:
     - `POST /emprestito/cargar-convenio-transferencia` - Para crear nuevos convenios
     - `GET /convenios_transferencias_all` - Para consultar convenios existentes
     """
@@ -8260,7 +8141,7 @@ async def modificar_convenio_transferencia_emprestito(
             }
         )
 
-@app.post("/emprestito/cargar-rpc", tags=["Gestión de Empréstito"], summary="🟢 Cargar RPC de Empréstito")
+@app.post("/emprestito/cargar-rpc", tags=["Gestión de Empréstito"], summary=" Cargar RPC de Empréstito")
 async def cargar_rpc_emprestito_endpoint(
     numero_rpc: str = Form(..., description="Número del RPC (obligatorio)"),
     beneficiario_id: str = Form(..., description="ID del beneficiario (obligatorio)"),
@@ -8277,12 +8158,12 @@ async def cargar_rpc_emprestito_endpoint(
     documentos: List[UploadFile] = File(..., description="Documentos del RPC (PDF, DOC, DOCX, XLS, XLSX, JPG, PNG) - OBLIGATORIO")
 ):
     """
-    ## 📝 POST | 📥 Carga de Datos | Cargar RPC (Registro Presupuestal de Compromiso) de Empréstito
+    ##  POST |  Carga de Datos | Cargar RPC (Registro Presupuestal de Compromiso) de Empréstito
     
     Endpoint para carga directa de RPC de empréstito en la colección 
     `rpc_contratos_emprestito` sin procesamiento de APIs externas.
     
-    ### ✅ Funcionalidades principales:
+    ### [OK] Funcionalidades principales:
     - **Carga directa**: Registra directamente en `rpc_contratos_emprestito`
     - **Validación de duplicados**: Verifica existencia previa usando `numero_rpc`
     - **Validación de campos**: Verifica que todos los campos obligatorios estén presentes
@@ -8291,7 +8172,7 @@ async def cargar_rpc_emprestito_endpoint(
     - **Timestamps automáticos**: Agrega fecha de creación y actualización
     - **Programación PAC**: Soporte para objeto JSON con valores mensuales
     
-    ### ⚙️ Campos obligatorios:
+    ###  Campos obligatorios:
     - `numero_rpc`: Número único del RPC
     - `beneficiario_id`: Identificación del beneficiario
     - `beneficiario_nombre`: Nombre completo del beneficiario
@@ -8304,12 +8185,12 @@ async def cargar_rpc_emprestito_endpoint(
     - `referencia_contrato`: Referencia del contrato asociado
     - `documentos`: Archivos del RPC (al menos 1 archivo requerido)
     
-    ### 📌 Nota importante sobre BP:
+    ###  Nota importante sobre BP:
     El campo `bp` ya NO es requerido en este endpoint. El valor de `bp` se hereda automáticamente
     al consultar los RPCs desde las colecciones: `contratos_emprestito`, `convenios_transferencias_emprestito` 
     o `ordenes_compra_emprestito` usando la `referencia_contrato`.
     
-    ### 📝 Campos opcionales:
+    ###  Campos opcionales:
     - `cdp_asociados`: Lista de CDPs (Certificados de Disponibilidad Presupuestal) asociados
       - Puede enviarse como: `"CDP-001,CDP-002,CDP-003"` (separados por comas)
       - O como JSON array: `["CDP-001", "CDP-002", "CDP-003"]`
@@ -8319,10 +8200,10 @@ async def cargar_rpc_emprestito_endpoint(
       - **IMPORTANTE**: Debe ser un objeto JSON válido si se proporciona
       - Si no es JSON válido, se ignorará y se guardará como objeto vacío `{}`
     
-    ### 🛡️ Validación de duplicados:
+    ###  Validación de duplicados:
     Busca `numero_rpc` en la colección `rpc_contratos_emprestito` antes de crear nuevo registro.
     
-    ### 📊 Estructura de datos guardados:
+    ###  Estructura de datos guardados:
     ```json
     {
         "numero_rpc": "RPC-2024-001",
@@ -8348,7 +8229,7 @@ async def cargar_rpc_emprestito_endpoint(
     }
     ```
     
-    ### 📋 Ejemplo de request:
+    ###  Ejemplo de request:
     ```json
     {
         "numero_rpc": "RPC-SALUD-003-2024",
@@ -8366,7 +8247,7 @@ async def cargar_rpc_emprestito_endpoint(
     }
     ```
     
-    ### ✅ Respuesta exitosa (201):
+    ### [OK] Respuesta exitosa (201):
     ```json
     {
         "success": true,
@@ -8377,7 +8258,7 @@ async def cargar_rpc_emprestito_endpoint(
     }
     ```
     
-    ### ❌ Respuesta de duplicado (409):
+    ### [ERROR] Respuesta de duplicado (409):
     ```json
     {
         "success": false,
@@ -8390,8 +8271,8 @@ async def cargar_rpc_emprestito_endpoint(
     try:
         check_emprestito_availability()
         
-        logger.info(f"📥 Recibiendo RPC: {numero_rpc}")
-        logger.info(f"📎 Documentos recibidos: {len(documentos)}")
+        logger.info(f" Recibiendo RPC: {numero_rpc}")
+        logger.info(f" Documentos recibidos: {len(documentos)}")
         
         # Validar que se hayan proporcionado documentos
         if not documentos or len(documentos) == 0:
@@ -8489,7 +8370,7 @@ async def cargar_rpc_emprestito_endpoint(
                     'content_type': doc.content_type,
                     'size': len(contenido)
                 })
-            logger.info(f"📄 Procesando {len(documentos_procesados)} documentos para RPC {numero_rpc}")
+            logger.info(f" Procesando {len(documentos_procesados)} documentos para RPC {numero_rpc}")
         
         # Crear diccionario con los datos del formulario
         datos_rpc = {
@@ -8508,14 +8389,14 @@ async def cargar_rpc_emprestito_endpoint(
         }
         
         # Procesar RPC (función síncrona) con documentos
-        logger.info(f"💾 Procesando RPC {numero_rpc} con {len(documentos_procesados)} documentos")
+        logger.info(f" Procesando RPC {numero_rpc} con {len(documentos_procesados)} documentos")
         resultado = cargar_rpc_emprestito(datos_rpc, documentos=documentos_procesados if documentos_procesados else None)
         
         # Log del resultado
         if resultado.get("success"):
-            logger.info(f"✅ RPC {numero_rpc} procesado exitosamente")
+            logger.info(f"[OK] RPC {numero_rpc} procesado exitosamente")
         else:
-            logger.error(f"❌ Error procesando RPC {numero_rpc}: {resultado.get('error')}")
+            logger.error(f"[ERROR] Error procesando RPC {numero_rpc}: {resultado.get('error')}")
         
         # Manejar respuesta según el resultado
         if not resultado.get("success"):
@@ -8584,7 +8465,7 @@ async def cargar_rpc_emprestito_endpoint(
             }
         )
 
-@app.post("/emprestito/cargar-pago", tags=["Gestión de Empréstito"], summary="🟢 Cargar Pago de Empréstito")
+@app.post("/emprestito/cargar-pago", tags=["Gestión de Empréstito"], summary=" Cargar Pago de Empréstito")
 async def cargar_pago_emprestito_endpoint(
     numero_rpc: str = Form(..., description="Número del RPC (obligatorio)"),
     valor_pago: float = Form(..., description="Valor del pago (obligatorio, debe ser mayor a 0)"),
@@ -8594,12 +8475,12 @@ async def cargar_pago_emprestito_endpoint(
     documentos: List[UploadFile] = File(None, description="Documentos del pago (PDF, DOC, DOCX, XLS, XLSX, JPG, PNG) - OPCIONAL")
 ):
     """
-    ## 📝 POST | 📥 Carga de Datos | Cargar Pago de Empréstito
+    ##  POST |  Carga de Datos | Cargar Pago de Empréstito
     
     Endpoint para registrar un pago de empréstito en la colección `pagos_emprestito`.
     El campo `fecha_registro` se genera automáticamente con la hora actual del sistema como timestamp.
     
-    ### ✅ Funcionalidades principales:
+    ### [OK] Funcionalidades principales:
     - **Registro de pagos**: Guarda información de pagos realizados
     - **Carga de documentos a S3**: Los documentos son OPCIONALES y se suben a AWS S3 si se proporcionan
     - **Validación de tipos de archivo**: Valida formatos permitidos (PDF, DOC, DOCX, XLS, XLSX, JPG, PNG)
@@ -8608,24 +8489,24 @@ async def cargar_pago_emprestito_endpoint(
     - **Validación de valores**: Verifica que el valor del pago sea positivo
     - **Trazabilidad**: Registra fecha de creación y actualización
     
-    ### ⚙️ Campos obligatorios:
+    ###  Campos obligatorios:
     - `numero_rpc`: Número del RPC asociado al pago
     - `valor_pago`: Valor monetario del pago (debe ser mayor a 0)
     - `fecha_transaccion`: Fecha en que se realizó la transacción
     - `referencia_contrato`: Referencia del contrato asociado
     - `nombre_centro_gestor`: Centro gestor responsable del pago
     
-    ### ⚙️ Campos opcionales:
+    ###  Campos opcionales:
     - `documentos`: Archivos del pago (PDF, DOC, DOCX, XLS, XLSX, JPG, PNG)
     
-    ### 🤖 Campos automáticos:
+    ###  Campos automáticos:
     - `fecha_registro`: Timestamp automático del momento de registro (NO se envía por el usuario)
     - `fecha_creacion`: Timestamp de creación del registro
     - `fecha_actualizacion`: Timestamp de última actualización
     - `estado`: "registrado" (valor por defecto)
     - `tipo`: "pago_manual" (valor por defecto)
     
-    ### 📊 Estructura de datos guardados:
+    ###  Estructura de datos guardados:
     ```json
     {
         "numero_rpc": "RPC-2024-001",
@@ -8641,7 +8522,7 @@ async def cargar_pago_emprestito_endpoint(
     }
     ```
     
-    ### 📋 Ejemplo de request:
+    ###  Ejemplo de request:
     ```json
     {
         "numero_rpc": "RPC-SALUD-003-2024",
@@ -8652,7 +8533,7 @@ async def cargar_pago_emprestito_endpoint(
     }
     ```
     
-    ### ✅ Respuesta exitosa (201):
+    ### [OK] Respuesta exitosa (201):
     ```json
     {
         "success": true,
@@ -8664,7 +8545,7 @@ async def cargar_pago_emprestito_endpoint(
     }
     ```
     
-    ### ❌ Respuesta de error (400):
+    ### [ERROR] Respuesta de error (400):
     ```json
     {
         "success": false,
@@ -8674,7 +8555,7 @@ async def cargar_pago_emprestito_endpoint(
     }
     ```
     
-    ### 💡 Notas importantes:
+    ###  Notas importantes:
     - El campo `fecha_registro` NO debe ser enviado por el usuario
     - Se genera automáticamente con la hora exacta del servidor
     - El `valor_pago` debe ser un número positivo mayor a 0
@@ -8683,9 +8564,9 @@ async def cargar_pago_emprestito_endpoint(
     try:
         check_emprestito_availability()
         
-        logger.info(f"📥 Recibiendo pago para RPC: {numero_rpc}")
-        logger.info(f"📎 Documentos recibidos: {len(documentos) if documentos else 0}")
-        logger.info(f"💰 Valor del pago: {valor_pago}")
+        logger.info(f" Recibiendo pago para RPC: {numero_rpc}")
+        logger.info(f" Documentos recibidos: {len(documentos) if documentos else 0}")
+        logger.info(f" Valor del pago: {valor_pago}")
         
         # Validar tipos de archivo permitidos solo si se proporcionaron documentos
         allowed_extensions = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.jpg', '.jpeg', '.png']
@@ -8718,7 +8599,7 @@ async def cargar_pago_emprestito_endpoint(
                     'content_type': doc.content_type,
                     'size': len(contenido)
                 })
-            logger.info(f"📄 Procesando {len(documentos_procesados)} documentos para pago de RPC {numero_rpc}")
+            logger.info(f" Procesando {len(documentos_procesados)} documentos para pago de RPC {numero_rpc}")
         
         # Preparar datos para procesar
         datos_pago = {
@@ -8730,14 +8611,14 @@ async def cargar_pago_emprestito_endpoint(
         }
         
         # Procesar pago (función síncrona) con documentos
-        logger.info(f"💾 Procesando pago para RPC {numero_rpc} con {len(documentos_procesados)} documentos")
+        logger.info(f" Procesando pago para RPC {numero_rpc} con {len(documentos_procesados)} documentos")
         resultado = cargar_pago_emprestito(datos_pago, documentos=documentos_procesados if documentos_procesados else None)
         
         # Log del resultado
         if resultado.get("success"):
-            logger.info(f"✅ Pago para RPC {numero_rpc} procesado exitosamente")
+            logger.info(f"[OK] Pago para RPC {numero_rpc} procesado exitosamente")
         else:
-            logger.error(f"❌ Error procesando pago para RPC {numero_rpc}: {resultado.get('error')}")
+            logger.error(f"[ERROR] Error procesando pago para RPC {numero_rpc}: {resultado.get('error')}")
         
         # Manejar respuesta según el resultado
         if not resultado.get("success"):
@@ -8791,14 +8672,14 @@ async def cargar_pago_emprestito_endpoint(
             }
         )
 
-@app.get("/contratos_pagos_all", tags=["Gestión de Empréstito"], summary="🔵 Obtener Todos los Pagos")
+@app.get("/contratos_pagos_all", tags=["Gestión de Empréstito"], summary=" Obtener Todos los Pagos")
 async def get_all_pagos_emprestito():
     """
-    ## 🔵 GET | 📋 Consultas | Obtener Todos los Pagos de Empréstito
+    ##  GET |  Consultas | Obtener Todos los Pagos de Empréstito
     
     Endpoint para obtener todos los pagos de empréstito registrados en la colección `pagos_emprestito`.
     
-    ### ✅ Funcionalidades principales:
+    ### [OK] Funcionalidades principales:
     - **Listado completo**: Retorna todos los pagos registrados
     - **Datos completos**: Incluye todos los campos de cada pago
     - **Detección de documentos soporte**: Verifica si cada pago tiene documentos en S3
@@ -8806,7 +8687,7 @@ async def get_all_pagos_emprestito():
     - **Serialización JSON**: Fechas y objetos datetime convertidos correctamente
     - **Trazabilidad**: Información completa de cada transacción registrada
     
-    ### 📊 Información incluida:
+    ###  Información incluida:
     - Todos los campos del pago
     - ID del documento para referencia
     - Campo `tiene_documentos_soporte`: indica si el pago tiene documentos en S3 (true/false)
@@ -8814,7 +8695,7 @@ async def get_all_pagos_emprestito():
     - Timestamp de la consulta
     - Datos serializados correctamente para JSON
     
-    ### 🗄️ Campos principales esperados:
+    ###  Campos principales esperados:
     - **numero_rpc**: Número del RPC asociado al pago
     - **valor_pago**: Valor monetario del pago realizado
     - **fecha_transaccion**: Fecha en que se realizó la transacción
@@ -8828,7 +8709,7 @@ async def get_all_pagos_emprestito():
     - **tiene_documentos_soporte**: Boolean que indica si el pago tiene documentos en S3
     - **documentos_s3**: Array con información de documentos en S3 (si existen)
     
-    ### 💡 Casos de uso:
+    ###  Casos de uso:
     - Obtener historial completo de pagos de empréstito
     - Consulta de pagos para reportes financieros
     - Análisis de flujo de caja y ejecución presupuestal
@@ -8838,7 +8719,7 @@ async def get_all_pagos_emprestito():
     - Integración con sistemas contables
     - Reportes de ejecución por centro gestor
     
-    ### 📈 Análisis posibles:
+    ###  Análisis posibles:
     - Total de pagos realizados
     - Suma de valores pagados
     - Pagos por centro gestor
@@ -8846,7 +8727,7 @@ async def get_all_pagos_emprestito():
     - Pagos por RPC
     - Histórico de transacciones
     
-    ### ✅ Respuesta exitosa (200):
+    ### [OK] Respuesta exitosa (200):
     ```json
     {
         "success": true,
@@ -8895,7 +8776,7 @@ async def get_all_pagos_emprestito():
     }
     ```
     
-    ### ❌ Respuesta de error (500):
+    ### [ERROR] Respuesta de error (500):
     ```json
     {
         "success": false,
@@ -8905,7 +8786,7 @@ async def get_all_pagos_emprestito():
     }
     ```
     
-    ### 📝 Notas:
+    ###  Notas:
     - Los campos de tipo datetime se serializan en formato ISO 8601
     - El campo `id` corresponde al ID del documento en Firestore
     - Los datos se retornan en el orden en que fueron insertados en Firestore
@@ -8955,28 +8836,28 @@ async def get_all_pagos_emprestito():
             }
         )
 
-@app.get("/rpc_all", tags=["Gestión de Empréstito"], summary="🔵 Obtener Todos los RPCs")
+@app.get("/rpc_all", tags=["Gestión de Empréstito"], summary=" Obtener Todos los RPCs")
 async def get_all_rpc_contratos_emprestito():
     """
-    ## 🔵 GET | 📋 Consultas | Obtener Todos los RPCs de Empréstito
+    ##  GET |  Consultas | Obtener Todos los RPCs de Empréstito
     
     Endpoint para obtener todos los RPC (Registros Presupuestales de Compromiso) de empréstito 
     almacenados en la colección `rpc_contratos_emprestito`.
     
-    ### ✅ Funcionalidades principales:
+    ### [OK] Funcionalidades principales:
     - **Listado completo**: Retorna todos los RPCs registrados
     - **Datos completos**: Incluye todos los campos de cada RPC
     - **Metadatos**: Incluye ID del documento, conteo total y timestamp
     - **Serialización JSON**: Fechas y objetos convertidos correctamente
     
-    ### 📊 Información incluida:
+    ###  Información incluida:
     - Todos los campos del RPC
     - ID del documento para referencia
     - Conteo total de registros
     - Timestamp de la consulta
     - Datos serializados correctamente para JSON
     
-    ### 🗄️ Campos principales esperados:
+    ###  Campos principales esperados:
     - **numero_rpc**: Número único del RPC
     - **beneficiario_id**: Identificación del beneficiario
     - **beneficiario_nombre**: Nombre del beneficiario
@@ -8995,7 +8876,7 @@ async def get_all_rpc_contratos_emprestito():
     - **estado**: Estado del registro (activo/inactivo)
     - **tipo**: Tipo de registro (rpc_manual)
     
-    ### 💡 Casos de uso:
+    ###  Casos de uso:
     - Obtener listado completo de RPCs de empréstito
     - Exportación de datos para análisis
     - Integración con sistemas externos
@@ -9003,7 +8884,7 @@ async def get_all_rpc_contratos_emprestito():
     - Monitoreo de compromisos presupuestales
     - Análisis de ejecución presupuestal por contrato
     
-    ### ✅ Respuesta exitosa (200):
+    ### [OK] Respuesta exitosa (200):
     ```json
     {
         "success": true,
@@ -9039,7 +8920,7 @@ async def get_all_rpc_contratos_emprestito():
     }
     ```
     
-    ### ❌ Respuesta de error (500):
+    ### [ERROR] Respuesta de error (500):
     ```json
     {
         "success": false,
@@ -9049,7 +8930,7 @@ async def get_all_rpc_contratos_emprestito():
     }
     ```
     
-    ### 🔗 Endpoints relacionados:
+    ###  Endpoints relacionados:
     - `POST /emprestito/cargar-rpc` - Para crear nuevos RPCs
     - `GET /convenios_transferencias_all` - Para consultar convenios de transferencia
     """
@@ -9124,9 +9005,9 @@ async def get_all_rpc_contratos_emprestito():
                     rpc['documentos_con_enlaces'] = documentos_con_enlaces
                     rpc['total_documentos'] = len(documentos_con_enlaces)
                 
-                logger.info(f"✅ URLs de descarga/visualización generadas para {total_documentos_enriquecidos} documentos en {len(data_enriquecida)} RPCs")
+                logger.info(f"[OK] URLs de descarga/visualización generadas para {total_documentos_enriquecidos} documentos en {len(data_enriquecida)} RPCs")
             except Exception as e:
-                logger.warning(f"⚠️ No se pudieron generar URLs presigned para documentos: {e}")
+                logger.warning(f"[WARNING] No se pudieron generar URLs presigned para documentos: {e}")
         
         return JSONResponse(
             content={
@@ -9157,37 +9038,37 @@ async def get_all_rpc_contratos_emprestito():
             }
         )
 
-@app.get("/rpc_documentos_temporales", tags=["Gestión de Empréstito"], summary="🔵 Obtener Enlaces Temporales de Documentos de RPC")
+@app.get("/rpc_documentos_temporales", tags=["Gestión de Empréstito"], summary=" Obtener Enlaces Temporales de Documentos de RPC")
 async def get_rpc_documentos_temporales(numero_rpc: str, expiration: int = 3600):
     """
-    ## 🔵 GET | 📄 Documentos | Obtener Enlaces Temporales de Documentos de RPC
+    ##  GET |  Documentos | Obtener Enlaces Temporales de Documentos de RPC
     
     Endpoint para generar enlaces temporales (presigned URLs) para visualizar y descargar 
     los documentos PDF asociados a un RPC específico almacenados en S3.
     
-    ### ✅ Funcionalidades principales:
+    ### [OK] Funcionalidades principales:
     - **Enlaces bajo demanda**: Genera URLs solo cuando se solicitan
     - **URLs temporales**: Enlaces seguros con tiempo de expiración configurable
     - **Acceso directo**: URLs listas para visualizar o descargar en el frontend
     - **Seguridad**: Enlaces con expiración automática (por defecto 1 hora)
     
-    ### 📝 Parámetros:
+    ###  Parámetros:
     - **numero_rpc** (requerido): Número del RPC para buscar sus documentos
     - **expiration** (opcional): Tiempo de expiración en segundos (default: 3600 = 1 hora)
     
-    ### 📊 Información retornada:
+    ###  Información retornada:
     - Lista de documentos del RPC
     - URL temporal para cada documento
     - Información del archivo (nombre, tamaño, fecha)
     - Tiempo de expiración de cada URL
     
-    ### 💡 Casos de uso:
+    ###  Casos de uso:
     - Visualizar documentos de RPC en el frontend
     - Descargar documentos de soporte
     - Validar documentación de compromisos presupuestales
     - Auditoría de documentos
     
-    ### ✅ Respuesta exitosa (200):
+    ### [OK] Respuesta exitosa (200):
     ```json
     {
         "success": true,
@@ -9209,7 +9090,7 @@ async def get_rpc_documentos_temporales(numero_rpc: str, expiration: int = 3600)
     }
     ```
     
-    ### ❌ Respuesta de error (404):
+    ### [ERROR] Respuesta de error (404):
     ```json
     {
         "success": false,
@@ -9218,7 +9099,7 @@ async def get_rpc_documentos_temporales(numero_rpc: str, expiration: int = 3600)
     }
     ```
     
-    ### ❌ Respuesta de error (500):
+    ### [ERROR] Respuesta de error (500):
     ```json
     {
         "success": false,
@@ -9226,7 +9107,7 @@ async def get_rpc_documentos_temporales(numero_rpc: str, expiration: int = 3600)
     }
     ```
     
-    ### 🔗 Endpoints relacionados:
+    ###  Endpoints relacionados:
     - `GET /rpc_all` - Para listar todos los RPCs
     - `POST /emprestito/cargar-rpc` - Para crear nuevos RPCs con documentos
     """
@@ -9306,7 +9187,7 @@ async def get_rpc_documentos_temporales(numero_rpc: str, expiration: int = 3600)
             documentos_resultado = []
             
             if documentos_firebase and isinstance(documentos_firebase, list) and len(documentos_firebase) > 0:
-                logger.info(f"✅ Encontrados {len(documentos_firebase)} documentos en Firebase para RPC {numero_rpc}")
+                logger.info(f"[OK] Encontrados {len(documentos_firebase)} documentos en Firebase para RPC {numero_rpc}")
                 
                 # Generar presigned URLs para cada documento guardado en Firebase
                 from datetime import timedelta
@@ -9339,15 +9220,15 @@ async def get_rpc_documentos_temporales(numero_rpc: str, expiration: int = 3600)
                             }
                             
                             documentos_resultado.append(documento_con_url)
-                            logger.info(f"✅ URL temporal generada para: {documento_con_url['filename']}")
+                            logger.info(f"[OK] URL temporal generada para: {documento_con_url['filename']}")
                         else:
-                            logger.warning(f"⚠️  Documento sin s3_key válido: {doc}")
+                            logger.warning(f"[WARNING]  Documento sin s3_key válido: {doc}")
                 
                 if len(documentos_resultado) == 0:
-                    logger.warning(f"⚠️  Documentos encontrados en Firebase pero ninguno con s3_key válido")
+                    logger.warning(f"[WARNING]  Documentos encontrados en Firebase pero ninguno con s3_key válido")
             else:
                 # Si no hay documentos en Firebase, buscar directamente en S3
-                logger.info(f"📋 No hay documentos en Firebase, buscando directamente en S3 para referencia: {referencia_contrato}")
+                logger.info(f" No hay documentos en Firebase, buscando directamente en S3 para referencia: {referencia_contrato}")
                 documentos_resultado = s3_manager.list_documents_with_presigned_urls(
                     referencia_contrato=referencia_contrato,
                     document_type='rpc',
@@ -9392,28 +9273,28 @@ async def get_rpc_documentos_temporales(numero_rpc: str, expiration: int = 3600)
             }
         )
 
-@app.get("/convenios_transferencias_all", tags=["Gestión de Empréstito"], summary="🔵 Obtener Todos los Convenios de Transferencia")
+@app.get("/convenios_transferencias_all", tags=["Gestión de Empréstito"], summary=" Obtener Todos los Convenios de Transferencia")
 async def get_all_convenios_transferencia_emprestito():
     """
-    ## 🔵 GET | 📋 Consultas | Obtener Todos los Convenios de Transferencia
+    ##  GET |  Consultas | Obtener Todos los Convenios de Transferencia
     
     Endpoint para obtener todos los convenios de transferencia de empréstito 
     almacenados en la colección `convenios_transferencias_emprestito`.
     
-    ### ✅ Funcionalidades principales:
+    ### [OK] Funcionalidades principales:
     - **Listado completo**: Retorna todos los convenios registrados
     - **Ordenamiento**: Por fecha de creación (más recientes primero)
     - **Datos completos**: Incluye todos los campos de cada convenio
     - **Metadatos**: Incluye ID del documento, conteo total y timestamp
     
-    ### 📊 Información incluida:
+    ###  Información incluida:
     - Todos los campos del convenio
     - ID del documento para referencia
     - Conteo total de registros
     - Timestamp de la consulta
     - Datos serializados correctamente para JSON
     
-    ### 🗄️ Campos principales esperados:
+    ###  Campos principales esperados:
     - **referencia_contrato**: Referencia única del contrato/convenio
     - **nombre_centro_gestor**: Centro gestor responsable
     - **banco**: Nombre del banco
@@ -9435,14 +9316,14 @@ async def get_all_convenios_transferencia_emprestito():
     - **estado**: Estado del registro (activo/inactivo)
     - **tipo**: Tipo de registro
     
-    ### 💡 Casos de uso:
+    ###  Casos de uso:
     - Obtener listado completo de convenios de transferencia
     - Exportación de datos para análisis
     - Integración con sistemas externos
     - Reportes y dashboards
     - Monitoreo del estado de convenios
     
-    ### ✅ Respuesta exitosa (200):
+    ### [OK] Respuesta exitosa (200):
     ```json
     {
         "success": true,
@@ -9465,7 +9346,7 @@ async def get_all_convenios_transferencia_emprestito():
     }
     ```
     
-    ### ❌ Respuesta de error (500):
+    ### [ERROR] Respuesta de error (500):
     ```json
     {
         "success": false,
@@ -9475,7 +9356,7 @@ async def get_all_convenios_transferencia_emprestito():
     }
     ```
     
-    ### 🔗 Endpoints relacionados:
+    ###  Endpoints relacionados:
     - `POST /emprestito/cargar-convenio-transferencia` - Para crear nuevos convenios
     """
     try:
@@ -9524,25 +9405,25 @@ async def get_all_convenios_transferencia_emprestito():
             }
         )
 
-@app.get("/pagos_emprestito_all", tags=["Gestión de Empréstito"], summary="🔵 Obtener Todos los Pagos de Empréstito")
+@app.get("/pagos_emprestito_all", tags=["Gestión de Empréstito"], summary=" Obtener Todos los Pagos de Empréstito")
 async def get_all_pagos_emprestito():
     """
-    ## 🔵 GET | 📋 Consultas | Obtener Todos los Pagos de Empréstito
+    ##  GET |  Consultas | Obtener Todos los Pagos de Empréstito
     
     Endpoint para obtener todos los pagos de empréstito almacenados en la colección `pagos_emprestito`.
     
-    ### ✅ Funcionalidades principales:
+    ### [OK] Funcionalidades principales:
     - **Listado completo**: Retorna todos los pagos registrados
     - **Datos completos**: Incluye todos los campos de cada pago
     - **Metadatos**: Incluye ID del documento, conteo total y timestamp
     
-    ### 📊 Información incluida:
+    ###  Información incluida:
     - Todos los campos del pago
     - ID del documento para referencia
     - Conteo total de registros
     - Timestamp de la consulta
     
-    ### ✅ Respuesta exitosa (200):
+    ### [OK] Respuesta exitosa (200):
     ```json
     {
         "success": true,
@@ -9591,26 +9472,26 @@ async def get_all_pagos_emprestito():
             }
         )
 
-@app.get("/rpc_contratos_emprestito_all", tags=["Gestión de Empréstito"], summary="🔵 Obtener Todos los RPCs de Empréstito")
+@app.get("/rpc_contratos_emprestito_all", tags=["Gestión de Empréstito"], summary=" Obtener Todos los RPCs de Empréstito")
 async def get_all_rpc_contratos_emprestito():
     """
-    ## 🔵 GET | 📋 Consultas | Obtener Todos los RPCs de Empréstito
+    ##  GET |  Consultas | Obtener Todos los RPCs de Empréstito
     
     Endpoint para obtener todos los Registros Presupuestales de Compromiso (RPC) 
     de empréstito almacenados en la colección `rpc_contratos_emprestito`.
     
-    ### ✅ Funcionalidades principales:
+    ### [OK] Funcionalidades principales:
     - **Listado completo**: Retorna todos los RPCs registrados
     - **Datos completos**: Incluye todos los campos de cada RPC
     - **Metadatos**: Incluye ID del documento, conteo total y timestamp
     
-    ### 📊 Información incluida:
+    ###  Información incluida:
     - Todos los campos del RPC
     - ID del documento para referencia
     - Conteo total de registros
     - Timestamp de la consulta
     
-    ### 🗄️ Campos principales esperados:
+    ###  Campos principales esperados:
     - **numero_rpc**: Número único del RPC
     - **beneficiario_id**: Identificación del beneficiario
     - **beneficiario_nombre**: Nombre del beneficiario
@@ -9625,7 +9506,7 @@ async def get_all_rpc_contratos_emprestito():
     - **cdp_asociados**: CDPs asociados
     - **programacion_pac**: Programación PAC
     
-    ### ✅ Respuesta exitosa (200):
+    ### [OK] Respuesta exitosa (200):
     ```json
     {
         "success": true,
@@ -9705,9 +9586,9 @@ async def get_all_rpc_contratos_emprestito():
                     rpc['documentos_con_enlaces'] = documentos_con_enlaces
                     rpc['total_documentos'] = len(documentos_con_enlaces)
                 
-                logger.info(f"✅ URLs de descarga/visualización generadas para {total_documentos_enriquecidos} documentos en {len(data_enriquecida)} RPCs")
+                logger.info(f"[OK] URLs de descarga/visualización generadas para {total_documentos_enriquecidos} documentos en {len(data_enriquecida)} RPCs")
             except Exception as e:
-                logger.warning(f"⚠️ No se pudieron generar URLs presigned para documentos: {e}")
+                logger.warning(f"[WARNING] No se pudieron generar URLs presigned para documentos: {e}")
         
         return JSONResponse(
             content={
@@ -9738,32 +9619,32 @@ async def get_all_rpc_contratos_emprestito():
             }
         )
 
-@app.put("/emprestito/modificar-rpc", tags=["Gestión de Empréstito"], summary="🟡 Modificar RPC de Empréstito")
+@app.put("/emprestito/modificar-rpc", tags=["Gestión de Empréstito"], summary=" Modificar RPC de Empréstito")
 async def actualizar_rpc_endpoint(
     numero_rpc: str = Form(..., description="Número del RPC a modificar (obligatorio)"),
     datos_actualizacion: str = Form(..., description="JSON con los campos a actualizar")
 ):
     """
-    ## 🟡 PUT | ✏️ Actualización | Modificar RPC (Registro Presupuestal de Compromiso)
+    ##  PUT |  Actualización | Modificar RPC (Registro Presupuestal de Compromiso)
     
     **Propósito**: Actualiza cualquier campo de un RPC existente en la colección "rpc_contratos_emprestito" 
     según su "numero_rpc". Solo se modifican los campos proporcionados, los demás permanecen sin cambios.
     
-    ### ✅ Casos de uso:
+    ### [OK] Casos de uso:
     - Actualizar valores específicos de un RPC existente
     - Corregir información incorrecta en RPCs
     - Modificar beneficiarios, valores, o fechas
     - Actualizar CDPs asociados o programación PAC
     - Cambiar estado de liberación o referencias
     
-    ### 🎯 Funcionamiento:
+    ###  Funcionamiento:
     1. **Busca** el RPC por `numero_rpc` (parámetro de formulario)
     2. **Actualiza** solo los campos proporcionados en `datos_actualizacion`
     3. **Mantiene** los campos no especificados sin cambios
     4. **Registra** timestamp de última actualización automáticamente
     5. **Retorna** datos previos y actualizados para auditoría
     
-    ### 📋 Campos actualizables:
+    ###  Campos actualizables:
     - `beneficiario_id`: ID del beneficiario
     - `beneficiario_nombre`: Nombre del beneficiario
     - `descripcion_rpc`: Descripción del RPC
@@ -9778,12 +9659,12 @@ async def actualizar_rpc_endpoint(
     - `referencia_contrato`: Referencia del contrato
     - `estado`: Estado del RPC (activo, inactivo, etc.)
     
-    ### 🔒 Campos protegidos (NO modificables):
+    ###  Campos protegidos (NO modificables):
     - `numero_rpc`: Identificador único (se usa para búsqueda)
     - `fecha_creacion`: Fecha de creación original
     - `tipo`: Tipo de RPC (manual, automático, etc.)
     
-    ### 🔒 Validaciones:
+    ###  Validaciones:
     - **numero_rpc**: Debe existir en la colección
     - **valor_rpc**: Debe ser >= 0 si se proporciona
     - **strings**: Se limpian automáticamente de espacios
@@ -9791,7 +9672,7 @@ async def actualizar_rpc_endpoint(
     - **programacion_pac**: Debe ser un objeto JSON válido
     - **campos opcionales**: Solo se actualizan los proporcionados
     
-    ### 📝 Ejemplo de uso con fetch:
+    ###  Ejemplo de uso con fetch:
     ```javascript
     const formData = new FormData();
     formData.append('numero_rpc', 'RPC-2024-001');
@@ -9808,7 +9689,7 @@ async def actualizar_rpc_endpoint(
     });
     ```
     
-    ### ✅ Respuesta exitosa (200):
+    ### [OK] Respuesta exitosa (200):
     ```json
     {
         "success": true,
@@ -9823,13 +9704,13 @@ async def actualizar_rpc_endpoint(
     }
     ```
     
-    ### ❌ Errores posibles:
+    ### [ERROR] Errores posibles:
     - **404**: RPC no encontrado con el numero_rpc especificado
     - **400**: Datos inválidos o formato JSON incorrecto
     - **400**: No hay campos válidos para actualizar
     - **500**: Error en la actualización de Firestore
     
-    ### 💡 Características:
+    ###  Características:
     - **Actualización parcial**: Solo modifica campos especificados
     - **Auditoría completa**: Guarda datos previos y nuevos
     - **Búsqueda exacta**: Por numero_rpc únicamente
@@ -9919,30 +9800,30 @@ async def actualizar_rpc_endpoint(
             }
         )
 
-@app.get("/emprestito/proceso/{referencia_proceso}", tags=["Gestión de Empréstito"], summary="🔵 Verificar Proceso Existente")
+@app.get("/emprestito/proceso/{referencia_proceso}", tags=["Gestión de Empréstito"], summary=" Verificar Proceso Existente")
 async def verificar_proceso_existente_endpoint(referencia_proceso: str):
     """
-    ## � GET | �🔍 Consultas | Verificar Proceso Existente
+    ##  GET |  Consultas | Verificar Proceso Existente
     
     Verifica si ya existe un proceso con la referencia especificada en cualquiera 
     de las colecciones de empréstito.
     
-    ### ✅ Funcionalidades:
+    ### [OK] Funcionalidades:
     - Búsqueda en `procesos_emprestito` (SECOP)
     - Búsqueda en `ordenes_compra_emprestito` (TVEC)
     - Información detallada del proceso encontrado
     
-    ### 📊 Respuesta si existe:
+    ###  Respuesta si existe:
     - Datos completos del proceso
     - Colección donde se encontró
     - ID del documento
     
-    ### 💡 Casos de uso:
+    ###  Casos de uso:
     - Validación previa antes de crear proceso
     - Búsqueda de procesos existentes
     - Prevención de duplicados
     
-    ### 📝 Ejemplo de respuesta (proceso existente):
+    ###  Ejemplo de respuesta (proceso existente):
     ```json
     {
         "existe": true,
@@ -9982,30 +9863,30 @@ async def verificar_proceso_existente_endpoint(referencia_proceso: str):
         )
 
 
-@app.delete("/emprestito/proceso/{referencia_proceso}", tags=["Gestión de Empréstito"], summary="🔴 Eliminar Proceso")
+@app.delete("/emprestito/proceso/{referencia_proceso}", tags=["Gestión de Empréstito"], summary=" Eliminar Proceso")
 async def eliminar_proceso_emprestito_endpoint(referencia_proceso: str):
     """
-    ## � DELETE | �🗑️ Eliminación | Eliminar Proceso de Empréstito
+    ##  DELETE |  Eliminación | Eliminar Proceso de Empréstito
     
     Elimina un proceso de empréstito específico basado en su referencia_proceso.
     Busca automáticamente en ambas colecciones (SECOP y TVEC) y elimina el proceso encontrado.
     
-    ### ✅ Funcionalidades principales:
+    ### [OK] Funcionalidades principales:
     - **Búsqueda automática**: Localiza el proceso en ambas colecciones
     - **Eliminación segura**: Elimina únicamente el proceso especificado
     - **Información completa**: Retorna detalles del proceso eliminado
     - **Validación previa**: Verifica existencia antes de intentar eliminar
     
-    ### 🔍 Colecciones de búsqueda:
+    ###  Colecciones de búsqueda:
     - **procesos_emprestito** (SECOP)
     - **ordenes_compra_emprestito** (TVEC)
     
-    ### ⚠️ Consideraciones importantes:
+    ### [WARNING] Consideraciones importantes:
     - La eliminación es **irreversible**
     - Solo se elimina un proceso por referencia_proceso
     - Se requiere coincidencia exacta en referencia_proceso
     
-    ### 📋 Respuesta exitosa:
+    ###  Respuesta exitosa:
     ```json
     {
         "success": true,
@@ -10024,7 +9905,7 @@ async def eliminar_proceso_emprestito_endpoint(referencia_proceso: str):
     }
     ```
     
-    ### 📋 Respuesta si no existe:
+    ###  Respuesta si no existe:
     ```json
     {
         "success": false,
@@ -10085,7 +9966,7 @@ async def eliminar_proceso_emprestito_endpoint(referencia_proceso: str):
         )
 
 
-@app.put("/emprestito/modificar-valores/proceso/{referencia_proceso}", tags=["Gestión de Empréstito"], summary="🟡 Modificar Valor de Proceso SECOP")
+@app.put("/emprestito/modificar-valores/proceso/{referencia_proceso}", tags=["Gestión de Empréstito"], summary=" Modificar Valor de Proceso SECOP")
 async def actualizar_valor_proceso_secop_endpoint(
     referencia_proceso: str,
     valor_publicacion: Optional[float] = Form(None, description="Valor de publicación del proceso SECOP (opcional, debe ser numérico)"),
@@ -10093,30 +9974,30 @@ async def actualizar_valor_proceso_secop_endpoint(
     change_support_file: UploadFile = File(..., description="Documento soporte (obligatorio, PDF, XLSX, DOCX, etc.)")
 ):
     """
-    ## 🟡 PUT | ✏️ Actualización | Modificar Valor de Publicación de Proceso SECOP
+    ##  PUT |  Actualización | Modificar Valor de Publicación de Proceso SECOP
     
     Actualiza únicamente el campo `valor_publicacion` de un proceso SECOP existente 
     identificado por `referencia_proceso`.
     
-    ### ✅ Funcionalidades principales:
+    ### [OK] Funcionalidades principales:
     - **Búsqueda por referencia_proceso**: Localiza el proceso en `procesos_emprestito`
     - **Actualización exclusiva de valor**: Solo modifica `valor_publicacion`
     - **Historial de cambios**: Muestra valor anterior y nuevo
     - **Persistencia garantizada**: Los cambios persisten incluso después de ejecutar endpoints POST
     
-    ### 🔍 Colección de búsqueda:
+    ###  Colección de búsqueda:
     - **procesos_emprestito** (SECOP)
     
-    ### 📝 Campo actualizable:
+    ###  Campo actualizable:
     - `valor_publicacion`: Valor de publicación del proceso (numérico) **[Único campo modificable]**
     
-    ### ⚙️ Comportamiento:
+    ###  Comportamiento:
     - **Campo vacío**: Error - debe proporcionar un valor
     - **Campo con valor**: Se actualiza en la base de datos
     - **Timestamp**: Se actualiza automáticamente `fecha_actualizacion`
     - **Validación previa**: Verifica que el proceso existe
     
-    ### 📋 Respuesta exitosa:
+    ###  Respuesta exitosa:
     ```json
     {
         "success": true,
@@ -10136,7 +10017,7 @@ async def actualizar_valor_proceso_secop_endpoint(
     }
     ```
     
-    ### 📋 Respuesta si no existe:
+    ###  Respuesta si no existe:
     ```json
     {
         "success": false,
@@ -10202,9 +10083,9 @@ async def actualizar_valor_proceso_secop_endpoint(
                     detail=resultado
                 )
         
-        # ✅ Actualización exitosa - registrar en auditoría
+        # [OK] Actualización exitosa - registrar en auditoría
         try:
-            logger.info(f"🔍 Iniciando registro de auditoría para proceso: {referencia_proceso}")
+            logger.info(f" Iniciando registro de auditoría para proceso: {referencia_proceso}")
             auditoria_resultado = await registrar_cambio_valor(
                 tipo_coleccion="procesos",
                 identificador=referencia_proceso.strip(),
@@ -10217,16 +10098,16 @@ async def actualizar_valor_proceso_secop_endpoint(
                 endpoint_usado="/emprestito/modificar-valores/proceso"
             )
             
-            logger.info(f"📋 Resultado de auditoría: {auditoria_resultado}")
+            logger.info(f" Resultado de auditoría: {auditoria_resultado}")
             
             # Agregar información de auditoría a la respuesta
             resultado["auditoria"] = auditoria_resultado
             
             if not auditoria_resultado.get("success"):
-                logger.warning(f"⚠️ Auditoría no registrada: {auditoria_resultado.get('error')}")
+                logger.warning(f"[WARNING] Auditoría no registrada: {auditoria_resultado.get('error')}")
                 resultado["auditoria_warning"] = "Cambio realizado pero no se pudo registrar en auditoría"
             else:
-                logger.info(f"✅ Auditoría registrada exitosamente: {auditoria_resultado.get('change_id')}")
+                logger.info(f"[OK] Auditoría registrada exitosamente: {auditoria_resultado.get('change_id')}")
                 
         except Exception as e_audit:
             logger.error(f"Error registrando auditoría: {e_audit}")
@@ -10255,7 +10136,7 @@ async def actualizar_valor_proceso_secop_endpoint(
         )
 
 
-@app.put("/emprestito/modificar-valores/orden-compra/{numero_orden}", tags=["Gestión de Empréstito"], summary="🟡 Modificar Valor de Orden de Compra")
+@app.put("/emprestito/modificar-valores/orden-compra/{numero_orden}", tags=["Gestión de Empréstito"], summary=" Modificar Valor de Orden de Compra")
 async def actualizar_orden_compra_endpoint(
     numero_orden: str,
     valor_orden: Optional[float] = Form(None, description="Valor de la orden (opcional, debe ser numérico)"),
@@ -10264,33 +10145,33 @@ async def actualizar_orden_compra_endpoint(
     change_support_file: UploadFile = File(..., description="Documento soporte (obligatorio, PDF, XLSX, DOCX, etc.)")
 ):
     """
-    ## 🟡 PUT | ✏️ Actualización | Actualizar Orden de Compra de Empréstito por Número de Orden
+    ##  PUT |  Actualización | Actualizar Orden de Compra de Empréstito por Número de Orden
     
     Actualiza campos específicos de una orden de compra existente identificada por `numero_orden`.
     Solo se actualizan los campos proporcionados, manteniendo los demás valores sin cambios.
     
-    ### ✅ Funcionalidades principales:
+    ### [OK] Funcionalidades principales:
     - **Búsqueda por numero_orden**: Localiza la orden de compra en `ordenes_compra_emprestito`
     - **Actualización selectiva**: Solo modifica los campos proporcionados
     - **Preservación de datos**: Mantiene los campos no especificados
     - **Historial de cambios**: Muestra valores anteriores y nuevos
     - **Persistencia garantizada**: Los cambios persisten incluso después de ejecutar endpoints POST
     
-    ### 🔍 Colección de búsqueda:
+    ###  Colección de búsqueda:
     - **ordenes_compra_emprestito** (TVEC)
     
-    ### 📝 Campos actualizables:
+    ###  Campos actualizables:
     - `valor_orden`: Valor de la orden de compra (numérico) **[Campo principal]**
     - `valor_proyectado`: Valor proyectado (numérico) **[Opcional si existe]**
     
-    ### ⚙️ Comportamiento:
+    ###  Comportamiento:
     - **Campos vacíos**: Se ignoran (no se actualizan)
     - **Campos con valor**: Se actualizan en la base de datos
     - **Timestamp**: Se actualiza automáticamente `fecha_actualizacion`
     - **Validación previa**: Verifica que la orden existe
     - **Solo valores**: Ningún otro campo puede ser modificado por este endpoint
     
-    ### 📋 Respuesta exitosa:
+    ###  Respuesta exitosa:
     ```json
     {
         "success": true,
@@ -10366,9 +10247,9 @@ async def actualizar_orden_compra_endpoint(
                     detail=resultado
                 )
         
-        # ✅ Actualización exitosa - registrar en auditoría
+        # [OK] Actualización exitosa - registrar en auditoría
         try:
-            logger.info(f"🔍 Iniciando registro de auditoría para orden: {numero_orden}")
+            logger.info(f" Iniciando registro de auditoría para orden: {numero_orden}")
             # Determinar campo(s) modificado(s)
             campos_modificados = list(campos_actualizar.keys())
             campo_modificado = ", ".join(campos_modificados)
@@ -10385,16 +10266,16 @@ async def actualizar_orden_compra_endpoint(
                 endpoint_usado="/emprestito/modificar-valores/orden-compra"
             )
             
-            logger.info(f"📋 Resultado de auditoría: {auditoria_resultado}")
+            logger.info(f" Resultado de auditoría: {auditoria_resultado}")
             
             # Agregar información de auditoría a la respuesta
             resultado["auditoria"] = auditoria_resultado
             
             if not auditoria_resultado.get("success"):
-                logger.warning(f"⚠️ Auditoría no registrada: {auditoria_resultado.get('error')}")
+                logger.warning(f"[WARNING] Auditoría no registrada: {auditoria_resultado.get('error')}")
                 resultado["auditoria_warning"] = "Cambio realizado pero no se pudo registrar en auditoría"
             else:
-                logger.info(f"✅ Auditoría registrada exitosamente: {auditoria_resultado.get('change_id')}")
+                logger.info(f"[OK] Auditoría registrada exitosamente: {auditoria_resultado.get('change_id')}")
                 
         except Exception as e_audit:
             logger.error(f"Error registrando auditoría: {e_audit}")
@@ -10423,7 +10304,7 @@ async def actualizar_orden_compra_endpoint(
         )
 
 
-@app.put("/emprestito/modificar-valores/convenio/{referencia_contrato}", tags=["Gestión de Empréstito"], summary="🟡 Modificar Valor de Convenio")
+@app.put("/emprestito/modificar-valores/convenio/{referencia_contrato}", tags=["Gestión de Empréstito"], summary=" Modificar Valor de Convenio")
 async def actualizar_valor_convenio_endpoint(
     referencia_contrato: str,
     valor_contrato: Optional[float] = Form(None, description="Valor del contrato (opcional, debe ser numérico)"),
@@ -10431,30 +10312,30 @@ async def actualizar_valor_convenio_endpoint(
     change_support_file: UploadFile = File(..., description="Documento soporte (obligatorio, PDF, XLSX, DOCX, etc.)")
 ):
     """
-    ## 🟡 PUT | ✏️ Actualización | Modificar Valor de Convenio de Transferencia
+    ##  PUT |  Actualización | Modificar Valor de Convenio de Transferencia
     
     Actualiza únicamente el campo `valor_contrato` de un convenio de transferencia existente 
     identificado por `referencia_contrato`.
     
-    ### ✅ Funcionalidades principales:
+    ### [OK] Funcionalidades principales:
     - **Búsqueda por referencia_contrato**: Localiza el convenio en `convenios_transferencias_emprestito`
     - **Actualización exclusiva de valor**: Solo modifica `valor_contrato`
     - **Historial de cambios**: Muestra valor anterior y nuevo
     - **Persistencia garantizada**: Los cambios persisten incluso después de ejecutar endpoints POST
     
-    ### 🔍 Colección de búsqueda:
+    ###  Colección de búsqueda:
     - **convenios_transferencias_emprestito**
     
-    ### 📝 Campo actualizable:
+    ###  Campo actualizable:
     - `valor_contrato`: Valor del contrato (numérico) **[Único campo modificable]**
     
-    ### ⚙️ Comportamiento:
+    ###  Comportamiento:
     - **Campo vacío**: Error - debe proporcionar un valor
     - **Campo con valor**: Se actualiza en la base de datos
     - **Timestamp**: Se actualiza automáticamente `fecha_actualizacion`
     - **Validación previa**: Verifica que el convenio existe
     
-    ### 📋 Respuesta exitosa:
+    ###  Respuesta exitosa:
     ```json
     {
         "success": true,
@@ -10528,9 +10409,9 @@ async def actualizar_valor_convenio_endpoint(
                     detail=resultado
                 )
         
-        # ✅ Actualización exitosa - registrar en auditoría
+        # [OK] Actualización exitosa - registrar en auditoría
         try:
-            logger.info(f"🔍 Iniciando registro de auditoría para convenio: {referencia_contrato}")
+            logger.info(f" Iniciando registro de auditoría para convenio: {referencia_contrato}")
             auditoria_resultado = await registrar_cambio_valor(
                 tipo_coleccion="convenios",
                 identificador=referencia_contrato.strip(),
@@ -10543,16 +10424,16 @@ async def actualizar_valor_convenio_endpoint(
                 endpoint_usado="/emprestito/modificar-valores/convenio"
             )
             
-            logger.info(f"📋 Resultado de auditoría: {auditoria_resultado}")
+            logger.info(f" Resultado de auditoría: {auditoria_resultado}")
             
             # Agregar información de auditoría a la respuesta
             resultado["auditoria"] = auditoria_resultado
             
             if not auditoria_resultado.get("success"):
-                logger.warning(f"⚠️ Auditoría no registrada: {auditoria_resultado.get('error')}")
+                logger.warning(f"[WARNING] Auditoría no registrada: {auditoria_resultado.get('error')}")
                 resultado["auditoria_warning"] = "Cambio realizado pero no se pudo registrar en auditoría"
             else:
-                logger.info(f"✅ Auditoría registrada exitosamente: {auditoria_resultado.get('change_id')}")
+                logger.info(f"[OK] Auditoría registrada exitosamente: {auditoria_resultado.get('change_id')}")
                 
         except Exception as e_audit:
             logger.error(f"Error registrando auditoría: {e_audit}")
@@ -10581,7 +10462,7 @@ async def actualizar_valor_convenio_endpoint(
         )
 
 
-@app.put("/emprestito/modificar-valores/contrato-secop/{referencia_contrato}", tags=["Gestión de Empréstito"], summary="🟡 Actualizar Valor Contrato SECOP")
+@app.put("/emprestito/modificar-valores/contrato-secop/{referencia_contrato}", tags=["Gestión de Empréstito"], summary=" Actualizar Valor Contrato SECOP")
 async def actualizar_contrato_secop_endpoint(
     referencia_contrato: str,
     valor_contrato: Optional[float] = Form(None, description="Valor del contrato (opcional, debe ser numérico)"),
@@ -10589,29 +10470,29 @@ async def actualizar_contrato_secop_endpoint(
     change_support_file: UploadFile = File(..., description="Documento soporte (obligatorio, PDF, XLSX, DOCX, etc.)")
 ):
     """
-    ## 🟡 PUT | ✏️ Actualización | Actualizar Valor de Contrato SECOP
+    ##  PUT |  Actualización | Actualizar Valor de Contrato SECOP
     
     Actualiza únicamente el campo `valor_contrato` de un contrato SECOP existente identificado por `referencia_contrato`.
     Este endpoint está diseñado específicamente para modificar el valor del contrato, sin alterar ningún otro campo.
     
-    ### ✅ Funcionalidades principales:
+    ### [OK] Funcionalidades principales:
     - **Búsqueda por referencia_contrato**: Localiza el contrato en `contratos_emprestito`
     - **Actualización del valor**: Modifica solo el campo `valor_contrato`
     - **Persistencia garantizada**: Los cambios persisten incluso después de ejecutar endpoints POST
     - **Historial de cambios**: Muestra el valor anterior y el nuevo valor
     
-    ### 🔍 Colección de búsqueda:
+    ###  Colección de búsqueda:
     - **contratos_emprestito** (SECOP)
     
-    ### 📝 Campo actualizable:
+    ###  Campo actualizable:
     - `valor_contrato`: Valor del contrato (numérico, requerido)
     
-    ### ⚙️ Comportamiento:
+    ###  Comportamiento:
     - **Campo requerido**: Debe proporcionar `valor_contrato`
     - **Timestamp**: Se actualiza automáticamente `fecha_actualizacion`
     - **Validación previa**: Verifica que el contrato existe
     
-    ### 📋 Respuesta exitosa:
+    ###  Respuesta exitosa:
     ```json
     {
         "success": true,
@@ -10685,9 +10566,9 @@ async def actualizar_contrato_secop_endpoint(
                     detail=resultado
                 )
         
-        # ✅ Actualización exitosa - registrar en auditoría
+        # [OK] Actualización exitosa - registrar en auditoría
         try:
-            logger.info(f"🔍 Iniciando registro de auditoría para contrato: {referencia_contrato}")
+            logger.info(f" Iniciando registro de auditoría para contrato: {referencia_contrato}")
             auditoria_resultado = await registrar_cambio_valor(
                 tipo_coleccion="contratos",
                 identificador=referencia_contrato.strip(),
@@ -10700,16 +10581,16 @@ async def actualizar_contrato_secop_endpoint(
                 endpoint_usado="/emprestito/modificar-valores/contrato-secop"
             )
             
-            logger.info(f"📋 Resultado de auditoría: {auditoria_resultado}")
+            logger.info(f" Resultado de auditoría: {auditoria_resultado}")
             
             # Agregar información de auditoría a la respuesta
             resultado["auditoria"] = auditoria_resultado
             
             if not auditoria_resultado.get("success"):
-                logger.warning(f"⚠️ Auditoría no registrada: {auditoria_resultado.get('error')}")
+                logger.warning(f"[WARNING] Auditoría no registrada: {auditoria_resultado.get('error')}")
                 resultado["auditoria_warning"] = "Cambio realizado pero no se pudo registrar en auditoría"
             else:
-                logger.info(f"✅ Auditoría registrada exitosamente: {auditoria_resultado.get('change_id')}")
+                logger.info(f"[OK] Auditoría registrada exitosamente: {auditoria_resultado.get('change_id')}")
                 
         except Exception as e_audit:
             logger.error(f"Error registrando auditoría: {e_audit}")
@@ -10738,30 +10619,30 @@ async def actualizar_contrato_secop_endpoint(
         )
 
 
-@app.get("/emprestito/historial-cambios", tags=["Gestión de Empréstito"], summary="📋 Obtener Historial de Cambios")
+@app.get("/emprestito/historial-cambios", tags=["Gestión de Empréstito"], summary=" Obtener Historial de Cambios")
 async def obtener_historial_cambios_endpoint(
     tipo_coleccion: Optional[str] = Query(None, description="Filtrar por tipo de colección (procesos, ordenes, convenios, contratos)"),
     identificador: Optional[str] = Query(None, description="Filtrar por identificador específico"),
     limite: int = Query(50, ge=1, le=200, description="Número máximo de registros (1-200)")
 ):
     """
-    ## 📋 GET | Consulta | Obtener Historial de Cambios en Valores de Empréstito
+    ##  GET | Consulta | Obtener Historial de Cambios en Valores de Empréstito
     
     Consulta el historial completo de cambios realizados en los valores de las colecciones de empréstito.
     Cada cambio incluye información de auditoría completa: motivo, documento soporte, valores anteriores y nuevos.
     
-    ### ✅ Funcionalidades principales:
+    ### [OK] Funcionalidades principales:
     - **Historial completo**: Accede a todos los cambios registrados
     - **Filtros opcionales**: Por tipo de colección o identificador específico
     - **Información detallada**: Incluye motivo, documento soporte, timestamp, valores modificados
     - **Trazabilidad**: ID único para cada cambio
     
-    ### 🔍 Filtros disponibles:
+    ###  Filtros disponibles:
     - **tipo_coleccion**: procesos, ordenes, convenios, contratos (opcional)
     - **identificador**: referencia_proceso, numero_orden, referencia_contrato (opcional)
     - **limite**: Número máximo de registros a retornar (1-200, default: 50)
     
-    ### 📝 Información por cambio:
+    ###  Información por cambio:
     - `change_id`: ID único del cambio
     - `change_timestamp`: Fecha y hora del cambio
     - `change_motivo`: Justificación del cambio
@@ -10775,7 +10656,7 @@ async def obtener_historial_cambios_endpoint(
     - `usuario`: Usuario que realizó el cambio
     - `endpoint_usado`: Endpoint utilizado
     
-    ### 📋 Respuesta exitosa:
+    ###  Respuesta exitosa:
     ```json
     {
         "success": true,
@@ -10874,7 +10755,7 @@ class SolicitudCambioEmprestitoRequest(BaseModel):
         }
 
 
-@app.post("/solicitudes_cambios_emprestito", tags=["Gestión de Empréstito"], summary="🟢 Crear solicitud de cambio de empréstito")
+@app.post("/solicitudes_cambios_emprestito", tags=["Gestión de Empréstito"], summary=" Crear solicitud de cambio de empréstito")
 @optional_rate_limit("30/minute")
 async def crear_solicitud_cambio_emprestito(
     request: Request,
@@ -10884,7 +10765,7 @@ async def crear_solicitud_cambio_emprestito(
     )
 ):
     """
-    ## 🟢 POST | Crear solicitud de cambio para registros de empréstito
+    ##  POST | Crear solicitud de cambio para registros de empréstito
     
     Crea una solicitud de cambio pendiente para cualquier tipo de registro de empréstito.
     La solicitud debe ser aprobada o rechazada posteriormente.
@@ -10964,7 +10845,7 @@ async def crear_solicitud_cambio_emprestito(
         raise HTTPException(status_code=500, detail=f"Error creando solicitud: {str(e)}")
 
 
-@app.get("/solicitudes_cambios_emprestito", tags=["Gestión de Empréstito"], summary="📋 Consultar solicitudes de cambio de empréstito")
+@app.get("/solicitudes_cambios_emprestito", tags=["Gestión de Empréstito"], summary=" Consultar solicitudes de cambio de empréstito")
 @optional_rate_limit("30/minute")
 async def consultar_solicitudes_cambios_emprestito(
     request: Request,
@@ -10975,7 +10856,7 @@ async def consultar_solicitudes_cambios_emprestito(
     offset: int = Query(0, ge=0, description="Offset para paginación"),
 ):
     """
-    ## 📋 GET | Consultar solicitudes de cambio de empréstito
+    ##  GET | Consultar solicitudes de cambio de empréstito
     
     Consulta solicitudes de cambio con filtros opcionales por estado, tipo y centro gestor.
     """
@@ -11041,14 +10922,14 @@ async def consultar_solicitudes_cambios_emprestito(
         raise HTTPException(status_code=500, detail=f"Error consultando solicitudes: {str(e)}")
 
 
-@app.put("/solicitudes_cambios_emprestito/{solicitud_id}/aprobar", tags=["Gestión de Empréstito"], summary="✅ Aprobar solicitud de cambio")
+@app.put("/solicitudes_cambios_emprestito/{solicitud_id}/aprobar", tags=["Gestión de Empréstito"], summary="[OK] Aprobar solicitud de cambio")
 @optional_rate_limit("10/minute")
 async def aprobar_solicitud_cambio_emprestito(
     request: Request,
     solicitud_id: str = Path(..., description="ID de la solicitud a aprobar"),
 ):
     """
-    ## ✅ PUT | Aprobar solicitud de cambio de empréstito
+    ## [OK] PUT | Aprobar solicitud de cambio de empréstito
     
     Aprueba una solicitud pendiente y aplica los cambios al registro original.
     Registra cada cambio en el sistema de auditoría (emprestito_control_cambios).
@@ -11168,7 +11049,7 @@ async def aprobar_solicitud_cambio_emprestito(
         raise HTTPException(status_code=500, detail=f"Error aprobando solicitud: {str(e)}")
 
 
-@app.put("/solicitudes_cambios_emprestito/{solicitud_id}/rechazar", tags=["Gestión de Empréstito"], summary="❌ Rechazar solicitud de cambio")
+@app.put("/solicitudes_cambios_emprestito/{solicitud_id}/rechazar", tags=["Gestión de Empréstito"], summary="[ERROR] Rechazar solicitud de cambio")
 @optional_rate_limit("10/minute")
 async def rechazar_solicitud_cambio_emprestito(
     request: Request,
@@ -11176,7 +11057,7 @@ async def rechazar_solicitud_cambio_emprestito(
     motivo_rechazo: str = Body(..., embed=True, description="Motivo del rechazo"),
 ):
     """
-    ## ❌ PUT | Rechazar solicitud de cambio de empréstito
+    ## [ERROR] PUT | Rechazar solicitud de cambio de empréstito
     
     Rechaza una solicitud pendiente con un motivo de rechazo obligatorio.
     No se aplican cambios al registro original.
@@ -11232,11 +11113,11 @@ async def rechazar_solicitud_cambio_emprestito(
 # REPORTES EMPRÉSTITO
 # ============================================================================
 
-@app.get("/reportes_emprestito/resumen-centro-gestor", tags=["Gestión de Empréstito"], summary="📊 Resumen de empréstito por centro gestor")
+@app.get("/reportes_emprestito/resumen-centro-gestor", tags=["Gestión de Empréstito"], summary=" Resumen de empréstito por centro gestor")
 @optional_rate_limit("30/minute")
 async def resumen_emprestito_centro_gestor(request: Request):
     """
-    ## 📊 GET | Resumen de empréstito agrupado por centro gestor
+    ##  GET | Resumen de empréstito agrupado por centro gestor
     
     Agrupa: centro gestor → contratos → último avance (desde reportes_contratos).
     Reutiliza la información existente de contratos y reportes.
@@ -11330,14 +11211,14 @@ async def resumen_emprestito_centro_gestor(request: Request):
 # CRUD DELETE EMPRÉSTITO (endpoints faltantes)
 # ============================================================================
 
-@app.delete("/contratos_emprestito/{referencia}", tags=["Gestión de Empréstito"], summary="🔴 Eliminar contrato de empréstito")
+@app.delete("/contratos_emprestito/{referencia}", tags=["Gestión de Empréstito"], summary=" Eliminar contrato de empréstito")
 @optional_rate_limit("10/minute")
 async def eliminar_contrato_emprestito(
     request: Request,
     referencia: str = Path(..., description="Referencia del contrato a eliminar"),
 ):
     """
-    ## 🔴 DELETE | Eliminar contrato de empréstito por referencia_contrato
+    ##  DELETE | Eliminar contrato de empréstito por referencia_contrato
     
     Busca y elimina el contrato con la referencia indicada de la colección `contratos_emprestito`.
     """
@@ -11372,14 +11253,14 @@ async def eliminar_contrato_emprestito(
         raise HTTPException(status_code=500, detail=f"Error eliminando contrato: {str(e)}")
 
 
-@app.delete("/ordenes_compra_emprestito/{numero_orden}", tags=["Gestión de Empréstito"], summary="🔴 Eliminar orden de compra")
+@app.delete("/ordenes_compra_emprestito/{numero_orden}", tags=["Gestión de Empréstito"], summary=" Eliminar orden de compra")
 @optional_rate_limit("10/minute")
 async def eliminar_orden_compra_emprestito_endpoint(
     request: Request,
     numero_orden: str = Path(..., description="Número de la orden de compra a eliminar"),
 ):
     """
-    ## 🔴 DELETE | Eliminar orden de compra de empréstito
+    ##  DELETE | Eliminar orden de compra de empréstito
     
     Elimina la orden de compra con el número indicado.
     """
@@ -11403,14 +11284,14 @@ async def eliminar_orden_compra_emprestito_endpoint(
         raise HTTPException(status_code=500, detail=f"Error eliminando orden de compra: {str(e)}")
 
 
-@app.delete("/convenios_emprestito/{referencia}", tags=["Gestión de Empréstito"], summary="🔴 Eliminar convenio de transferencia")
+@app.delete("/convenios_emprestito/{referencia}", tags=["Gestión de Empréstito"], summary=" Eliminar convenio de transferencia")
 @optional_rate_limit("10/minute")
 async def eliminar_convenio_emprestito_endpoint(
     request: Request,
     referencia: str = Path(..., description="Referencia del convenio a eliminar"),
 ):
     """
-    ## 🔴 DELETE | Eliminar convenio de transferencia de empréstito
+    ##  DELETE | Eliminar convenio de transferencia de empréstito
     
     Elimina el convenio con la referencia indicada.
     """
@@ -11439,24 +11320,24 @@ async def eliminar_convenio_emprestito_endpoint(
 # ============================================================================
 
 
-@app.post("/emprestito/obtener-contratos-secop", tags=["Gestión de Empréstito"], summary="🟢 Obtener Contratos SECOP - SIN LIMITACIONES")
+@app.post("/emprestito/obtener-contratos-secop", tags=["Gestión de Empréstito"], summary=" Obtener Contratos SECOP - SIN LIMITACIONES")
 async def obtener_contratos_secop_endpoint(offset: int = 0, limit: int = None):
     """
-    ## � POST | 🔄 Procesamiento por Lotes | Obtener Contratos de SECOP desde Procesos
+    ##  POST |  Procesamiento por Lotes | Obtener Contratos de SECOP desde Procesos
     
     Procesa registros de la colección 'procesos_emprestito' en lotes, busca contratos en SECOP 
     para cada proceso y guarda los resultados en la nueva colección 'contratos_emprestito'.
     
-    ### 📝 Parámetros opcionales:
+    ###  Parámetros opcionales:
     - **offset**: Índice inicial para procesar (default: 0)
     - **limit**: Cantidad de registros a procesar (default: 10, máximo: 50)
     
-    ### 📤 Envío:
+    ###  Envío:
     ```http
     POST /emprestito/obtener-contratos-secop?offset=0&limit=10
     ```
     
-    ### 🔄 Proceso:
+    ###  Proceso:
     1. Leer registros de 'procesos_emprestito' desde offset hasta offset+limit
     2. Para cada proceso, extraer referencia_proceso y proceso_contractual
     3. Conectar con la API de SECOP (www.datos.gov.co) para cada proceso
@@ -11465,7 +11346,7 @@ async def obtener_contratos_secop_endpoint(offset: int = 0, limit: int = None):
     6. Verificar duplicados y actualizar/crear registros en Firebase
     7. Retornar resumen del lote procesado con información de paginación
     
-    ### ✅ Respuesta exitosa:
+    ### [OK] Respuesta exitosa:
     ```json
     {
         "success": true,
@@ -11521,7 +11402,7 @@ async def obtener_contratos_secop_endpoint(offset: int = 0, limit: int = None):
     }
     ```
     
-    ### 📋 Respuesta sin procesos:
+    ###  Respuesta sin procesos:
     ```json
     {
         "success": false,
@@ -11530,14 +11411,14 @@ async def obtener_contratos_secop_endpoint(offset: int = 0, limit: int = None):
     }
     ```
     
-    ### 🗄️ Esquema de la colección 'contratos_emprestito':
-    **🔄 Campos heredados desde procesos_emprestito:**
+    ###  Esquema de la colección 'contratos_emprestito':
+    ** Campos heredados desde procesos_emprestito:**
     - **referencia_proceso**: Heredado desde procesos_emprestito
     - **banco**: Heredado desde 'nombre_banco' de procesos_emprestito
     - **bp**: Heredado desde procesos_emprestito
     - **nombre_centro_gestor**: Heredado desde procesos_emprestito
     
-    **📊 Campos desde SECOP API:**
+    ** Campos desde SECOP API:**
     - **referencia_contrato**: referencia_del_contrato desde SECOP
     - **id_contrato**: Desde SECOP
     - **proceso_contractual**: Mapeado desde 'proceso_de_compra' de SECOP (sobrescribe el heredado)
@@ -11559,12 +11440,12 @@ async def obtener_contratos_secop_endpoint(offset: int = 0, limit: int = None):
     - **nit_entidad**: Desde SECOP (filtrado por 890399011)
     - **nit_contratista**: Desde SECOP
     
-    **🔧 Metadatos:**
+    ** Metadatos:**
     - **fecha_guardado**: Timestamp de cuando se guardó en Firebase
     - **fuente_datos**: "SECOP_API"
     - **version_esquema**: "1.1"
     
-    ### 🔗 Integración SECOP:
+    ###  Integración SECOP:
     - **API**: www.datos.gov.co
     - **Dataset**: jbjy-vk9h (Contratos)
     - **Filtros**: proceso_de_compra LIKE '%{proceso_contractual}%' AND nit_entidad = '890399011'
@@ -11610,32 +11491,32 @@ async def obtener_contratos_secop_endpoint(offset: int = 0, limit: int = None):
             }
         )
 
-@app.get("/contratos_emprestito_all", tags=["Gestión de Empréstito"], summary="🔵 Todos los Contratos Empréstito")
+@app.get("/contratos_emprestito_all", tags=["Gestión de Empréstito"], summary=" Todos los Contratos Empréstito")
 @optional_rate_limit("50/minute")  # Máximo 50 requests por minuto
 async def obtener_todos_contratos_emprestito(request: Request):
     """
-    ## 🔵 GET | 📋 Listados | Obtener Todos los Contratos de Empréstito
+    ##  GET |  Listados | Obtener Todos los Contratos de Empréstito
     
     **Propósito**: Retorna todos los registros de las colecciones "contratos_emprestito", "ordenes_compra_emprestito" y "convenios_transferencias_emprestito".
     
-    ### ✅ Casos de uso:
+    ### [OK] Casos de uso:
     - Obtener listado completo de contratos de empréstito
     - Exportación de datos para análisis
     - Integración con sistemas externos
     - Reportes y dashboards de contratos
     
-    ### 📊 Información incluida:
+    ###  Información incluida:
     - Todos los campos disponibles en las tres colecciones
     - ID del documento para referencia
     - Conteo total de registros y por tipo
     - Timestamp de la consulta
     
-    ### 🗄️ Colecciones incluidas:
+    ###  Colecciones incluidas:
     1. **contratos_emprestito**: Contratos principales
     2. **ordenes_compra_emprestito**: Órdenes de compra
     3. **convenios_transferencias_emprestito**: Convenios de transferencia
     
-    ### 🗄️ Campos principales:
+    ###  Campos principales:
     - **referencia_contrato**: Referencia del contrato
     - **referencia_proceso**: Proceso de origen
     - **nombre_centro_gestor**: Entidad responsable
@@ -11647,13 +11528,13 @@ async def obtener_todos_contratos_emprestito(request: Request):
     - **modalidad_contratacion**: Modalidad de contratación
     - **entidad_contratante**: Entidad que contrata
     - **contratista**: Empresa contratista
-    - **nombre_resumido_proceso**: 🔄 Heredado desde procesos_emprestito
+    - **nombre_resumido_proceso**:  Heredado desde procesos_emprestito
     - **tipo_registro**: Identificador del tipo de registro (convenio_transferencia, contrato, orden)
     
-    ### 🔄 Campos heredados desde procesos_emprestito:
+    ###  Campos heredados desde procesos_emprestito:
     - **nombre_resumido_proceso**: Nombre resumido del proceso obtenido automáticamente usando referencia_proceso
     
-    ### 📝 Ejemplo de uso:
+    ###  Ejemplo de uso:
     ```javascript
     const response = await fetch('/contratos_emprestito_all');
     const data = await response.json();
@@ -11699,31 +11580,31 @@ async def obtener_todos_contratos_emprestito(request: Request):
             detail=f"Error procesando contratos de empréstito: {str(e)}"
         )
 
-@app.get("/contratos_emprestito/referencia/{referencia_contrato}", tags=["Gestión de Empréstito"], summary="🔵 Contratos por Referencia")
+@app.get("/contratos_emprestito/referencia/{referencia_contrato}", tags=["Gestión de Empréstito"], summary=" Contratos por Referencia")
 async def obtener_contratos_por_referencia(referencia_contrato: str):
     """
-    ## � GET | �🔍 Consultas | Obtener Contratos por Referencia
+    ##  GET |  Consultas | Obtener Contratos por Referencia
     
     **Propósito**: Retorna contratos de empréstito filtrados por referencia_contrato específica.
     
-    ### ✅ Casos de uso:
+    ### [OK] Casos de uso:
     - Búsqueda de contratos por referencia específica
     - Consulta de detalles de contrato individual
     - Validación de existencia de contrato
     - Integración con sistemas de seguimiento contractual
     
-    ### 🔍 Filtrado:
+    ###  Filtrado:
     - **Campo**: `referencia_contrato` (coincidencia exacta)
     - **Tipo**: String - Referencia única del contrato
     - **Sensible a mayúsculas**: Sí
     
-    ### 📊 Información incluida:
+    ###  Información incluida:
     - Todos los campos del contrato que coincida con la referencia
     - ID del documento para referencia
     - Conteo de registros encontrados
     - Información del filtro aplicado
     
-    ### 📝 Ejemplo de uso:
+    ###  Ejemplo de uso:
     ```javascript
     const referencia = "CONT-001-2025";
     const response = await fetch(`/contratos_emprestito/${referencia}`);
@@ -11735,7 +11616,7 @@ async def obtener_contratos_por_referencia(referencia_contrato: str):
     }
     ```
     
-    ### 💡 Notas:
+    ###  Notas:
     - Si no se encuentra ningún contrato, retorna array vacío
     - La referencia debe ser exacta (sin espacios adicionales)
     - Puede retornar múltiples contratos si hay duplicados
@@ -11774,30 +11655,30 @@ async def obtener_contratos_por_referencia(referencia_contrato: str):
 @app.get("/contratos_emprestito/centro-gestor/{nombre_centro_gestor}", tags=["Gestión de Empréstito"])
 async def obtener_contratos_por_centro_gestor(nombre_centro_gestor: str):
     """
-    ## 🏢 Obtener Contratos de Empréstito por Centro Gestor
+    ##  Obtener Contratos de Empréstito por Centro Gestor
     
     **Propósito**: Retorna contratos de empréstito filtrados por nombre del centro gestor específico.
     
-    ### ✅ Casos de uso:
+    ### [OK] Casos de uso:
     - Consulta de contratos por dependencia responsable
     - Reportes por entidad gestora
     - Dashboard por centro de responsabilidad
     - Análisis de distribución institucional
     - Seguimiento de contratos por secretaría/departamento
     
-    ### 🔍 Filtrado:
+    ###  Filtrado:
     - **Campo**: `nombre_centro_gestor` (coincidencia exacta)
     - **Tipo**: String - Nombre completo del centro gestor
     - **Sensible a mayúsculas**: Sí
     - **Espacios**: Sensible a espacios adicionales
     
-    ### 📊 Información incluida:
+    ###  Información incluida:
     - Todos los campos de los contratos del centro gestor
     - ID del documento para referencia
     - Conteo de registros encontrados
     - Información del filtro aplicado
     
-    ### 📝 Ejemplo de uso:
+    ###  Ejemplo de uso:
     ```javascript
     const centroGestor = "Secretaría de Salud";
     const response = await fetch(`/contratos_emprestito/${encodeURIComponent(centroGestor)}`);
@@ -11809,13 +11690,13 @@ async def obtener_contratos_por_centro_gestor(nombre_centro_gestor: str):
     }
     ```
     
-    ### 💡 Notas:
+    ###  Notas:
     - Típicamente retorna múltiples contratos por centro gestor
     - El nombre debe ser exacto (use `/centros-gestores/nombres-unicos` para obtener nombres válidos)
     - Para nombres con espacios, usar `encodeURIComponent()` en el frontend
     - Si no se encuentra ningún contrato, retorna array vacío
     
-    ### 🔗 Endpoint relacionado:
+    ###  Endpoint relacionado:
     - `GET /centros-gestores/nombres-unicos` - Para obtener lista de centros gestores válidos
     """
     if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
@@ -11852,12 +11733,12 @@ async def obtener_contratos_por_centro_gestor(nombre_centro_gestor: str):
 @app.get("/emprestito/ordenes-compra", tags=["Gestión de Empréstito"])
 async def get_ordenes_compra_todas():
     """
-    ## 📋 Consultar Todas las Órdenes de Compra Existentes
+    ##  Consultar Todas las Órdenes de Compra Existentes
     
     **Propósito**: Obtiene todas las órdenes de compra almacenadas en la colección 
     `ordenes_compra_emprestito` para revisar los datos disponibles.
     
-    ### ✅ Información que proporciona:
+    ### [OK] Información que proporciona:
     - **Listado completo**: Todas las órdenes de compra existentes
     - **Campos disponibles**: Estructura de datos actual
     - **Números de orden**: Para debugging del matching con TVEC
@@ -11868,7 +11749,7 @@ async def get_ordenes_compra_todas():
         return resultado
         
     except Exception as e:
-        logger.error(f"❌ Error consultando órdenes: {str(e)}")
+        logger.error(f"[ERROR] Error consultando órdenes: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail=f"Error consultando órdenes: {str(e)}"
@@ -11879,28 +11760,28 @@ async def obtener_ordenes_compra_tvec_endpoint(
     numero_orden: Optional[str] = Query(None, description="Filtrar ejecución a una única orden de compra")
 ):
     """
-    ## 🛒 Obtener y Enriquecer Órdenes de Compra con Datos de TVEC
+    ##  Obtener y Enriquecer Órdenes de Compra con Datos de TVEC
     
     **Propósito**: Enriquece todas las órdenes de compra existentes en la colección 
     `ordenes_compra_emprestito` con datos adicionales de la API de TVEC.
     
-    ### ✅ Funcionalidades principales:
+    ### [OK] Funcionalidades principales:
     - **Enriquecimiento de datos**: Obtiene datos adicionales de TVEC usando `numero_orden`
     - **Conservación de campos**: Mantiene todos los campos existentes en la colección
     - **Datos adicionales**: Agrega campos con prefijo `tvec_` para datos de la tienda virtual
     - **API Integration**: Usa la API oficial de datos abiertos de Colombia (rgxm-mmea)
     
-    ### 📝 Parámetros opcionales:
+    ###  Parámetros opcionales:
     - `numero_orden`: Si se envía, procesa únicamente esa orden.
     
-    ### 📤 Envío:
+    ###  Envío:
     ```http
     POST /emprestito/obtener-ordenes-compra-TVEC
     POST /emprestito/obtener-ordenes-compra-TVEC?numero_orden=OC-2024-001
     ```
     **No es necesario enviar ningún cuerpo JSON**.
     
-    ### 🔄 Proceso:
+    ###  Proceso:
     1. Obtener todas las órdenes de la colección `ordenes_compra_emprestito`
     2. Conectar con la API de TVEC (www.datos.gov.co/rgxm-mmea)
     3. Para cada orden, buscar datos adicionales usando `numero_orden`
@@ -11908,7 +11789,7 @@ async def obtener_ordenes_compra_tvec_endpoint(
     5. Actualizar registros en Firebase conservando campos originales
     6. Retornar resumen completo del enriquecimiento
     
-    ### 📊 Campos adicionales agregados (estructura similar a contratos):
+    ###  Campos adicionales agregados (estructura similar a contratos):
     
     **Campos principales (estructura estándar):**
     - `referencia_orden`: Referencia de la orden (similar a referencia_contrato)
@@ -11937,7 +11818,7 @@ async def obtener_ordenes_compra_tvec_endpoint(
     - `tvec_cantidad`: Cantidad
     - `tvec_precio_unitario`: Precio unitario
     
-    ### 🔐 Snippet utilizado:
+    ###  Snippet utilizado:
     El endpoint usa exactamente el snippet proporcionado:
     ```python
     import pandas as pd
@@ -11948,7 +11829,7 @@ async def obtener_ordenes_compra_tvec_endpoint(
     results_df = pd.DataFrame.from_records(results)
     ```
     
-    ### ✅ Respuesta exitosa:
+    ### [OK] Respuesta exitosa:
     ```json
     {
         "success": true,
@@ -12002,20 +11883,20 @@ async def obtener_ordenes_compra_tvec_endpoint(
     }
     ```
     
-    ### 🚨 Requisitos:
+    ###  Requisitos:
     - Tener órdenes de compra registradas en `ordenes_compra_emprestito`
     - Cada orden debe tener el campo `numero_orden` 
     - Conexión a internet para acceder a la API de TVEC
     - Librerías: `sodapy` y `pandas` instaladas
     
-    ### 💡 Características especiales:
+    ###  Características especiales:
     - **Preserva datos originales**: No modifica campos existentes
     - **Prefijo tvec_**: Evita conflictos con campos originales
     - **Matching por numero_orden**: Usa identificador único para relacionar datos
     - **Tolerante a errores**: Continúa procesando aunque algunas órdenes fallen
     - **Sin duplicados**: Solo agrega campos si no existen ya
     
-    ### 🔗 Endpoints relacionados:
+    ###  Endpoints relacionados:
     - `POST /emprestito/cargar-orden-compra` - Para crear nuevas órdenes
     - `GET /ordenes_compra_emprestito_all` - Para consultar órdenes enriquecidas (si existe)
     """
@@ -12084,21 +11965,21 @@ async def get_all_procesos_emprestito():
     
     **Propósito**: Retorna todo el contenido de la colección "procesos_emprestito" en Firebase.
     
-    ### ✅ Casos de uso:
+    ### [OK] Casos de uso:
     - Obtener listado completo de procesos de empréstito
     - Exportación de datos para análisis
     - Integración con sistemas externos
     - Reportes y dashboards de procesos
     - Monitoreo del estado de procesos
     
-    ### 📊 Información incluida:
+    ###  Información incluida:
     - Todos los campos disponibles en la colección
     - ID del documento para referencia
     - Conteo total de registros
     - Timestamp de la consulta
     - Datos serializados correctamente para JSON
     
-    ### 🗄️ Campos principales esperados:
+    ###  Campos principales esperados:
     - **referencia_proceso**: Referencia única del proceso
     - **nombre_centro_gestor**: Entidad responsable
     - **nombre_banco**: Entidad bancaria
@@ -12113,7 +11994,7 @@ async def get_all_procesos_emprestito():
     - **id_paa**: ID del PAA (opcional)
     - **valor_proyectado**: Valor proyectado (opcional)
     
-    ### 📝 Ejemplo de uso:
+    ###  Ejemplo de uso:
     ```javascript
     const response = await fetch('/procesos_emprestito_all');
     const data = await response.json();
@@ -12129,14 +12010,14 @@ async def get_all_procesos_emprestito():
     }
     ```
     
-    ### 💡 Características:
+    ###  Características:
     - **Serialización**: Datos de Firebase convertidos correctamente a JSON
     - **UTF-8**: Soporte completo para caracteres especiales
     - **Fechas**: Timestamps convertidos a formato ISO
     - **Performance**: Consulta optimizada de toda la colección
     - **Consistencia**: Estructura de datos uniforme
     
-    ### 🔗 Endpoints relacionados:
+    ###  Endpoints relacionados:
     - `POST /emprestito/cargar-proceso` - Para crear nuevos procesos
     - `GET /contratos_emprestito_all` - Para consultar contratos relacionados
     """
@@ -12180,20 +12061,20 @@ async def get_all_procesos_emprestito():
             detail=f"Error procesando consulta de procesos de empréstito: {str(e)}"
         )
 
-@app.get("/emprestito/obtener-procesos-bp", tags=["Gestión de Empréstito"], summary="🔵 Obtener Procesos BP")
+@app.get("/emprestito/obtener-procesos-bp", tags=["Gestión de Empréstito"], summary=" Obtener Procesos BP")
 async def obtener_procesos_bp():
     """
     ## Obtener Procesos de Empréstito - Campos Básicos BP
     
     **Propósito**: Retorna datos específicos de la colección "procesos_emprestito" optimizados para visualización.
     
-    ### ✅ Casos de uso:
+    ### [OK] Casos de uso:
     - Listado de procesos para dashboards
     - Exportación simplificada de datos
     - Integración con sistemas externos
     - Reportes básicos de procesos
     
-    ### 📊 Campos incluidos:
+    ###  Campos incluidos:
     - **bp**: Código de proyecto base
     - **banco**: Entidad bancaria
     - **nombre_centro_gestor**: Entidad responsable
@@ -12202,7 +12083,7 @@ async def obtener_procesos_bp():
     - **urlproceso**: URL del proceso
     - **valor_publicacion**: Valor del proceso
     
-    ### 📝 Ejemplo de uso:
+    ###  Ejemplo de uso:
     ```javascript
     const response = await fetch('/emprestito/obtener-procesos-bp');
     const data = await response.json();
@@ -12214,7 +12095,7 @@ async def obtener_procesos_bp():
     }
     ```
     
-    ### 💡 Características:
+    ###  Características:
     - **Optimizado**: Solo campos necesarios para reducir payload
     - **UTF-8**: Soporte completo para caracteres especiales
     """
@@ -12269,26 +12150,26 @@ async def obtener_procesos_bp():
             detail=f"Error obteniendo procesos BP: {str(e)}"
         )
 
-@app.get("/emprestito/obtener-contratos-bp", tags=["Gestión de Empréstito"], summary="🔵 Obtener Contratos BP")
+@app.get("/emprestito/obtener-contratos-bp", tags=["Gestión de Empréstito"], summary=" Obtener Contratos BP")
 async def obtener_contratos_bp():
     """
     ## Obtener Contratos de Empréstito - Campos Básicos BP
     
     **Propósito**: Retorna datos específicos de las tres colecciones de empréstito optimizados para visualización.
     
-    ### 🗄️ Colecciones incluidas:
+    ###  Colecciones incluidas:
     1. **contratos_emprestito**: Contratos principales
     2. **ordenes_compra_emprestito**: Órdenes de compra
     3. **convenios_transferencias_emprestito**: Convenios de transferencia
     
-    ### ✅ Casos de uso:
+    ### [OK] Casos de uso:
     - Listado de contratos para dashboards
     - Exportación simplificada de datos de contratos
     - Integración con sistemas externos
     - Reportes básicos de contratos
     - Seguimiento de vigencias contractuales
     
-    ### 📊 Campos incluidos:
+    ###  Campos incluidos:
     - **bp**: Código de proyecto base
     - **banco**: Entidad bancaria
     - **nombre_centro_gestor**: Entidad responsable
@@ -12300,7 +12181,7 @@ async def obtener_contratos_bp():
     - **fecha_fin_contrato**: Fecha de finalización del contrato
     - **sector**: Sector del contrato
     
-    ### 📝 Ejemplo de uso:
+    ###  Ejemplo de uso:
     ```javascript
     const response = await fetch('/emprestito/obtener-contratos-bp');
     const data = await response.json();
@@ -12317,7 +12198,7 @@ async def obtener_contratos_bp():
     }
     ```
     
-    ### 💡 Características:
+    ###  Características:
     - **Optimizado**: Solo campos necesarios para reducir payload
     - **UTF-8**: Soporte completo para caracteres especiales
     - **Cache**: Datos cacheados por 5 minutos para mejor performance
@@ -12427,28 +12308,28 @@ async def obtener_contratos_bp():
 @app.get("/ordenes_compra_emprestito/numero/{numero_orden}", tags=["Gestión de Empréstito"])
 async def obtener_ordenes_por_numero(numero_orden: str):
     """
-    ## 🔍 Obtener Órdenes de Compra por Número de Orden
+    ##  Obtener Órdenes de Compra por Número de Orden
     
     **Propósito**: Retorna órdenes de compra filtradas por número de orden específico.
     
-    ### ✅ Casos de uso:
+    ### [OK] Casos de uso:
     - Búsqueda de órdenes por número específico
     - Consulta de detalles de orden individual
     - Validación de existencia de orden
     - Verificar datos enriquecidos de una orden específica
     
-    ### 🔍 Filtrado:
+    ###  Filtrado:
     - **Campo**: `numero_orden` (coincidencia exacta)
     - **Tipo**: String - Número único de la orden
     - **Sensible a mayúsculas**: Sí
     
-    ### 📊 Información incluida:
+    ###  Información incluida:
     - Todos los campos de las órdenes que coincidan con el número
     - Datos enriquecidos de TVEC (si están disponibles)
     - ID del documento para referencia
     - Información del filtro aplicado
     
-    ### 📝 Ejemplo de uso:
+    ###  Ejemplo de uso:
     ```javascript
     const numeroOrden = "OC-2024-001";
     const response = await fetch(`/ordenes_compra_emprestito/numero/${numeroOrden}`);
@@ -12496,28 +12377,28 @@ async def obtener_ordenes_por_numero(numero_orden: str):
 @app.get("/ordenes_compra_emprestito/centro-gestor/{nombre_centro_gestor}", tags=["Gestión de Empréstito"])
 async def obtener_ordenes_por_centro_gestor(nombre_centro_gestor: str):
     """
-    ## 🏢 Obtener Órdenes de Compra por Centro Gestor
+    ##  Obtener Órdenes de Compra por Centro Gestor
     
     **Propósito**: Retorna órdenes de compra filtradas por nombre del centro gestor específico.
     
-    ### ✅ Casos de uso:
+    ### [OK] Casos de uso:
     - Consulta de órdenes por dependencia responsable
     - Reportes por entidad gestora
     - Dashboard por centro de responsabilidad
     - Análisis de distribución institucional de órdenes de compra
     
-    ### 🔍 Filtrado:
+    ###  Filtrado:
     - **Campo**: `nombre_centro_gestor` (coincidencia exacta)
     - **Tipo**: String - Nombre completo del centro gestor
     - **Sensible a mayúsculas**: Sí
     
-    ### 📊 Información incluida:
+    ###  Información incluida:
     - Todas las órdenes del centro gestor especificado
     - Datos enriquecidos de TVEC (si están disponibles)
     - Conteo de registros encontrados
     - Información del filtro aplicado
     
-    ### 📝 Ejemplo de uso:
+    ###  Ejemplo de uso:
     ```javascript
     const centroGestor = "Secretaría de Salud";
     const response = await fetch(`/ordenes_compra_emprestito/centro-gestor/${encodeURIComponent(centroGestor)}`);
@@ -12563,19 +12444,19 @@ async def obtener_ordenes_por_centro_gestor(nombre_centro_gestor: str):
 @app.post("/emprestito/obtener-procesos-secop", tags=["Gestión de Empréstito"])
 async def obtener_procesos_secop_completo_endpoint():
     """
-    ## 🔄 Obtener y Actualizar Datos Completos de SECOP para Todos los Procesos
+    ##  Obtener y Actualizar Datos Completos de SECOP para Todos los Procesos
     
     Endpoint para complementar los datos de TODA la colección "procesos_emprestito" con información 
     adicional desde la API de SECOP, sin alterar los campos existentes ni los nombres de variables.
     
-    ### ✅ Funcionalidades principales:
+    ### [OK] Funcionalidades principales:
     - **Procesamiento masivo**: Actualiza TODOS los procesos de la colección automáticamente
     - **Actualización selectiva**: Solo actualiza campos que han cambiado por proceso
     - **Preservación de datos**: Mantiene todos los campos existentes intactos
     - **Mapeo desde SECOP**: Obtiene datos adicionales usando la API oficial
     - **Sin parámetros**: Lee automáticamente todas las referencias_proceso de Firebase
     
-    ### 📊 Campos que se actualizan/complementan:
+    ###  Campos que se actualizan/complementan:
     **Campos básicos:**
     - `adjudicado` ← adjudicado (SECOP)
     - `fase` ← fase (SECOP)
@@ -12600,19 +12481,19 @@ async def obtener_procesos_secop_completo_endpoint():
     - `respuestas_externas` ← respuestas_externas (SECOP)
     - `conteo_respuestas_ofertas` ← conteo_de_respuestas_a_ofertas (SECOP)
     
-    ### 🔐 Validaciones:
+    ###  Validaciones:
     - Verificar que el proceso existe en la colección `procesos_emprestito`
     - Conectar con API de SECOP usando la referencia_proceso
     - Solo actualizar si hay cambios reales en los datos
     - Mantener estructura de variables sin cambios
     
-    ### 📝 Ejemplo de request:
+    ###  Ejemplo de request:
     ```http
     POST /emprestito/obtener-procesos-secop
     ```
     **No requiere parámetros - procesamiento automático**
     
-    ### ✅ Respuesta exitosa:
+    ### [OK] Respuesta exitosa:
     ```json
     {
         "success": true,
@@ -12649,7 +12530,7 @@ async def obtener_procesos_secop_completo_endpoint():
     }
     ```
     
-    ### 📋 Respuesta sin procesos:
+    ###  Respuesta sin procesos:
     ```json
     {
         "success": false,
@@ -12658,12 +12539,12 @@ async def obtener_procesos_secop_completo_endpoint():
     }
     ```
     
-    ### 🔍 API de SECOP utilizada:
+    ###  API de SECOP utilizada:
     - **Dominio**: www.datos.gov.co
     - **Dataset**: p6dx-8zbt (Procesos de contratación)
     - **Filtro**: nit_entidad='890399011' AND referencia_del_proceso='{referencia_proceso}'
     
-    ### ⏱️ Tiempo de procesamiento:
+    ### ⏱ Tiempo de procesamiento:
     - **Timeout extendido**: 5 minutos (300 segundos)
     - **Tiempo estimado**: ~10-15 segundos por proceso
     - **Progreso**: Se reporta en logs con ETA para procesos restantes
@@ -12711,26 +12592,26 @@ async def obtener_procesos_secop_completo_endpoint():
         )
 
 
-@app.get("/asignaciones-emprestito-banco-centro-gestor", tags=["Gestión de Empréstito"], summary="🔵 Obtener Asignaciones Banco-Centro Gestor")
+@app.get("/asignaciones-emprestito-banco-centro-gestor", tags=["Gestión de Empréstito"], summary=" Obtener Asignaciones Banco-Centro Gestor")
 async def get_all_asignaciones_emprestito_banco_centro_gestor():
     """
-    ## 🔵 GET | 📋 Consultas | Obtener Todas las Asignaciones de Empréstito Banco-Centro Gestor
+    ##  GET |  Consultas | Obtener Todas las Asignaciones de Empréstito Banco-Centro Gestor
     
     Endpoint para obtener todas las asignaciones de montos de empréstito por banco y centro gestor
     almacenadas en la colección `montos_emprestito_asignados_centro_gestor`.
     
-    ### ✅ Funcionalidades principales:
+    ### [OK] Funcionalidades principales:
     - **Listado completo**: Retorna todas las asignaciones registradas
     - **Datos completos**: Incluye todos los campos de cada asignación
     - **Metadatos**: Incluye ID del documento, conteo total y timestamp
     
-    ### 📊 Información incluida:
+    ###  Información incluida:
     - Todos los campos de la asignación
     - ID del documento para referencia
     - Conteo total de registros
     - Timestamp de la consulta
     
-    ### 🗄️ Campos principales esperados:
+    ###  Campos principales esperados:
     - **banco**: Nombre del banco financiador
     - **nombre_centro_gestor**: Nombre del centro gestor
     - **bp**: Código del proyecto presupuestal (BP)
@@ -12740,7 +12621,7 @@ async def get_all_asignaciones_emprestito_banco_centro_gestor():
     - **updated_at**: Fecha de última actualización
     - **data_hash**: Hash para control de duplicados
     
-    ### ✅ Respuesta exitosa (200):
+    ### [OK] Respuesta exitosa (200):
     ```json
     {
         "success": true,
@@ -12807,41 +12688,41 @@ async def get_all_asignaciones_emprestito_banco_centro_gestor():
 # ENDPOINTS DE FLUJO DE CAJA EMPRÉSTITO
 # ============================================================================
 
-@app.post("/emprestito/flujo-caja/cargar-excel", tags=["Gestión de Empréstito"], summary="🟢 Cargar Flujos de Caja Excel")
+@app.post("/emprestito/flujo-caja/cargar-excel", tags=["Gestión de Empréstito"], summary=" Cargar Flujos de Caja Excel")
 async def cargar_flujo_caja_excel(
     archivo_excel: UploadFile = File(..., description="Archivo Excel con flujos de caja"),
     update_mode: str = Form(default="merge", description="Modo de actualización: merge, replace, append")
 ):
     """
-    ## � POST | �📊 Carga de Archivos | Cargar Flujos de Caja desde Excel
+    ##  POST |  Carga de Archivos | Cargar Flujos de Caja desde Excel
     
     Endpoint para procesar archivos Excel con información de flujos de caja de proyectos
     y cargarlos en la colección "flujo_caja_emprestito".
     
-    ### 📁 Archivo Excel esperado:
+    ###  Archivo Excel esperado:
     - **Hoja**: "CONTRATOS - Seguimiento" 
     - **Columnas requeridas**: Responsable, Organismo, Banco, BP Proyecto, Descripcion BP
     - **Columnas de datos**: Todas las columnas que contengan "Desembolso" en su nombre
     - **Formato de fechas**: Las columnas de desembolso deben contener fechas como jul-25, ago-25, etc.
     
-    ### 🔧 Modos de actualización:
+    ###  Modos de actualización:
     - **merge**: Actualiza existentes y crea nuevos (por defecto)
     - **replace**: Reemplaza toda la colección
     - **append**: Solo agrega nuevos registros
     
-    ### 📊 Procesamiento:
+    ###  Procesamiento:
     1. Lee datos del Excel
     2. Separa columnas de Desembolso normal y REAL
     3. Convierte a formato largo (un registro por mes)
     4. Crea campo Periodo en formato fecha
     5. Guarda en Firebase con ID único por organismo_banco_mes
     
-    ### 🎯 Cómo usar:
+    ###  Cómo usar:
     1. Selecciona archivo .xlsx con formato correcto
     2. Elige modo de actualización
     3. Haz clic en "Execute"
     
-    ### ✅ Validaciones:
+    ### [OK] Validaciones:
     - Solo archivos .xlsx
     - Columnas Organismo y Banco requeridas
     - Al menos una columna de Desembolso
@@ -12902,7 +12783,7 @@ async def cargar_flujo_caja_excel(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
-@app.get("/emprestito/flujo-caja/all", tags=["Gestión de Empréstito"], summary="🔵 Flujos de Caja")
+@app.get("/emprestito/flujo-caja/all", tags=["Gestión de Empréstito"], summary=" Flujos de Caja")
 async def get_flujos_caja_all(
     responsable: Optional[str] = Query(None, description="Filtrar por responsable específico"),
     organismo: Optional[str] = Query(None, description="Filtrar por organismo específico"),
@@ -12914,18 +12795,18 @@ async def get_flujos_caja_all(
     limit: Optional[int] = Query(None, ge=1, le=1000, description="Límite de registros")
 ):
     """
-    ## � GET | �📊 Consultas con Filtros | Obtener Todos los Flujos de Caja
+    ##  GET |  Consultas con Filtros | Obtener Todos los Flujos de Caja
     
     Endpoint para consultar flujos de caja almacenados en la colección "flujo_caja_emprestito".
     
-    ### ✅ Casos de uso:
+    ### [OK] Casos de uso:
     - Consultar flujos de caja por organismo o banco
     - Filtrar por períodos específicos
     - Analizar desembolsos planeados vs reales
     - Generar reportes de flujo de caja
     - Exportar datos para dashboards
     
-    ### 🔍 Filtros disponibles:
+    ###  Filtros disponibles:
     - **responsable**: Filtrar por responsable específico
     - **organismo**: Filtrar por organismo específico
     - **banco**: Filtrar por banco específico
@@ -12935,7 +12816,7 @@ async def get_flujos_caja_all(
     - **periodo_hasta**: Hasta fecha específica (YYYY-MM-DD)
     - **limit**: Limitar número de resultados (máx: 1000)
     
-    ### 📊 Información incluida:
+    ###  Información incluida:
     - Responsable, organismo, banco y BP proyecto
     - Descripción del BP proyecto
     - Mes y período en formato fecha
@@ -12943,7 +12824,7 @@ async def get_flujos_caja_all(
     - Columna origen del Excel
     - ID único del registro y metadatos de archivo origen
     
-    ### 📝 Ejemplo de uso:
+    ###  Ejemplo de uso:
     ```javascript
     // Obtener todos los flujos
     const response = await fetch('/emprestito/flujo-caja/all');
@@ -12955,7 +12836,7 @@ async def get_flujos_caja_all(
     const response = await fetch('/emprestito/flujo-caja/all?periodo_desde=2025-07-01&periodo_hasta=2025-12-31');
     ```
     
-    ### 💡 Características:
+    ###  Características:
     - **Ordenamiento**: Por período (cronológico)
     - **Resumen**: Estadísticas agregadas incluidas
     - **Metadatos**: Organismos, bancos y meses únicos
@@ -13015,21 +12896,21 @@ async def get_flujos_caja_all(
             detail=f"Error procesando consulta de flujos de caja: {str(e)}"
         )
 
-@app.post("/emprestito/crear-tabla-proyecciones", tags=["Gestión de Empréstito"], summary="🟢 Crear Tabla Proyecciones")
+@app.post("/emprestito/crear-tabla-proyecciones", tags=["Gestión de Empréstito"], summary=" Crear Tabla Proyecciones")
 async def crear_tabla_proyecciones_endpoint():
     """
-    ## � POST | 🔗 Integración Externa | Crear Tabla de Proyecciones desde Google Sheets
+    ##  POST |  Integración Externa | Crear Tabla de Proyecciones desde Google Sheets
     
     **Propósito**: Lee datos de Google Sheets específico y los carga en la colección "proyecciones_emprestito".
     
-    ### 🔧 Proceso automático:
+    ###  Proceso automático:
     1. **Lee datos** desde Google Sheets específico (Publicados Emprestitos nuevo)
     2. **Mapea campos** según especificaciones definidas
     3. **Procesa BP** agregando prefijo "BP" automáticamente
     4. **Guarda en Firebase** en colección "proyecciones_emprestito"
     5. **Elimina temporal** y registra fecha de actualización
     
-    ### 📋 Mapeo de campos:
+    ###  Mapeo de campos:
     - `Item` → `item`
     - `Nro de Proceso` → `referencia_proceso`
     - `NOMBRE ABREVIADO` → `nombre_organismo_reducido`
@@ -13044,7 +12925,7 @@ async def crear_tabla_proyecciones_endpoint():
     
     **NOTA**: La columna en Google Sheets ahora se llama "valor_proyectado" directamente
     
-    ### ✅ Características:
+    ### [OK] Características:
     - **Reemplazo completo**: Elimina datos existentes y carga nuevos
     - **Validación automática**: Verifica campos obligatorios
     - **Manejo de errores**: Reporta filas con problemas
@@ -13053,13 +12934,13 @@ async def crear_tabla_proyecciones_endpoint():
     - **URL fija**: Usa Google Sheets predefinido
     - **Service Account**: Autenticación con service account configurado
     
-    ### 🔐 Autenticación:
+    ###  Autenticación:
     - **Service Account**: `unidad-cumplimiento-sheets@unidad-cumplimiento.iam.gserviceaccount.com`
     - **Permisos**: Debe tener acceso de lectura al Google Sheets configurado
     - **Scopes**: `spreadsheets.readonly` y `drive.readonly`
     - **Credenciales**: Configuradas en el sistema usando ADC o variable de entorno
     
-    ### 📝 Ejemplo de respuesta:
+    ###  Ejemplo de respuesta:
     ```json
     {
         "success": true,
@@ -13073,7 +12954,7 @@ async def crear_tabla_proyecciones_endpoint():
     }
     ```
     
-    ### 💡 Notas importantes:
+    ###  Notas importantes:
     - **URL fija**: Usa Google Sheets predefinido internamente
     - **Automático**: No requiere parámetros de entrada
     - **Destructivo**: Reemplaza todos los datos existentes
@@ -13139,7 +13020,7 @@ async def crear_tabla_proyecciones_endpoint():
             detail=f"Error procesando creación de tabla de proyecciones: {str(e)}"
         )
 
-@app.get("/emprestito/leer-tabla-proyecciones", tags=["Gestión de Empréstito"], summary="🔵 Tabla de Proyecciones")
+@app.get("/emprestito/leer-tabla-proyecciones", tags=["Gestión de Empréstito"], summary=" Tabla de Proyecciones")
 async def leer_tabla_proyecciones_endpoint(
     sheet_url: Optional[str] = Query(
         None, 
@@ -13151,13 +13032,13 @@ async def leer_tabla_proyecciones_endpoint(
     )
 ):
     """
-    ## 📋 GET | 📋 Listados | Leer Tabla de Proyecciones de Empréstito
+    ##  GET |  Listados | Leer Tabla de Proyecciones de Empréstito
     
     **Propósito**: 
     - **Sin parámetros**: Obtiene todos los registros de la colección "proyecciones_emprestito".
     - **Con sheet_url**: Detecta registros de Google Sheets que NO están en procesos_emprestito.
     
-    ### ✅ Casos de uso:
+    ### [OK] Casos de uso:
     
     #### Modo 1: Lectura de BD (sin parámetros)
     - Consultar proyecciones cargadas desde Google Sheets
@@ -13172,24 +13053,24 @@ async def leer_tabla_proyecciones_endpoint(
     - **Detección de pendientes**: Lista proyecciones que necesitan ser guardadas como procesos
     - **Control de calidad**: Asegura que todos los procesos válidos estén registrados
     
-    ### 🔍 Condiciones para Modo 2 (Registros devueltos):
-    1. ✅ Tienen valor en columna "Nro de Proceso" (no vacío, no null)
-    2. ❌ El valor de "Nro de Proceso" NO existe en la colección `procesos_emprestito` con campo `referencia_proceso`
+    ###  Condiciones para Modo 2 (Registros devueltos):
+    1. [OK] Tienen valor en columna "Nro de Proceso" (no vacío, no null)
+    2. [ERROR] El valor de "Nro de Proceso" NO existe en la colección `procesos_emprestito` con campo `referencia_proceso`
     
-    ### 📊 Información incluida (Modo 1 - Sin sheet_url):
+    ###  Información incluida (Modo 1 - Sin sheet_url):
     - **Datos mapeados**: Todos los campos según mapeo definido
     - **Metadatos**: Fecha de carga, fuente, fila origen
     - **Timestamps**: Fecha de guardado y última actualización
     - **ID único**: Identificador de Firebase para cada registro
     - **Estadísticas**: Información de la última carga realizada
     
-    ### 🔍 Información incluida (Modo 2 - Con sheet_url):
+    ###  Información incluida (Modo 2 - Con sheet_url):
     - **Registros no guardados**: Solo los que tienen Nro de Proceso válido pero NO existen en procesos_emprestito
     - **Comparación precisa**: Verifica contra la colección procesos_emprestito
     - **Metadata de comparación**: Estadísticas sobre registros encontrados/no encontrados
     - **Optimización**: Usa mapas en memoria para comparación rápida O(1)
     
-    ### 🔍 Campos de respuesta:
+    ###  Campos de respuesta:
     - `item`: Número de ítem
     - `referencia_proceso`: Número de proceso (Nro de Proceso de Sheets)
     - `nombre_organismo_reducido`: Nombre abreviado del organismo
@@ -13206,7 +13087,7 @@ async def leer_tabla_proyecciones_endpoint(
     
     **NOTA**: NO se incluyen campos duplicados como "VALOR TOTAL" o "Valor Adjudicado"
     
-    ### 📝 Ejemplos de uso:
+    ###  Ejemplos de uso:
     
     #### Ejemplo 1: Leer todos los registros guardados en proyecciones_emprestito
     ```javascript
@@ -13242,7 +13123,7 @@ async def leer_tabla_proyecciones_endpoint(
     }
     ```
     
-    ### 💡 Características:
+    ###  Características:
     - **Ordenamiento** (Modo 1): Por fecha de carga (más recientes primero)
     - **Filtrado inteligente** (Modo 2): Solo registros con Nro Proceso válido que NO están en procesos_emprestito
     - **Validación estricta**: Verifica que referencia_proceso no sea null, vacío o solo espacios
@@ -13346,7 +13227,7 @@ async def endpoint_proyecciones_sin_proceso():
 # ENDPOINTS PUT - MODIFICAR DATOS EN FIREBASE
 # ============================================================================
 
-@app.put("/emprestito/modificar-orden-compra", tags=["Gestión de Empréstito"], summary="🟡 Modificar Orden de Compra")
+@app.put("/emprestito/modificar-orden-compra", tags=["Gestión de Empréstito"], summary=" Modificar Orden de Compra")
 async def modificar_orden_compra(
     numero_orden: str = Query(..., description="Número de orden a modificar (REQUERIDO)"),
     ano_orden: Optional[int] = Query(None, description="[Opcional] Año de la orden"),
@@ -13384,12 +13265,12 @@ async def modificar_orden_compra(
     datos_json: Optional[str] = Query(None, description="[Opcional] JSON con campos adicionales a actualizar"),
 ):
     """
-    ## 🟡 PUT | ✏️ Modificar | Modificar Orden de Compra en Firebase
+    ##  PUT |  Modificar | Modificar Orden de Compra en Firebase
     
     Endpoint para modificar un registro en la colección `ordenes_compra_emprestito` 
     usando el campo `numero_orden` como identificador único.
     
-    ### ✅ Funcionalidades principales:
+    ### [OK] Funcionalidades principales:
     - **Actualización selectiva**: Solo se modifican los campos especificados
     - **Preservación de datos**: Los campos no incluidos mantienen sus valores originales
     - **Búsqueda por numero_orden**: Identifica el documento automáticamente
@@ -13397,7 +13278,7 @@ async def modificar_orden_compra(
     - **Múltiples formas de entrada**: Query parameters para facilitar pruebas en Swagger
     - **Respuesta clara**: Informa el estado de la operación
     
-    ### ⚙️ Parámetros disponibles (todos opcionales excepto numero_orden):
+    ###  Parámetros disponibles (todos opcionales excepto numero_orden):
     - `numero_orden` (string, **REQUERIDO**): El número de orden a modificar
     - `ano_orden` (int, opcional): Año de la orden
     - `bp` (string, opcional): BP
@@ -13433,7 +13314,7 @@ async def modificar_orden_compra(
     - `valor_proyectado` (float, opcional): Valor proyectado
     - `datos_json` (string, opcional): JSON con campos adicionales a actualizar
     
-    ### 📝 Ejemplos de uso en Swagger:
+    ###  Ejemplos de uso en Swagger:
     ```
     numero_orden: OC-2024-001
     estado: pagado
@@ -13446,7 +13327,7 @@ async def modificar_orden_compra(
     datos_json: {"campo_adicional": "valor", "otro_campo": 123}
     ```
     
-    ### ✅ Respuesta exitosa (200):
+    ### [OK] Respuesta exitosa (200):
     ```json
     {
         "success": true,
@@ -13457,7 +13338,7 @@ async def modificar_orden_compra(
     }
     ```
     
-    ### ❌ Respuesta de error (404):
+    ### [ERROR] Respuesta de error (404):
     ```json
     {
         "success": false,
@@ -13467,7 +13348,7 @@ async def modificar_orden_compra(
     }
     ```
     
-    ### 💡 Notas importantes:
+    ###  Notas importantes:
     - El `numero_orden` es el identificador único
     - Los campos no especificados NO se modifican
     - La actualización es parcial (solo lo que envíes se modifica)
@@ -13607,7 +13488,7 @@ async def modificar_orden_compra(
         )
 
 
-@app.put("/emprestito/modificar-proceso", tags=["Gestión de Empréstito"], summary="🟡 Modificar Proceso de Empréstito")
+@app.put("/emprestito/modificar-proceso", tags=["Gestión de Empréstito"], summary=" Modificar Proceso de Empréstito")
 async def modificar_proceso(
     referencia_proceso: str = Query(..., description="Referencia del proceso a modificar (REQUERIDO)"),
     adjudicado: Optional[str] = Query(None, description="[Opcional] Adjudicado"),
@@ -13649,12 +13530,12 @@ async def modificar_proceso(
     datos_json: Optional[str] = Query(None, description="[Opcional] JSON con campos adicionales a actualizar"),
 ):
     """
-    ## 🟡 PUT | ✏️ Modificar | Modificar Proceso de Empréstito en Firebase
+    ##  PUT |  Modificar | Modificar Proceso de Empréstito en Firebase
     
     Endpoint para modificar un registro en la colección `procesos_emprestito` 
     usando el campo `referencia_proceso` como identificador único.
     
-    ### ✅ Funcionalidades principales:
+    ### [OK] Funcionalidades principales:
     - **Actualización selectiva**: Solo se modifican los campos especificados
     - **Preservación de datos**: Los campos no incluidos mantienen sus valores originales
     - **Búsqueda por referencia_proceso**: Identifica el documento automáticamente
@@ -13662,7 +13543,7 @@ async def modificar_proceso(
     - **Múltiples formas de entrada**: Query parameters para facilitar pruebas en Swagger
     - **Respuesta clara**: Informa el estado de la operación
     
-    ### ⚙️ Parámetros disponibles (todos opcionales excepto referencia_proceso):
+    ###  Parámetros disponibles (todos opcionales excepto referencia_proceso):
     - `referencia_proceso` (string, **REQUERIDO**): La referencia del proceso a modificar
     - `adjudicado` (string, opcional): Adjudicado
     - `bp` (string, opcional): BP
@@ -13702,7 +13583,7 @@ async def modificar_proceso(
     - `visualizaciones_proceso` (int, opcional): Visualizaciones del proceso
     - `datos_json` (string, opcional): JSON con campos adicionales a actualizar
     
-    ### 📝 Ejemplos de uso en Swagger:
+    ###  Ejemplos de uso en Swagger:
     ```
     referencia_proceso: PROC-SALUD-2024-001
     estado_proceso: ejecutado
@@ -13711,7 +13592,7 @@ async def modificar_proceso(
     observaciones: Proceso completado exitosamente
     ```
     
-    ### ✅ Respuesta exitosa (200):
+    ### [OK] Respuesta exitosa (200):
     ```json
     {
         "success": true,
@@ -13722,7 +13603,7 @@ async def modificar_proceso(
     }
     ```
     
-    ### ❌ Respuesta de error (404):
+    ### [ERROR] Respuesta de error (404):
     ```json
     {
         "success": false,
@@ -13732,7 +13613,7 @@ async def modificar_proceso(
     }
     ```
     
-    ### 💡 Notas importantes:
+    ###  Notas importantes:
     - La `referencia_proceso` es el identificador único
     - Los campos no especificados NO se modifican
     - La actualización es parcial (solo lo que envíes se modifica)
@@ -13877,7 +13758,7 @@ async def modificar_proceso(
         )
 
 
-@app.put("/emprestito/modificar-contrato", tags=["Gestión de Empréstito"], summary="🟡 Modificar Contrato de Empréstito")
+@app.put("/emprestito/modificar-contrato", tags=["Gestión de Empréstito"], summary=" Modificar Contrato de Empréstito")
 async def modificar_contrato(
     referencia_contrato: str = Query(..., description="Referencia del contrato a modificar (REQUERIDO)"),
     _dataset_source: Optional[str] = Query(None, description="[Opcional] Fuente del dataset"),
@@ -13916,12 +13797,12 @@ async def modificar_contrato(
     datos_json: Optional[str] = Query(None, description="[Opcional] JSON con campos adicionales a actualizar"),
 ):
     """
-    ## 🟡 PUT | ✏️ Modificar | Modificar Contrato de Empréstito en Firebase
+    ##  PUT |  Modificar | Modificar Contrato de Empréstito en Firebase
     
     Endpoint para modificar un registro en la colección `contratos_emprestito` 
     usando el campo `referencia_contrato` como identificador único.
     
-    ### ✅ Funcionalidades principales:
+    ### [OK] Funcionalidades principales:
     - **Actualización selectiva**: Solo se modifican los campos especificados
     - **Preservación de datos**: Los campos no incluidos mantienen sus valores originales
     - **Búsqueda por referencia_contrato**: Identifica el documento automáticamente
@@ -13929,7 +13810,7 @@ async def modificar_contrato(
     - **Múltiples formas de entrada**: Query parameters para facilitar pruebas en Swagger
     - **Respuesta clara**: Informa el estado de la operación
     
-    ### ⚙️ Parámetros disponibles (todos opcionales excepto referencia_contrato):
+    ###  Parámetros disponibles (todos opcionales excepto referencia_contrato):
     - `referencia_contrato` (string, **REQUERIDO**): La referencia del contrato a modificar
     - `_dataset_source` (string, opcional): Fuente del dataset
     - `banco` (string, opcional): Banco
@@ -13966,7 +13847,7 @@ async def modificar_contrato(
     - `version_esquema` (string, opcional): Versión del esquema
     - `datos_json` (string, opcional): JSON con campos adicionales a actualizar
     
-    ### 📝 Ejemplos de uso en Swagger:
+    ###  Ejemplos de uso en Swagger:
     ```
     referencia_contrato: CONT-SALUD-003-2024
     estado_contrato: ejecutado
@@ -13975,7 +13856,7 @@ async def modificar_contrato(
     observaciones: Contrato completado
     ```
     
-    ### ✅ Respuesta exitosa (200):
+    ### [OK] Respuesta exitosa (200):
     ```json
     {
         "success": true,
@@ -13986,7 +13867,7 @@ async def modificar_contrato(
     }
     ```
     
-    ### ❌ Respuesta de error (404):
+    ### [ERROR] Respuesta de error (404):
     ```json
     {
         "success": false,
@@ -13996,7 +13877,7 @@ async def modificar_contrato(
     }
     ```
     
-    ### 💡 Notas importantes:
+    ###  Notas importantes:
     - La `referencia_contrato` es el identificador único
     - Los campos no especificados NO se modifican
     - La actualización es parcial (solo lo que envíes se modifica)
@@ -14148,27 +14029,27 @@ if AUTH_SYSTEM_AVAILABLE:
     try:
         from api.routers.auth_admin import router as auth_admin_router
         app.include_router(auth_admin_router)
-        print("✅ Auth admin router included successfully")
+        logger.info("Auth admin router included successfully")
     except Exception as e:
-        print(f"⚠️ Warning: Could not include auth admin router: {e}")
+        logger.warning(f" Warning: Could not include auth admin router: {e}")
 else:
-    print("⚠️ Auth admin router not included - Auth system not available")
+    logger.warning(" Auth admin router not included - Auth system not available")
 
 # Incluir router de calidad de datos de empréstito
 try:
     from api.routers.emprestito_quality_router import router as emprestito_quality_router
     app.include_router(emprestito_quality_router)
-    print("✅ Emprestito quality router included successfully")
+    logger.info("Emprestito quality router included successfully")
 except Exception as e:
-    print(f"⚠️ Warning: Could not include emprestito quality router: {e}")
+    logger.warning(f" Warning: Could not include emprestito quality router: {e}")
 
 # Incluir router de Captura 360
 try:
     from api.routers.captura_360_router import router as captura_360_router
     app.include_router(captura_360_router)
-    print("✅ Captura 360 router included successfully")
+    logger.info("Captura 360 router included successfully")
 except Exception as e:
-    print(f"⚠️ Warning: Could not include captura 360 router: {e}")
+    logger.warning(f" Warning: Could not include captura 360 router: {e}")
 
 # ============================================================================
 

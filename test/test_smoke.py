@@ -121,7 +121,7 @@ class TestCacheThreadSafety:
     """Verify the bounded, thread-safe in-memory cache."""
 
     def test_cache_set_and_get(self):
-        from main import set_in_cache, get_from_cache, get_cache_key
+        from api.core.cache import set_in_cache, get_from_cache, get_cache_key
 
         key = get_cache_key("test_fn", "arg1")
         set_in_cache(key, {"data": 42})
@@ -130,13 +130,13 @@ class TestCacheThreadSafety:
         assert value == {"data": 42}
 
     def test_cache_expiry(self):
-        from main import set_in_cache, get_from_cache, get_cache_key, _cache_timestamps
+        from api.core.cache import set_in_cache, get_from_cache, get_cache_key, _cache_timestamps
+        from api.core.cache import _cache_lock
         from datetime import datetime, timedelta
 
         key = get_cache_key("test_expiry", "arg")
         set_in_cache(key, "old_value")
         # Fake the timestamp to be old
-        from main import _cache_lock
         with _cache_lock:
             _cache_timestamps[key] = datetime.now() - timedelta(seconds=600)
 
@@ -144,7 +144,7 @@ class TestCacheThreadSafety:
         assert hit is False
 
     def test_cache_bounded_size(self):
-        from main import set_in_cache, _simple_cache, _CACHE_MAX_SIZE, _cache_lock
+        from api.core.cache import set_in_cache, _simple_cache, _CACHE_MAX_SIZE, _cache_lock
 
         # Fill cache beyond limit
         for i in range(_CACHE_MAX_SIZE + 50):
@@ -155,7 +155,7 @@ class TestCacheThreadSafety:
 
     def test_cache_concurrent_writes(self):
         """Concurrent writes must not raise exceptions."""
-        from main import set_in_cache, get_from_cache
+        from api.core.cache import set_in_cache, get_from_cache
 
         errors = []
 
