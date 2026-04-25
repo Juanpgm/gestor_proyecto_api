@@ -210,7 +210,7 @@ except Exception as e:
     get_firestore_client = lambda: None
 
 # Fail-fast: validate critical environment variables at startup
-_required_env_vars = ["FIREBASE_SERVICE_ACCOUNT_KEY", "SECRET_KEY"]
+_required_env_vars = ["FIREBASE_SERVICE_ACCOUNT_KEY"]
 _missing_vars = [v for v in _required_env_vars if not os.getenv(v)]
 if _missing_vars and (os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("PRODUCTION") or os.getenv("ENVIRONMENT") == "production"):
     raise RuntimeError(f"Missing required environment variables: {_missing_vars}")
