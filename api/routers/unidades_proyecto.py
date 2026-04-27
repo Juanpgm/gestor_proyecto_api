@@ -4446,3 +4446,191 @@ async def leer_links_secop_intervenciones(
             status_code=500,
             detail=f"Error consultando intervenciones_unidades_proyecto_links: {str(e)}",
         )
+
+
+# ============================================================================
+# ENDPOINT: GEOMETRY — GeoJSON FeatureCollection
+# ============================================================================
+
+
+@router.get(
+    "/unidades-proyecto/geometry",
+    tags=["Unidades de Proyecto"],
+    summary="GET | Geometrías GeoJSON de Unidades de Proyecto",
+)
+@optional_rate_limit("60/minute")
+async def get_geometry_unidades_proyecto(
+    request: Request,
+    upid: Optional[str] = Query(None, description="Filtrar por UPID específico"),
+    nombre_centro_gestor: Optional[str] = Query(None, description="Filtrar por centro gestor"),
+    estado: Optional[str] = Query(None, description="Filtrar por estado"),
+    tipo_intervencion: Optional[str] = Query(None, description="Filtrar por tipo de intervención"),
+    clase_up: Optional[str] = Query(None, description="Filtrar por clase UP"),
+    frente_activo: Optional[str] = Query(None, description="Filtrar por frente activo"),
+    limit: Optional[int] = Query(None, description="Limitar número de features"),
+):
+    """
+    ## GET | Geometrías GeoJSON de Unidades de Proyecto
+
+    Retorna un GeoJSON FeatureCollection con las geometrías de las unidades de proyecto.
+    Soporta filtros opcionales incluyendo `frente_activo`.
+    """
+    if not SCRIPTS_AVAILABLE or get_unidades_proyecto_geometry is None:
+        raise HTTPException(status_code=503, detail="Scripts de unidades proyecto no disponibles")
+
+    filters: Dict[str, Any] = {}
+    if upid:
+        filters["upid"] = upid
+    if nombre_centro_gestor:
+        filters["nombre_centro_gestor"] = nombre_centro_gestor
+    if estado:
+        filters["estado"] = estado
+    if tipo_intervencion:
+        filters["tipo_intervencion"] = tipo_intervencion
+    if clase_up:
+        filters["clase_up"] = clase_up
+    if frente_activo:
+        filters["frente_activo"] = frente_activo
+
+    try:
+        result = await get_unidades_proyecto_geometry(filters=filters or None)
+
+        features = result.get("features", [])
+        if limit and limit > 0:
+            features = features[:limit]
+
+        return create_utf8_response(
+            {
+                "type": "FeatureCollection",
+                "features": features,
+                "total_features": len(features),
+                "filtros_aplicados": filters,
+            }
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error obteniendo geometrías: {str(e)}")
+
+
+# ============================================================================
+# ENDPOINT: ATTRIBUTES — Tabla de atributos
+# ============================================================================
+
+
+@router.get(
+    "/unidades-proyecto/attributes",
+    tags=["Unidades de Proyecto"],
+    summary="GET | Atributos tabulares de Unidades de Proyecto",
+)
+@optional_rate_limit("60/minute")
+async def get_attributes_unidades_proyecto(
+    request: Request,
+    upid: Optional[str] = Query(None, description="Filtrar por UPID específico"),
+    nombre_centro_gestor: Optional[str] = Query(None, description="Filtrar por centro gestor"),
+    estado: Optional[str] = Query(None, description="Filtrar por estado"),
+    tipo_intervencion: Optional[str] = Query(None, description="Filtrar por tipo de intervención"),
+    clase_up: Optional[str] = Query(None, description="Filtrar por clase UP"),
+    frente_activo: Optional[str] = Query(None, description="Filtrar por frente activo"),
+    limit: Optional[int] = Query(None, description="Limitar número de registros"),
+    offset: Optional[int] = Query(None, description="Número de registros a omitir"),
+):
+    """
+    ## GET | Atributos tabulares de Unidades de Proyecto
+
+    Retorna los atributos tabulares de las unidades de proyecto.
+    Soporta filtros opcionales incluyendo `frente_activo`.
+    """
+    if not SCRIPTS_AVAILABLE or get_unidades_proyecto_attributes is None:
+        raise HTTPException(status_code=503, detail="Scripts de unidades proyecto no disponibles")
+
+    filters: Dict[str, Any] = {}
+    if upid:
+        filters["upid"] = upid
+    if nombre_centro_gestor:
+        filters["nombre_centro_gestor"] = nombre_centro_gestor
+    if estado:
+        filters["estado"] = estado
+    if tipo_intervencion:
+        filters["tipo_intervencion"] = tipo_intervencion
+    if clase_up:
+        filters["clase_up"] = clase_up
+    if frente_activo:
+        filters["frente_activo"] = frente_activo
+
+    try:
+        result = await get_unidades_proyecto_attributes(
+            filters=filters or None,
+            limit=limit,
+            offset=offset,
+        )
+
+        data = result.get("data", [])
+        return create_utf8_response(
+            {
+                "success": True,
+                "data": data,
+                "count": len(data),
+                "filtros_aplicados": filters,
+            }
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error obteniendo atributos: {str(e)}")
+
+
+# ============================================================================
+# ENDPOINT: FILTERS — Opciones de filtros dinámicos
+# ============================================================================
+
+_FILTERABLE_FIELDS = [
+    "estado",
+    "tipo_intervencion",
+    "clase_up",
+    "nombre_centro_gestor",
+    "frente_activo",
+    "comuna_corregimiento",
+    "barrio_vereda",
+]
+
+
+@router.get(
+    "/unidades-proyecto/filters",
+    tags=["Unidades de Proyecto"],
+    summary="GET | Opciones de filtros disponibles",
+)
+@optional_rate_limit("60/minute")
+async def get_filters_unidades_proyecto(
+    request: Request,
+    field: Optional[str] = Query(
+        None,
+        description="Campo específico para obtener valores únicos",
+        enum=_FILTERABLE_FIELDS,
+    ),
+    limit: Optional[int] = Query(None, description="Limitar valores únicos por campo"),
+):
+    """
+    ## GET | Opciones de filtros disponibles para Unidades de Proyecto
+
+    Retorna los valores únicos disponibles para usar como filtros.
+    Si se especifica `field`, retorna solo los valores de ese campo.
+    Siempre incluye `frentes_activos` en el resultado completo.
+    """
+    if not SCRIPTS_AVAILABLE or get_filter_options is None:
+        raise HTTPException(status_code=503, detail="Scripts de unidades proyecto no disponibles")
+
+    try:
+        result = await get_filter_options(field=field, limit=limit)
+
+        filters = result.get("filters", result.get("data", {}))
+
+        # Garantizar que frente_activo esté presente en el resultado completo
+        if field is None and "frentes_activos" not in filters and "frente_activo" not in filters:
+            filters["frentes_activos"] = []
+
+        return create_utf8_response(
+            {
+                "success": True,
+                "filters": filters,
+                "field_requested": field,
+            }
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error obteniendo opciones de filtros: {str(e)}")

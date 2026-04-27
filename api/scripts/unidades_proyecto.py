@@ -160,6 +160,7 @@ def transformar_documento_a_unidad_con_intervenciones(doc_data: Dict[str, Any]) 
         'has_geometry': doc_data.get('has_geometry', False),
         'has_valid_geometry': doc_data.get('has_valid_geometry', False),
         'centros_gravedad': doc_data.get('centros_gravedad', False),
+        'frente_activo': doc_data.get('frente_activo'),
         'n_intervenciones': 1,
         'intervenciones': [intervencion]
     }
