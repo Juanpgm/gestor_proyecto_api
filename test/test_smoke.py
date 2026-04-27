@@ -104,7 +104,7 @@ class TestProtectedEndpoints:
         mock_db = MagicMock()
         mock_db.collection.return_value = mock_query
 
-        with patch("main.get_firestore_client", return_value=mock_db), \
+        with patch("api.routers.unidades_proyecto.get_firestore_client", return_value=mock_db), \
              patch("database.firebase_config.get_firestore_client", return_value=mock_db):
             resp = getattr(client, method)(path)
 

@@ -3,17 +3,20 @@ Scripts simples para manejo de Unidades de Proyecto - VERSIÓN SIMPLIFICADA
 Sistema de cache simplificado y optimizado
 """
 
+import logging
 import os
 import time
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Union
 from database.firebase_config import get_firestore_client
 
-# ✅ PROGRAMACIÓN FUNCIONAL: Sin cache global que cause problemas de estado
-# ✅ Sin variables mutables globales que persistan datos entre requests
-# ✅ Cada request es independiente y sin efectos colaterales
+logger = logging.getLogger(__name__)
 
-print("� Módulo unidades_proyecto inicializado sin cache (programación funcional)")
+# PROGRAMACION FUNCIONAL: Sin cache global que cause problemas de estado
+# Sin variables mutables globales que persistan datos entre requests
+# Cada request es independiente y sin efectos colaterales
+
+logger.debug("Modulo unidades_proyecto inicializado sin cache (programacion funcional)")
 
 
 def _convert_to_int(value) -> Optional[int]:
@@ -425,7 +428,7 @@ def apply_client_side_filters(data: List[Dict[str, Any]], filters: Optional[Dict
         return filtered_data
         
     except Exception as e:
-        print(f"⚠️ WARNING: Error aplicando filtros: {str(e)}")
+        logger.warning(f"Error aplicando filtros: {str(e)}")
         return data  # Devolver datos originales si hay error en filtros
 
 
@@ -496,7 +499,7 @@ async def get_all_unidades_proyecto_simple(limit: Optional[int] = None) -> Dict[
     Sin cache ni optimizaciones complejas, para NextJS
     """
     try:
-        print(f"🔍 DEBUG: get_all_unidades_proyecto_simple llamada con limit={limit}")
+        logger.debug(f"get_all_unidades_proyecto_simple llamada con limit={limit}")
         
         db = get_firestore_client()
         if db is None:
@@ -512,10 +515,10 @@ async def get_all_unidades_proyecto_simple(limit: Optional[int] = None) -> Dict[
         
         # Aplicar límite solo si se especifica explícitamente
         if limit is not None and limit > 0:
-            print(f"🔍 DEBUG: Aplicando límite de {limit} documentos")
+            logger.debug(f"Aplicando limite de {limit} documentos")
             query = collection_ref.limit(limit)
         else:
-            print(f"🔍 DEBUG: SIN LÍMITE - obteniendo TODOS los documentos")
+            logger.debug("SIN LIMITE - obteniendo TODOS los documentos")
             query = collection_ref  # Sin límite = todos los documentos
         
         # Ejecutar consulta
@@ -531,9 +534,9 @@ async def get_all_unidades_proyecto_simple(limit: Optional[int] = None) -> Dict[
             
             # Log cada 100 documentos para mostrar progreso
             if doc_count % 100 == 0:
-                print(f"🔍 DEBUG: Procesados {doc_count} documentos...")
-        
-        print(f"🔍 DEBUG: TOTAL procesados: {len(data)} documentos")
+                logger.debug(f"Procesados {doc_count} documentos...")
+
+        logger.debug(f"TOTAL procesados: {len(data)} documentos")
         
         return {
             "success": True,
@@ -543,9 +546,8 @@ async def get_all_unidades_proyecto_simple(limit: Optional[int] = None) -> Dict[
         }
         
     except Exception as e:
-        print(f"❌ ERROR en get_all_unidades_proyecto_simple: {str(e)}")
         import traceback
-        print(f"❌ TRACEBACK: {traceback.format_exc()}")
+        logger.error(f"Error en get_all_unidades_proyecto_simple: {str(e)}\n{traceback.format_exc()}")
         
         return {
             "success": False,
@@ -573,7 +575,7 @@ def extraer_geometria_exhaustiva(doc_data: Dict[str, Any], upid: str, debug: boo
     import json
     
     if debug:
-        print(f"\n🔍 Extrayendo geometría para {upid}")
+        logger.debug(f"Extrayendo geometria para {upid}")
     
     # 1. Buscar en diferentes campos de geometría (nivel superior)
     geo_sources_top = [
@@ -623,7 +625,7 @@ def extraer_geometria_exhaustiva(doc_data: Dict[str, Any], upid: str, debug: boo
                     if geom_type == 'GeometryCollection':
                         if 'geometries' in geo_value and len(geo_value['geometries']) > 0:
                             if debug:
-                                print(f"   ✅ Geometría encontrada en: {geo_name} (GeometryCollection)")
+                                logger.debug(f"Geometria encontrada en: {geo_name} (GeometryCollection)")
                             return geo_value, True, geo_name
                     # Para otros tipos, validar que tenga coordinates
                     elif 'coordinates' in geo_value:
@@ -631,13 +633,13 @@ def extraer_geometria_exhaustiva(doc_data: Dict[str, Any], upid: str, debug: boo
                         # Validar que las coordenadas no sean nulas o vacías
                         if coords and coords != [0, 0] and coords != [None, None]:
                             if debug:
-                                print(f"   ✅ Geometría encontrada en: {geo_name} ({geom_type})")
+                                logger.debug(f"Geometria encontrada en: {geo_name} ({geom_type})")
                             return geo_value, True, geo_name
                         elif debug:
-                            print(f"   ⚠️ {geo_name} tiene coordenadas nulas: {coords}")
+                            logger.debug(f"{geo_name} tiene coordenadas nulas: {coords}")
         except Exception as e:
             if debug:
-                print(f"   ⚠️ Error parseando {geo_name}: {e}")
+                logger.debug(f"Error parseando {geo_name}: {e}")
             continue
     
     # 4. Buscar lat/lng por separado (nivel superior y properties)
@@ -689,21 +691,21 @@ def extraer_geometria_exhaustiva(doc_data: Dict[str, Any], upid: str, debug: boo
             }
             source = f"{lng_source}+{lat_source}"
             if debug:
-                print(f"   ✅ Geometría construida desde lat/lng: {source}")
+                logger.debug(f"Geometria construida desde lat/lng: {source}")
             return geometry_obj, True, source
         elif debug:
-            print(f"   ⚠️ Lat/lng fuera de rango: lat={lat}, lng={lng}")
+            logger.debug(f"Lat/lng fuera de rango: lat={lat}, lng={lng}")
     elif debug:
         if lat is None and lng is None:
-            print(f"   ❌ No se encontró lat ni lng")
+            logger.debug("No se encontro lat ni lng")
         elif lat is None:
-            print(f"   ❌ No se encontró lat (lng={lng})")
+            logger.debug(f"No se encontro lat (lng={lng})")
         else:
-            print(f"   ❌ No se encontró lng (lat={lat})")
-    
+            logger.debug(f"No se encontro lng (lat={lat})")
+
     # 6. No se encontró geometría válida
     if debug:
-        print(f"   ❌ No se encontró geometría válida para {upid}")
+        logger.debug(f"No se encontro geometria valida para {upid}")
     
     return None, False, 'not_found'
 
@@ -737,7 +739,7 @@ async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = Non
         # ✅ PROGRAMACIÓN FUNCIONAL: Sin cache, datos frescos siempre
         
         # Cargar datos desde Firestore
-        print("🔄 DEBUG: Cargando datos desde Firestore")
+        logger.debug("Cargando datos desde Firestore")
         
         db = get_firestore_client()
         if db is None:
@@ -770,15 +772,9 @@ async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = Non
             doc_data = doc.to_dict()
             record = {}
             
-            # DEBUG: Mostrar primeros 3 documentos
+            # Debug info para los primeros 3 documentos
             if total_docs_processed <= 3:
-                print(f"🔍 DEBUG Doc {total_docs_processed}: {doc.id}")
-                print(f"   Keys: {list(doc_data.keys())[:10]}")
-                if 'properties' in doc_data:
-                    props = doc_data.get('properties', {})
-                    print(f"   Properties keys: {list(props.keys())[:10]}")
-                    print(f"   UPID: {props.get('upid', 'N/A')}")
-                    print(f"   Comuna: {props.get('comuna_corregimiento', 'N/A')}")
+                logger.debug(f"Doc {total_docs_processed}: {doc.id} keys={list(doc_data.keys())[:10]}")
             
             # Extraer campos geométricos y de visualización
             for field in geo_fields + viz_fields:
@@ -808,9 +804,9 @@ async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = Non
                     }
                     geometry_source = 'placeholder'
                     if debug_mode:
-                        print(f"   ⚠️ Usando coordenadas placeholder [0,0] para {upid_value}")
+                        logger.debug(f"Usando coordenadas placeholder [0,0] para {upid_value}")
                 elif debug_mode:
-                    print(f"   ✅ Geometría válida obtenida de: {geometry_source}")
+                    logger.debug(f"Geometria valida obtenida de: {geometry_source}")
                 
                 # Función auxiliar para extraer valor de múltiples ubicaciones
                 def get_field_value(field_name):
@@ -844,7 +840,7 @@ async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = Non
                                 try:
                                     intervenciones_parsed.append(eval(interv))
                                 except:
-                                    print(f"⚠️ No se pudo parsear intervención: {interv[:100]}")
+                                    logger.warning(f"No se pudo parsear intervencion: {interv[:100]}")
                         elif isinstance(interv, dict):
                             # Ya es diccionario
                             intervenciones_parsed.append(interv)
@@ -891,7 +887,7 @@ async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = Non
                 }
                 geometry_data.append(feature)
         
-        print(f"🗺️ DEBUG: Procesados {total_docs_processed} docs, incluidos {len(geometry_data)} registros totales (con y sin geometría)")
+        logger.debug(f"Procesados {total_docs_processed} docs, incluidos {len(geometry_data)} registros totales")
         
         # Aplicar filtros client-side
         if filters:
@@ -904,7 +900,7 @@ async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = Non
                 else:
                     geometry_data = [item for item in geometry_data 
                                    if item.get('properties', {}).get('upid') == upid_filter]
-                print(f"🔍 DEBUG: Filtro por upid aplicado: {len(geometry_data)} registros")
+                logger.debug(f"Filtro por upid aplicado: {len(geometry_data)} registros")
             
             # 🔄 NUEVO: Filtros de intervención (estado, tipo_intervencion, ano, frente_activo)
             filtros_intervencion = {}
@@ -925,14 +921,14 @@ async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = Non
                     ano=filtros_intervencion.get('ano'),
                     frente_activo=filtros_intervencion.get('frente_activo')
                 )
-                print(f"🔧 DEBUG: Filtros de intervención aplicados: {len(geometry_data)} registros")
+                logger.debug(f"Filtros de intervencion aplicados: {len(geometry_data)} registros")
             
             # Filtros de unidad (campos que no son de intervención)
             filtros_unidad = {k: v for k, v in filters.items() 
                              if k in ['comuna_corregimiento', 'barrio_vereda', 'clase_up', 'nombre_centro_gestor', 'tipo_equipamiento']}
             if filtros_unidad:
                 geometry_data = apply_client_side_filters(geometry_data, filtros_unidad)
-                print(f"🔧 DEBUG: Filtros de unidad aplicados: {len(geometry_data)} registros")
+                logger.debug(f"Filtros de unidad aplicados: {len(geometry_data)} registros")
             
             # Aplicar límite
             if 'limit' in filters and filters['limit']:
@@ -961,9 +957,8 @@ async def get_unidades_proyecto_geometry(filters: Optional[Dict[str, Any]] = Non
         return geojson_response
         
     except Exception as e:
-        print(f"❌ ERROR en get_unidades_proyecto_geometry: {str(e)}")
         import traceback
-        print(f"❌ TRACEBACK: {traceback.format_exc()}")
+        logger.error(f"Error en get_unidades_proyecto_geometry: {str(e)}\n{traceback.format_exc()}")
         
         return {
             "success": False,
@@ -1019,8 +1014,7 @@ async def get_unidades_proyecto_attributes(
                        'clase_up', 'tipo_equipamiento', 'frente_activo']
         )
         
-        print(f"📋 DEBUG: get_unidades_proyecto_attributes - Filtros detectados: {has_filters}")
-        print(f"📋 DEBUG: Sin límites por defecto - Acceso completo a datos")
+        logger.debug(f"get_unidades_proyecto_attributes - Filtros detectados: {has_filters}")
         
         db = get_firestore_client()
         if db is None:
@@ -1045,7 +1039,7 @@ async def get_unidades_proyecto_attributes(
         if filters and 'upid' in filters and filters['upid'] and not isinstance(filters['upid'], list):
             query = query.where('upid', '==', filters['upid'])
             server_side_filters_applied.append(f"upid={filters['upid']}")
-            print(f"📋 DEBUG: ✅ SERVER-SIDE filtro por upid: {filters['upid']}")
+            logger.debug(f"SERVER-SIDE filtro por upid: {filters['upid']}")
         
         # ✅ FILTROS MOVIDOS A CLIENT-SIDE - Los campos están siendo procesados después de la descarga
         # Los filtros server-side de Firestore fallan porque los índices pueden no estar configurados
@@ -1054,7 +1048,7 @@ async def get_unidades_proyecto_attributes(
         # Solo mantener filtros server-side para campos simples que sabemos que funcionan
         # Por ahora, deshabilitar filtros server-side problemáticos
         
-        print(f"📋 DEBUG: Filtros SERVER-SIDE aplicados: {server_side_filters_applied}")
+        logger.debug(f"Filtros SERVER-SIDE aplicados: {server_side_filters_applied}")
         
         # Ordenar para paginación consistente
         query = query.order_by('__name__')  # Ordenar por document ID
@@ -1065,7 +1059,7 @@ async def get_unidades_proyecto_attributes(
         server_side_limit_skipped = False
         if limit and limit > 0:
             server_side_limit_skipped = True
-            print(f"📋 DEBUG: ⏭️ SERVER-SIDE límite pospuesto para aplicar después de filtros: {limit}")
+            logger.debug(f"SERVER-SIDE limite pospuesto para aplicar despues de filtros: {limit}")
         
         # Aplicar offset si se especifica
         if offset and offset > 0:
@@ -1074,8 +1068,8 @@ async def get_unidades_proyecto_attributes(
             if docs_to_skip:
                 last_doc = docs_to_skip[-1]
                 query = query.start_after(last_doc)
-            print(f"📋 DEBUG: Aplicando offset de {offset} registros")
-        
+            logger.debug(f"Aplicando offset de {offset} registros")
+
         # Obtener documentos (YA OPTIMIZADOS por Firestore)
         docs = query.stream()
         
@@ -1155,17 +1149,17 @@ async def get_unidades_proyecto_attributes(
             # 🔄 TRANSFORMACIÓN: Renombrar clase_obra a clase_up
             if 'clase_obra' in attributes_record:
                 attributes_record['clase_up'] = attributes_record.pop('clase_obra')
-                if doc_count <= 3:  # Debug: mostrar primeros 3 transformaciones
-                    print(f"🔄 DEBUG: Transformado clase_obra -> clase_up para {attributes_record.get('upid', 'unknown')}")
+                if doc_count <= 3:
+                    logger.debug(f"Transformado clase_obra -> clase_up para {attributes_record.get('upid', 'unknown')}")
             
             attributes_data.append(attributes_record)
             doc_count += 1
             
             if doc_count % 100 == 0:
-                print(f"📋 DEBUG: Procesados {doc_count} registros de atributos...")
-        
+                logger.debug(f"Procesados {doc_count} registros de atributos...")
+
         total_docs = len(attributes_data)
-        print(f"📋 DEBUG: TOTAL atributos después de filtros SERVER-SIDE: {total_docs}")
+        logger.debug(f"TOTAL atributos despues de filtros SERVER-SIDE: {total_docs}")
         
         # ============================================
         # FILTROS CLIENT-SIDE (TODOS LOS FILTROS)
@@ -1221,9 +1215,9 @@ async def get_unidades_proyecto_attributes(
             
             # Aplicar filtros client-side
             if client_side_filters:
-                print(f"📋 DEBUG: 🔄 CLIENT-SIDE filtros aplicados: {client_side_filters_applied}")
+                logger.debug(f"CLIENT-SIDE filtros aplicados: {client_side_filters_applied}")
                 attributes_data = apply_client_side_filters(attributes_data, client_side_filters)
-                print(f"📋 DEBUG: 🎯 RESULTADO FINAL - Registros después de filtros: {len(attributes_data)} de {total_docs} descargados")
+                logger.debug(f"RESULTADO FINAL - Registros despues de filtros: {len(attributes_data)} de {total_docs} descargados")
         
         # ✅ FIX: Aplicar límite después de filtros client-side (CONSISTENTE con geometry endpoint)
         original_count = len(attributes_data)
@@ -1231,10 +1225,10 @@ async def get_unidades_proyecto_attributes(
             # Apply offset first (if any), then limit
             if offset and offset > 0:
                 attributes_data = attributes_data[offset:]
-                print(f"📋 DEBUG: Aplicando offset de {offset} registros")
-            
+                logger.debug(f"Aplicando offset de {offset} registros")
+
             attributes_data = attributes_data[:limit]
-            print(f"📋 DEBUG: ✅ LÍMITE APLICADO DESPUÉS DE FILTROS: {limit} registros (consistente con geometry endpoint)")
+            logger.debug(f"Limite aplicado despues de filtros: {limit} registros")
         
         optimization_info = "Con filtros aplicados" if has_filters else "Sin filtros - Datos completos"
         
@@ -1259,9 +1253,8 @@ async def get_unidades_proyecto_attributes(
         return result
         
     except Exception as e:
-        print(f"❌ ERROR en get_unidades_proyecto_attributes: {str(e)}")
         import traceback
-        print(f"❌ TRACEBACK: {traceback.format_exc()}")
+        logger.error(f"Error en get_unidades_proyecto_attributes: {str(e)}\n{traceback.format_exc()}")
         
         return {
             "success": False,
@@ -1284,8 +1277,7 @@ async def get_unidades_proyecto_dashboard(filters: Optional[Dict[str, Any]] = No
             for key in ['estado', 'tipo_intervencion', 'nombre_centro_gestor', 'comuna_corregimiento', 'barrio_vereda']
         )
         
-        print(f"📊 DEBUG: Dashboard avanzado - Filtros aplicados: {has_filters}")
-        print(f"📊 DEBUG: Generando métricas optimizadas para dashboards y gráficos")
+        logger.debug(f"Dashboard avanzado - Filtros aplicados: {has_filters}")
         
         # Obtener datos completos sin límites para análisis preciso
         dashboard_filters = filters.copy() if filters else {}
@@ -1315,8 +1307,7 @@ async def get_unidades_proyecto_dashboard(filters: Optional[Dict[str, Any]] = No
         all_records = attributes_data
         total_records = len(all_records)
         
-        print(f"📊 DEBUG: Procesando {total_records} registros para métricas avanzadas")
-        print(f"📊 DEBUG: Total records para metadatos: {total_records}")
+        logger.debug(f"Procesando {total_records} registros para metricas avanzadas")
         
         # ============================================
         # 💰 ANÁLISIS FINANCIERO AVANZADO
@@ -1346,7 +1337,7 @@ async def get_unidades_proyecto_dashboard(filters: Optional[Dict[str, Any]] = No
         # ============================================
         # 🔄 PROCESAMIENTO AVANZADO DE REGISTROS
         # ============================================
-        print(f"📊 DEBUG: Iniciando procesamiento de {total_records} registros")
+        logger.debug(f"Iniciando procesamiento de {total_records} registros")
         
         for record in all_records:
             properties = record.get('properties', {})
@@ -1485,7 +1476,7 @@ async def get_unidades_proyecto_dashboard(filters: Optional[Dict[str, Any]] = No
                         longitudes.append(lng_float)
                         # DEBUG para las primeras coordenadas encontradas
                         if len(latitudes) <= 3:
-                            print(f"📍 DEBUG: Coordenada {len(latitudes)} - Lat: {lat_float}, Lng: {lng_float}")
+                            logger.debug(f"Coordenada {len(latitudes)} - Lat: {lat_float}, Lng: {lng_float}")
                 except Exception as e:
                     pass
             
@@ -1603,7 +1594,7 @@ async def get_unidades_proyecto_dashboard(filters: Optional[Dict[str, Any]] = No
         frentes_activos_count = frentes_result.get('total_frentes_activos', 0)
         unidades_con_frentes_count = frentes_result.get('total_unidades_con_frentes', 0)
         
-        print(f"📊 DEBUG: Frentes de obra activos calculados: {frentes_activos_count} en {unidades_con_frentes_count} unidades")
+        logger.debug(f"Frentes de obra activos calculados: {frentes_activos_count} en {unidades_con_frentes_count} unidades")
         
         # ============================================
         # 🏗️ ESTRUCTURA FINAL DEL DASHBOARD
@@ -1686,9 +1677,7 @@ async def get_unidades_proyecto_dashboard(filters: Optional[Dict[str, Any]] = No
                 "heatmap_data": [{"lat": lat, "lng": lng, "intensity": 1} for lat, lng in zip(latitudes, longitudes)][:100]  # Limitar para rendimiento
             }
         
-        print(f"📊 DEBUG: Procesamiento completado - Coordenadas encontradas: {len(latitudes)}")
-        print(f"📊 DEBUG: Registros financieros: {len(presupuestos_validos)}")
-        print(f"📊 DEBUG: Registros de rendimiento: {len(avances_validos)}")
+        logger.debug(f"Procesamiento completado - Coords: {len(latitudes)}, financieros: {len(presupuestos_validos)}, avances: {len(avances_validos)}")
         
         return {
             "success": True,
@@ -1697,9 +1686,8 @@ async def get_unidades_proyecto_dashboard(filters: Optional[Dict[str, Any]] = No
         }
         
     except Exception as e:
-        print(f"❌ ERROR en get_unidades_proyecto_dashboard: {str(e)}")
         import traceback
-        print(f"❌ TRACEBACK: {traceback.format_exc()}")
+        logger.error(f"Error en get_unidades_proyecto_dashboard: {str(e)}\n{traceback.format_exc()}")
         
         return {
             "success": False,
@@ -1749,7 +1737,7 @@ async def get_intervencion_by_id(intervencion_id: str) -> Optional[Dict[str, Any
         return None
         
     except Exception as e:
-        print(f"❌ ERROR en get_intervencion_by_id: {str(e)}")
+        logger.error(f"Error en get_intervencion_by_id: {str(e)}")
         return None
 
 
@@ -1811,7 +1799,7 @@ async def get_intervenciones_filtradas(
         }
         
     except Exception as e:
-        print(f"❌ ERROR en get_intervenciones_filtradas: {str(e)}")
+        logger.error(f"Error en get_intervenciones_filtradas: {str(e)}")
         return {
             "type": "FeatureCollection",
             "features": [],
@@ -1987,7 +1975,7 @@ async def get_frentes_activos() -> Dict[str, Any]:
         }
         
     except Exception as e:
-        print(f"❌ ERROR en get_frentes_activos: {str(e)}")
+        logger.error(f"Error en get_frentes_activos: {str(e)}")
         return {
             "success": False,
             "error": str(e),
@@ -2057,7 +2045,7 @@ async def get_unidades_proyecto_summary() -> Dict[str, Any]:
         }
         
     except Exception as e:
-        print(f"❌ ERROR en get_unidades_proyecto_summary: {str(e)}")
+        logger.error(f"Error en get_unidades_proyecto_summary: {str(e)}")
         
         return {
             "success": False,
@@ -2215,7 +2203,7 @@ async def get_quality_control_summary(filters: Optional[Dict[str, Any]] = None) 
         Dict con success, data, count y timestamp
     """
     try:
-        print("📊 Obteniendo resumen de control de calidad...")
+        logger.debug("Obteniendo resumen de control de calidad...")
         
         # Obtener cliente de Firestore
         db = get_firestore_client()
@@ -2244,7 +2232,7 @@ async def get_quality_control_summary(filters: Optional[Dict[str, Any]] = None) 
                 query = query.limit(filters["limit"])
         
         # Ejecutar query
-        print(f"🔍 Consultando colección: {collection_name}")
+        logger.debug(f"Consultando coleccion: {collection_name}")
         docs = query.stream()
         
         # Procesar documentos
@@ -2257,7 +2245,7 @@ async def get_quality_control_summary(filters: Optional[Dict[str, Any]] = None) 
             doc_dict = clean_firebase_document(doc_dict)
             data.append(doc_dict)
         
-        print(f"✅ Se obtuvieron {len(data)} documentos de control de calidad")
+        logger.debug(f"Se obtuvieron {len(data)} documentos de control de calidad")
         
         return {
             "success": True,
@@ -2269,9 +2257,8 @@ async def get_quality_control_summary(filters: Optional[Dict[str, Any]] = None) 
         }
         
     except Exception as e:
-        print(f"❌ ERROR: Error obteniendo control de calidad: {str(e)}")
         import traceback
-        traceback.print_exc()
+        logger.error(f"Error obteniendo control de calidad: {str(e)}\n{traceback.format_exc()}")
         return {
             "success": False,
             "error": str(e),

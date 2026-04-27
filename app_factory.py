@@ -37,20 +37,26 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Thread pool compartido — token verification + health checks
 # ---------------------------------------------------------------------------
-_ROUTE_AUTH_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="route-auth")
+_ROUTE_AUTH_EXECUTOR = ThreadPoolExecutor(
+    max_workers=8, thread_name_prefix="route-auth"
+)
 
 # ---------------------------------------------------------------------------
 # Importaciones de routers existentes
 # ---------------------------------------------------------------------------
 try:
     from api.routers.auth_admin import router as auth_admin_router
+
     _AUTH_ADMIN_AVAILABLE = True
 except Exception as exc:
     logger.warning(f"auth_admin router not available: {exc}")
     _AUTH_ADMIN_AVAILABLE = False
 
 try:
-    from api.routers.emprestito_quality_router import router as emprestito_quality_router
+    from api.routers.emprestito_quality_router import (
+        router as emprestito_quality_router,
+    )
+
     _EMPRESTITO_QUALITY_AVAILABLE = True
 except Exception as exc:
     logger.warning(f"emprestito_quality router not available: {exc}")
@@ -58,6 +64,7 @@ except Exception as exc:
 
 try:
     from api.routers.captura_360_router import router as captura_360_router
+
     _CAPTURA_360_AVAILABLE = True
 except Exception as exc:
     logger.warning(f"captura_360 router not available: {exc}")
@@ -66,6 +73,7 @@ except Exception as exc:
 # Nuevos routers modulares
 try:
     from api.routers.core_routes import router as core_router
+
     _CORE_ROUTES_AVAILABLE = True
 except Exception as exc:
     logger.warning(f"core_routes router not available: {exc}")
@@ -73,6 +81,7 @@ except Exception as exc:
 
 try:
     from api.routers.general_routes import router as general_router
+
     _GENERAL_ROUTES_AVAILABLE = True
 except Exception as exc:
     logger.warning(f"general_routes router not available: {exc}")
@@ -80,26 +89,64 @@ except Exception as exc:
 
 try:
     from api.routers.proyectos import router as proyectos_router
+
     _PROYECTOS_AVAILABLE = True
 except Exception as exc:
     logger.warning(f"proyectos router not available: {exc}")
     _PROYECTOS_AVAILABLE = False
+
+# Nuevos routers extraídos de main.py
+try:
+    from api.routers.auth_routes import router as auth_routes_router
+
+    _AUTH_ROUTES_AVAILABLE = True
+except Exception as exc:
+    logger.warning(f"auth_routes router not available: {exc}")
+    _AUTH_ROUTES_AVAILABLE = False
+
+try:
+    from api.routers.unidades_proyecto import router as unidades_proyecto_router
+
+    _UNIDADES_PROYECTO_AVAILABLE = True
+except Exception as exc:
+    logger.warning(f"unidades_proyecto router not available: {exc}")
+    _UNIDADES_PROYECTO_AVAILABLE = False
+
+try:
+    from api.routers.interoperabilidad import router as interoperabilidad_router
+
+    _INTEROPERABILIDAD_AVAILABLE = True
+except Exception as exc:
+    logger.warning(f"interoperabilidad router not available: {exc}")
+    _INTEROPERABILIDAD_AVAILABLE = False
+
+try:
+    from api.routers.emprestito import router as emprestito_router
+
+    _EMPRESTITO_AVAILABLE = True
+except Exception as exc:
+    logger.warning(f"emprestito router not available: {exc}")
+    _EMPRESTITO_AVAILABLE = False
 
 
 # ---------------------------------------------------------------------------
 # Lifespan (startup / shutdown)
 # ---------------------------------------------------------------------------
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Gestionar ciclo de vida: inicializar Firebase al arrancar, cerrar executor al parar."""
-    logger.info(f"API starting — port={os.getenv('PORT', '8000')} env={os.getenv('ENVIRONMENT', 'development')}")
+    logger.info(
+        f"API starting — port={os.getenv('PORT', '8000')} env={os.getenv('ENVIRONMENT', 'development')}"
+    )
 
     try:
         from database.firebase_config import (
             FIREBASE_AVAILABLE,
             configure_firebase,
         )
+
         if FIREBASE_AVAILABLE:
             initialized, status = configure_firebase()
             if initialized:
@@ -113,10 +160,14 @@ async def lifespan(app: FastAPI):
             logger.warning("Firebase not available — limited mode")
     except RuntimeError:
         raise
-    except Exception as exc:
-        logger.error(f"Firebase setup error: {exc}")
+    except ImportError as exc:
+        logger.error(f"Firebase SDK import failed: {exc}")
         if os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("PRODUCTION"):
-            raise RuntimeError(f"Firebase required in production: {exc}")
+            raise RuntimeError(f"Firebase SDK required in production: {exc}") from exc
+    except Exception as exc:
+        logger.error(f"Firebase setup error: {exc}", exc_info=True)
+        if os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("PRODUCTION"):
+            raise RuntimeError(f"Firebase required in production: {exc}") from exc
 
     yield
 
@@ -128,9 +179,13 @@ async def lifespan(app: FastAPI):
 # Exception handlers
 # ---------------------------------------------------------------------------
 
+
 async def global_exception_handler(request: Request, exc: Exception):
     """Captura excepciones no manejadas y devuelve JSON estructurado."""
-    logger.error(f"Unhandled exception on {request.method} {request.url.path}: {exc}", exc_info=True)
+    logger.error(
+        f"Unhandled exception on {request.method} {request.url.path}: {exc}",
+        exc_info=True,
+    )
     return JSONResponse(
         status_code=500,
         content={
@@ -146,6 +201,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 # ---------------------------------------------------------------------------
 # Middlewares
 # ---------------------------------------------------------------------------
+
 
 async def _utf8_middleware(request: Request, call_next):
     response = await call_next(request)
@@ -226,7 +282,10 @@ async def _timeout_middleware(request: Request, call_next):
     except Exception:
         return JSONResponse(
             status_code=500,
-            content={"error": "Internal server error", "timestamp": datetime.now().isoformat()},
+            content={
+                "error": "Internal server error",
+                "timestamp": datetime.now().isoformat(),
+            },
         )
 
 
@@ -234,13 +293,15 @@ async def _timeout_middleware(request: Request, call_next):
 # Factory
 # ---------------------------------------------------------------------------
 
+
 def create_app() -> FastAPI:
     """
     Crea y configura la instancia FastAPI completa.
 
     - Middlewares: UTF-8, body-size, performance, timeout, CORS, GZip, Auth
     - Exception handlers: global, rate-limit
-    - Routers: core, general, proyectos, auth_admin, emprestito_quality, captura_360
+    - Routers: core, general, proyectos, auth_routes, unidades_proyecto,
+                interoperabilidad, emprestito, auth_admin, emprestito_quality, captura_360
     - Static files: /static (si existe)
 
     Returns:
@@ -282,9 +343,17 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"],
         allow_headers=[
-            "Authorization", "Content-Type", "Accept", "Accept-Charset",
-            "Accept-Encoding", "Accept-Language", "Origin",
-            "X-Requested-With", "Cache-Control", "Pragma", "X-CSRF-Token",
+            "Authorization",
+            "Content-Type",
+            "Accept",
+            "Accept-Charset",
+            "Accept-Encoding",
+            "Accept-Language",
+            "Origin",
+            "X-Requested-With",
+            "Cache-Control",
+            "Pragma",
+            "X-CSRF-Token",
         ],
         expose_headers=["Content-Type", "Authorization"],
         max_age=600,
@@ -299,10 +368,22 @@ def create_app() -> FastAPI:
         from auth_system.middleware import AuthorizationMiddleware, AuditLogMiddleware
 
         public_paths = [
-            "/", "/docs", "/openapi.json", "/redoc", "/ping", "/health",
-            "/cors-test", "/test/utf8", "/debug/railway", "/metrics",
-            "/auth/login", "/auth/register", "/auth/google", "/auth/config",
-            "/auth/validate-session", "/auth/workload-identity/status",
+            "/",
+            "/docs",
+            "/openapi.json",
+            "/redoc",
+            "/ping",
+            "/health",
+            "/cors-test",
+            "/test/utf8",
+            "/debug/railway",
+            "/metrics",
+            "/auth/login",
+            "/auth/register",
+            "/auth/google",
+            "/auth/config",
+            "/auth/validate-session",
+            "/auth/workload-identity/status",
             "/unidades-proyecto/captura-estado-360",
         ]
         app.add_middleware(AuthorizationMiddleware, public_paths=public_paths)
@@ -323,6 +404,22 @@ def create_app() -> FastAPI:
     if _CORE_ROUTES_AVAILABLE:
         app.include_router(core_router)
         logger.info("Router included: core_routes")
+
+    if _AUTH_ROUTES_AVAILABLE:
+        app.include_router(auth_routes_router)
+        logger.info("Router included: auth_routes")
+
+    if _UNIDADES_PROYECTO_AVAILABLE:
+        app.include_router(unidades_proyecto_router)
+        logger.info("Router included: unidades_proyecto")
+
+    if _INTEROPERABILIDAD_AVAILABLE:
+        app.include_router(interoperabilidad_router)
+        logger.info("Router included: interoperabilidad")
+
+    if _EMPRESTITO_AVAILABLE:
+        app.include_router(emprestito_router)
+        logger.info("Router included: emprestito")
 
     if _AUTH_ADMIN_AVAILABLE:
         app.include_router(auth_admin_router)

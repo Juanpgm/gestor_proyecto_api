@@ -37,9 +37,21 @@ jobs:
           echo "Paso 1 - Crear tabla de proyecciones"
           step1_start=$(date +%s)
 
-          response=$(curl -s -w "\n%{http_code}\n%{size_download}\n%{time_total}" \
-            -X POST "$API_BASE_URL/emprestito/crear-tabla-proyecciones" \
-            -H "Content-Type: application/json")
+          # Retry function: up to 3 attempts with exponential backoff (10s, 20s, 40s)
+          api_call_with_retry() {
+            local url="$1"; local method="${2:-POST}"; local max=3; local delay=10
+            for i in $(seq 1 $max); do
+              resp=$(curl -s -w "\n%{http_code}\n%{size_download}\n%{time_total}" \
+                --max-time 300 -X "$method" "$url" -H "Content-Type: application/json")
+              code=$(echo "$resp" | tail -n3 | head -n1)
+              if [ "$code" = "200" ]; then echo "$resp"; return 0; fi
+              echo "Intento $i/$max fallido (HTTP $code). Reintentando en ${delay}s..." >&2
+              [ $i -lt $max ] && sleep $delay && delay=$((delay*2))
+            done
+            echo "$resp"; return 1
+          }
+
+          response=$(api_call_with_retry "$API_BASE_URL/emprestito/crear-tabla-proyecciones")
 
           http_code=$(echo "$response" | tail -n3 | head -n1)
           size_bytes=$(echo "$response" | tail -n2 | head -n1)
@@ -74,9 +86,16 @@ jobs:
           echo "Paso 2 - Obtener procesos SECOP"
           step2_start=$(date +%s)
 
-          response=$(curl -s -w "\n%{http_code}\n%{size_download}\n%{time_total}" \
-            -X POST "$API_BASE_URL/emprestito/obtener-procesos-secop" \
-            -H "Content-Type: application/json")
+          delay=10; response=""; http_code="0"
+          for i in 1 2 3; do
+            response=$(curl -s -w "\n%{http_code}\n%{size_download}\n%{time_total}" \
+              --max-time 300 -X POST "$API_BASE_URL/emprestito/obtener-procesos-secop" \
+              -H "Content-Type: application/json")
+            http_code=$(echo "$response" | tail -n3 | head -n1)
+            [ "$http_code" = "200" ] && break
+            echo "Intento $i/3 fallido (HTTP $http_code). Reintentando en ${delay}s..."
+            [ $i -lt 3 ] && sleep $delay && delay=$((delay*2))
+          done
 
           http_code=$(echo "$response" | tail -n3 | head -n1)
           size_bytes=$(echo "$response" | tail -n2 | head -n1)
@@ -120,21 +139,28 @@ jobs:
 
           while true; do
             echo "Procesando lote $lote_num (offset: $offset, limit: $limit)"
-            
-            response=$(curl -s -w "\n%{http_code}\n%{size_download}\n%{time_total}" \
-              --max-time 300 \
-              -X POST "$API_BASE_URL/emprestito/obtener-contratos-secop?offset=$offset&limit=$limit" \
-              -H "Content-Type: application/json")
-            
+
+            retry_delay=10; response=""; http_code="0"
+            for i in 1 2 3; do
+              response=$(curl -s -w "\n%{http_code}\n%{size_download}\n%{time_total}" \
+                --max-time 300 \
+                -X POST "$API_BASE_URL/emprestito/obtener-contratos-secop?offset=$offset&limit=$limit" \
+                -H "Content-Type: application/json")
+              http_code=$(echo "$response" | tail -n3 | head -n1)
+              [ "$http_code" = "200" ] && break
+              echo "Lote $lote_num intento $i/3 fallido (HTTP $http_code). Reintentando en ${retry_delay}s..."
+              [ $i -lt 3 ] && sleep $retry_delay && retry_delay=$((retry_delay*2))
+            done
+
             http_code=$(echo "$response" | tail -n3 | head -n1)
             size_bytes=$(echo "$response" | tail -n2 | head -n1)
             time_seconds=$(echo "$response" | tail -n1)
             body=$(echo "$response" | head -n -3)
-            
+
             echo "Lote $lote_num - HTTP: $http_code | $size_bytes bytes | ${time_seconds}s"
-            
+
             if [ "$http_code" != "200" ]; then
-              echo "Error en lote $lote_num"
+              echo "Error en lote $lote_num tras 3 intentos"
               echo "$body" | jq '.' 2>/dev/null || echo "$body"
               exit 1
             fi
@@ -187,10 +213,17 @@ jobs:
           echo "Paso 4 - Obtener órdenes de compra TVEC"
           step4_start=$(date +%s)
 
-          response=$(curl -s -w "\n%{http_code}\n%{size_download}\n%{time_total}" \
-            --max-time 300 \
-            -X POST "$API_BASE_URL/emprestito/obtener-ordenes-compra-TVEC" \
-            -H "Content-Type: application/json")
+          delay=10; response=""; http_code="0"
+          for i in 1 2 3; do
+            response=$(curl -s -w "\n%{http_code}\n%{size_download}\n%{time_total}" \
+              --max-time 300 \
+              -X POST "$API_BASE_URL/emprestito/obtener-ordenes-compra-TVEC" \
+              -H "Content-Type: application/json")
+            http_code=$(echo "$response" | tail -n3 | head -n1)
+            [ "$http_code" = "200" ] && break
+            echo "Intento $i/3 fallido (HTTP $http_code). Reintentando en ${delay}s..."
+            [ $i -lt 3 ] && sleep $delay && delay=$((delay*2))
+          done
 
           http_code=$(echo "$response" | tail -n3 | head -n1)
           size_bytes=$(echo "$response" | tail -n2 | head -n1)

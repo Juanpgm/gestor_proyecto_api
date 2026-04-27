@@ -16,11 +16,13 @@ import firebase_admin
 from firebase_admin import credentials, firestore, auth
 import google.auth.transport.requests
 
-# Load environment variables from .env file
+# Load environment variables from .env file (resolve relative to this file's directory)
 try:
     from dotenv import load_dotenv
-    load_dotenv()
-    logging.info("✅ Environment variables loaded from .env file")
+    import pathlib
+    _env_path = pathlib.Path(__file__).parent.parent / ".env"
+    load_dotenv(dotenv_path=_env_path, override=False)
+    logging.info(f"✅ Environment variables loaded from {_env_path}")
 except ImportError:
     logging.warning("⚠️ python-dotenv not installed, using system environment variables only")
 
@@ -37,9 +39,17 @@ def get_project_id() -> str:
         logger.info(f"🔧 Using FIREBASE_PROJECT_ID from environment: {project_id}")
         return project_id
     
-    # 2. Fallback al proyecto por defecto si no hay variable de entorno
+    # 2. En producción, fallar explícitamente para evitar errores silenciosos
+    in_production = bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("VERCEL") or os.getenv("PRODUCTION"))
+    if in_production:
+        raise RuntimeError(
+            "FIREBASE_PROJECT_ID is required in production. "
+            "Set it in Railway Dashboard or your deployment environment."
+        )
+
+    # 3. Fallback local para desarrollo
     forced_project = "calitrack-44403"
-    logger.warning(f"⚠️ FIREBASE_PROJECT_ID not set — falling back to default: {forced_project}. Set FIREBASE_PROJECT_ID env var in production.")
+    logger.warning(f"FIREBASE_PROJECT_ID not set — using dev fallback: {forced_project}")
     return forced_project
     
     # Código anterior comentado para referencia:
