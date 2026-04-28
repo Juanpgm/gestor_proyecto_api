@@ -53,6 +53,16 @@ except Exception:
     get_reportes_by_referencia_contrato = None
 
 try:
+    from database.firebase_config import FIREBASE_AVAILABLE
+except ImportError:
+    try:
+        from ..database.firebase_config import FIREBASE_AVAILABLE
+    except ImportError:
+        FIREBASE_AVAILABLE = False
+
+SCRIPTS_AVAILABLE = REPORTES_CONTRATOS_AVAILABLE
+
+try:
     from api.models import ReporteContratoRequest, ReporteContratoResponse
 except Exception:
     from pydantic import BaseModel

@@ -96,12 +96,15 @@ try:
         get_flujo_caja_from_firebase,
         FLUJO_CAJA_OPERATIONS_AVAILABLE,
     )
+
+    SCRIPTS_AVAILABLE = True
 except Exception as _e:
     logger.warning(f"Emprestito scripts not fully available: {_e}")
     EMPRESTITO_OPERATIONS_AVAILABLE = False
     TVEC_ENRICH_OPERATIONS_AVAILABLE = False
     ORDENES_COMPRA_OPERATIONS_AVAILABLE = False
     FLUJO_CAJA_OPERATIONS_AVAILABLE = False
+    SCRIPTS_AVAILABLE = False
 
 try:
     from api.models import (
@@ -167,6 +170,24 @@ except Exception:
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def check_emprestito_availability():
+    """Verificar disponibilidad de operaciones de empréstito."""
+    if not EMPRESTITO_OPERATIONS_AVAILABLE:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "Servicios de empréstito no disponibles",
+                "message": "Firebase o dependencias no configuradas correctamente",
+                "code": "EMPRESTITO_SERVICES_UNAVAILABLE",
+            },
+        )
+
+
+# ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 
@@ -174,7 +195,6 @@ except Exception:
 def _as_firestore_doc_snapshot(value: Any) -> Any:
     """Type-cast helper para documentos de Firestore."""
     return value
-
 
 
 @router.post(

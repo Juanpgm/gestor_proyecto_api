@@ -14,6 +14,8 @@ Uso::
 import asyncio
 import logging
 import os
+
+import anyio
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -268,8 +270,9 @@ async def _timeout_middleware(request: Request, call_next):
         timeout = 30.0
 
     try:
-        return await asyncio.wait_for(call_next(request), timeout=timeout)
-    except asyncio.TimeoutError:
+        with anyio.fail_after(timeout):
+            return await call_next(request)
+    except TimeoutError:
         return JSONResponse(
             status_code=504,
             content={
@@ -279,7 +282,14 @@ async def _timeout_middleware(request: Request, call_next):
                 "timestamp": datetime.now().isoformat(),
             },
         )
-    except Exception:
+    except Exception as _exc:
+        logger.error(
+            "_timeout_middleware caught exception for %s %s: %s",
+            request.method,
+            path,
+            _exc,
+            exc_info=True,
+        )
         return JSONResponse(
             status_code=500,
             content={

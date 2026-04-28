@@ -2559,11 +2559,9 @@ async def crear_solicitud_cambio_unidad_proyecto(
 @optional_rate_limit("30/minute")
 async def crear_solicitud_cambio_intervencion(
     request: Request,
-    avance_obra: Optional[float] = Body(None, description="Avance de obra"),
     bpin: Optional[int] = Body(None, description="BPIN"),
     cantidad: Optional[int] = Body(None, description="Cantidad"),
     clase_up: Optional[str] = Body(None, description="Clase UP"),
-    estado: Optional[str] = Body(None, description="Estado de la intervención"),
     fecha_fin: Optional[str] = Body(None, description="Fecha fin (string)"),
     fecha_inicio: Optional[str] = Body(None, description="Fecha inicio (string)"),
     fuente_financiacion: Optional[str] = Body(
@@ -2594,11 +2592,9 @@ async def crear_solicitud_cambio_intervencion(
 
         now_iso = datetime.now().isoformat()
         solicitud_payload = {
-            "avance_obra": avance_obra,
             "bpin": bpin,
             "cantidad": cantidad,
             "clase_up": clase_up,
-            "estado": estado,
             "fecha_fin": fecha_fin,
             "fecha_inicio": fecha_inicio,
             "fuente_financiacion": fuente_financiacion,
@@ -2855,11 +2851,9 @@ async def crear_unidad_proyecto(
 async def crear_intervencion(
     request: Request,
     upid: str = Body(..., description="UPID válido existente en unidades_proyecto"),
-    avance_obra: Optional[float] = Body(None, description="Avance de obra"),
     bpin: Optional[int] = Body(None, description="BPIN"),
     cantidad: Optional[int] = Body(None, description="Cantidad"),
     clase_up: Optional[str] = Body(None, description="Clase UP"),
-    estado: Optional[str] = Body(None, description="Estado de la intervención"),
     fecha_fin: Optional[str] = Body(None, description="Fecha fin (string)"),
     fecha_inicio: Optional[str] = Body(None, description="Fecha inicio (string)"),
     fuente_financiacion: Optional[str] = Body(
@@ -2947,11 +2941,9 @@ async def crear_intervencion(
         now_iso = datetime.now().isoformat()
 
         intervencion_payload = {
-            "avance_obra": avance_obra,
             "bpin": bpin,
             "cantidad": cantidad,
             "clase_up": clase_up,
-            "estado": estado,
             "fecha_fin": fecha_fin,
             "fecha_inicio": fecha_inicio,
             "fuente_financiacion": fuente_financiacion,
@@ -3034,11 +3026,9 @@ class ModificarIntervencionRequest(BaseModel):
         description="Si es true aplica cambios; si es false solo registra auditoría",
     )
     upid: Optional[str] = Field(None, description="UPID asociado")
-    avance_obra: Optional[float] = Field(None, description="Avance de obra")
     bpin: Optional[int] = Field(None, description="BPIN")
     cantidad: Optional[int] = Field(None, description="Cantidad")
     clase_up: Optional[str] = Field(None, description="Clase UP")
-    estado: Optional[str] = Field(None, description="Estado de la intervención")
     fecha_fin: Optional[str] = Field(None, description="Fecha fin")
     fecha_inicio: Optional[str] = Field(None, description="Fecha inicio")
     fuente_financiacion: Optional[str] = Field(
@@ -3269,6 +3259,9 @@ async def modificar_intervencion(
             if key not in {"intervencion_id", "aprobado", "extra_data"}
         }
         changes.update(extra_data)
+        # avance_obra y estado son campos computados: nunca se editan manualmente
+        changes.pop("avance_obra", None)
+        changes.pop("estado", None)
         if not changes:
             raise HTTPException(
                 status_code=400, detail="No se enviaron campos a modificar"
@@ -3815,6 +3808,18 @@ async def registrar_avance_up(
         }
 
         db.collection("avances_unidades_proyecto").document(doc_id).set(avance_payload)
+
+        # Actualizar caché de avance_obra en la intervención correspondiente
+        interv_docs = list(
+            db.collection("intervenciones_unidades_proyecto")
+            .where("intervencion_id", "==", intervencion_id)
+            .limit(1)
+            .stream()
+        )
+        if interv_docs:
+            interv_docs[0].reference.update(
+                {"avance_obra": avance_obra, "updated_at": now_iso}
+            )
 
         return create_utf8_response(
             {
@@ -4462,9 +4467,13 @@ async def leer_links_secop_intervenciones(
 async def get_geometry_unidades_proyecto(
     request: Request,
     upid: Optional[str] = Query(None, description="Filtrar por UPID específico"),
-    nombre_centro_gestor: Optional[str] = Query(None, description="Filtrar por centro gestor"),
+    nombre_centro_gestor: Optional[str] = Query(
+        None, description="Filtrar por centro gestor"
+    ),
     estado: Optional[str] = Query(None, description="Filtrar por estado"),
-    tipo_intervencion: Optional[str] = Query(None, description="Filtrar por tipo de intervención"),
+    tipo_intervencion: Optional[str] = Query(
+        None, description="Filtrar por tipo de intervención"
+    ),
     clase_up: Optional[str] = Query(None, description="Filtrar por clase UP"),
     frente_activo: Optional[str] = Query(None, description="Filtrar por frente activo"),
     limit: Optional[int] = Query(None, description="Limitar número de features"),
@@ -4476,7 +4485,9 @@ async def get_geometry_unidades_proyecto(
     Soporta filtros opcionales incluyendo `frente_activo`.
     """
     if not SCRIPTS_AVAILABLE or get_unidades_proyecto_geometry is None:
-        raise HTTPException(status_code=503, detail="Scripts de unidades proyecto no disponibles")
+        raise HTTPException(
+            status_code=503, detail="Scripts de unidades proyecto no disponibles"
+        )
 
     filters: Dict[str, Any] = {}
     if upid:
@@ -4508,7 +4519,9 @@ async def get_geometry_unidades_proyecto(
             }
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error obteniendo geometrías: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Error obteniendo geometrías: {str(e)}"
+        )
 
 
 # ============================================================================
@@ -4525,9 +4538,13 @@ async def get_geometry_unidades_proyecto(
 async def get_attributes_unidades_proyecto(
     request: Request,
     upid: Optional[str] = Query(None, description="Filtrar por UPID específico"),
-    nombre_centro_gestor: Optional[str] = Query(None, description="Filtrar por centro gestor"),
+    nombre_centro_gestor: Optional[str] = Query(
+        None, description="Filtrar por centro gestor"
+    ),
     estado: Optional[str] = Query(None, description="Filtrar por estado"),
-    tipo_intervencion: Optional[str] = Query(None, description="Filtrar por tipo de intervención"),
+    tipo_intervencion: Optional[str] = Query(
+        None, description="Filtrar por tipo de intervención"
+    ),
     clase_up: Optional[str] = Query(None, description="Filtrar por clase UP"),
     frente_activo: Optional[str] = Query(None, description="Filtrar por frente activo"),
     limit: Optional[int] = Query(None, description="Limitar número de registros"),
@@ -4540,7 +4557,9 @@ async def get_attributes_unidades_proyecto(
     Soporta filtros opcionales incluyendo `frente_activo`.
     """
     if not SCRIPTS_AVAILABLE or get_unidades_proyecto_attributes is None:
-        raise HTTPException(status_code=503, detail="Scripts de unidades proyecto no disponibles")
+        raise HTTPException(
+            status_code=503, detail="Scripts de unidades proyecto no disponibles"
+        )
 
     filters: Dict[str, Any] = {}
     if upid:
@@ -4573,7 +4592,9 @@ async def get_attributes_unidades_proyecto(
             }
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error obteniendo atributos: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Error obteniendo atributos: {str(e)}"
+        )
 
 
 # ============================================================================
@@ -4614,7 +4635,9 @@ async def get_filters_unidades_proyecto(
     Siempre incluye `frentes_activos` en el resultado completo.
     """
     if not SCRIPTS_AVAILABLE or get_filter_options is None:
-        raise HTTPException(status_code=503, detail="Scripts de unidades proyecto no disponibles")
+        raise HTTPException(
+            status_code=503, detail="Scripts de unidades proyecto no disponibles"
+        )
 
     try:
         result = await get_filter_options(field=field, limit=limit)
@@ -4622,7 +4645,11 @@ async def get_filters_unidades_proyecto(
         filters = result.get("filters", result.get("data", {}))
 
         # Garantizar que frente_activo esté presente en el resultado completo
-        if field is None and "frentes_activos" not in filters and "frente_activo" not in filters:
+        if (
+            field is None
+            and "frentes_activos" not in filters
+            and "frente_activo" not in filters
+        ):
             filters["frentes_activos"] = []
 
         return create_utf8_response(
@@ -4633,4 +4660,6 @@ async def get_filters_unidades_proyecto(
             }
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error obteniendo opciones de filtros: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Error obteniendo opciones de filtros: {str(e)}"
+        )
