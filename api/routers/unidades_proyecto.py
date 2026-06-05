@@ -16,6 +16,7 @@ Dominios:
 import json
 import logging
 import os
+import re
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, cast
@@ -25,6 +26,7 @@ from functools import lru_cache
 from fastapi import (
     APIRouter,
     Body,
+    Depends,
     File,
     Form,
     HTTPException,
@@ -39,10 +41,19 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from api.core.cache import get_cache_key, get_from_cache, set_in_cache
 from api.core.responses import clean_firebase_data, create_utf8_response
 from api.core.security import optional_rate_limit
+from auth_system.decorators import require_unidades, enforce_unidades_access
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Unidades de Proyecto"])
+
+# ---------------------------------------------------------------------------
+# Rutas a basemaps (corregido: viven en back/basemaps, no en back/api/routers/basemaps)
+# ---------------------------------------------------------------------------
+_THIS_FILE = os.path.abspath(__file__)
+_BACK_DIR = os.path.abspath(os.path.join(os.path.dirname(_THIS_FILE), "..", ".."))
+BASEMAPS_DIR = os.path.join(_BACK_DIR, "basemaps")
+PROYECTOS_ESTRATEGICOS_DIR = os.path.join(BASEMAPS_DIR, "proyectos_estrategicos")
 
 # ---------------------------------------------------------------------------
 # Firebase — importación segura
@@ -215,6 +226,7 @@ def _generate_presigned_s3_url(
     "/unidades-proyecto",
     tags=["Unidades de Proyecto"],
     summary=" Consultar Unidades de Proyecto",
+    dependencies=[Depends(require_unidades("read"))],
 )
 @optional_rate_limit("60/minute")
 async def consultar_unidades_proyecto(
@@ -346,6 +358,13 @@ async def consultar_unidades_proyecto(
     if not FIREBASE_AVAILABLE:
         raise HTTPException(
             status_code=503, detail="Firebase no disponible - verifica las credenciales"
+        )
+
+    # --- Authorization scoping (F2): forzar centro_gestor del usuario si aplica ---
+    current_user = getattr(request.state, "current_user", None)
+    if current_user is not None:
+        nombre_centro_gestor = enforce_unidades_access(
+            current_user, "read:unidades", nombre_centro_gestor
         )
 
     try:
@@ -516,6 +535,7 @@ async def consultar_unidades_proyecto(
     "/unidades-proyecto/dashboard",
     tags=["Unidades de Proyecto"],
     summary=" Dashboard Avanzado de Unidades de Proyecto",
+    dependencies=[Depends(require_unidades("read"))],
 )
 @optional_rate_limit("30/minute")
 async def get_unidades_proyecto_dashboard_endpoint(
@@ -543,6 +563,25 @@ async def get_unidades_proyecto_dashboard_endpoint(
     if not FIREBASE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Firebase not available")
 
+    current_user = getattr(request.state, "current_user", None)
+    if current_user is not None:
+        nombre_centro_gestor = enforce_unidades_access(
+            current_user, "read:unidades", nombre_centro_gestor
+        )
+
+    # F20: cache por filtros con TTL de 5 min.
+    cache_key = get_cache_key(
+        "unidades_proyecto_dashboard",
+        estado=estado or "",
+        tipo_intervencion=tipo_intervencion or "",
+        nombre_centro_gestor=nombre_centro_gestor or "__ALL__",
+        comuna_corregimiento=comuna_corregimiento or "",
+        barrio_vereda=barrio_vereda or "",
+    )
+    cached_value, hit = get_from_cache(cache_key, max_age_seconds=300)
+    if hit:
+        return create_utf8_response(cached_value)
+
     try:
         from api.scripts import get_unidades_proyecto_dashboard
 
@@ -559,6 +598,7 @@ async def get_unidades_proyecto_dashboard_endpoint(
             filters["barrio_vereda"] = barrio_vereda
 
         result = await get_unidades_proyecto_dashboard(filters or None)
+        set_in_cache(cache_key, result)
         return create_utf8_response(result)
 
     except HTTPException:
@@ -579,6 +619,7 @@ async def get_unidades_proyecto_dashboard_endpoint(
     "/unidades-proyecto/calidad-datos",
     tags=["Unidades de Proyecto"],
     summary=" Métricas de Calidad de Datos (ISO/DAMA)",
+    dependencies=[Depends(require_unidades("read"))],
 )
 @optional_rate_limit("30/minute")
 async def get_unidades_proyecto_calidad_datos(
@@ -614,6 +655,11 @@ async def get_unidades_proyecto_calidad_datos(
             status_code=503, detail="Firebase no disponible - verifica las credenciales"
         )
 
+    current_user = getattr(request.state, "current_user", None) or {}
+    nombre_centro_gestor = enforce_unidades_access(
+        current_user, "read:unidades", nombre_centro_gestor
+    )
+
     try:
         result = await get_unidades_proyecto_quality_summary(
             report_id=report_id,
@@ -638,6 +684,7 @@ async def get_unidades_proyecto_calidad_datos(
     "/unidades-proyecto/calidad-datos/analizar",
     tags=["Unidades de Proyecto"],
     summary=" Ejecutar Análisis Extensivo de Calidad (Snapshot)",
+    dependencies=[Depends(require_unidades("write"))],
 )
 @optional_rate_limit("10/minute")
 async def post_unidades_proyecto_calidad_datos_analizar(
@@ -672,6 +719,7 @@ async def post_unidades_proyecto_calidad_datos_analizar(
     "/unidades-proyecto/calidad-datos/registros",
     tags=["Unidades de Proyecto"],
     summary=" Diagnóstico por Registro (Paginado)",
+    dependencies=[Depends(require_unidades("read"))],
 )
 @optional_rate_limit("30/minute")
 async def get_unidades_proyecto_calidad_datos_registros(
@@ -707,6 +755,11 @@ async def get_unidades_proyecto_calidad_datos_registros(
             status_code=400, detail="record_type debe ser 'unidad' o 'intervencion'"
         )
 
+    current_user = getattr(request.state, "current_user", None) or {}
+    nombre_centro_gestor = enforce_unidades_access(
+        current_user, "read:unidades", nombre_centro_gestor
+    )
+
     try:
         result = await get_unidades_proyecto_quality_records_paginated(
             report_id=report_id,
@@ -731,6 +784,7 @@ async def get_unidades_proyecto_calidad_datos_registros(
     "/unidades-proyecto/calidad-datos/issues",
     tags=["Unidades de Proyecto"],
     summary=" Issues Individuales de Calidad (Paginado)",
+    dependencies=[Depends(require_unidades("read"))],
 )
 @optional_rate_limit("30/minute")
 async def get_unidades_proyecto_calidad_datos_issues(
@@ -775,6 +829,11 @@ async def get_unidades_proyecto_calidad_datos_issues(
     if severity is not None and severity not in {"S1", "S2", "S3", "S4"}:
         raise HTTPException(status_code=400, detail="severity debe ser S1, S2, S3 o S4")
 
+    current_user = getattr(request.state, "current_user", None) or {}
+    nombre_centro_gestor = enforce_unidades_access(
+        current_user, "read:unidades", nombre_centro_gestor
+    )
+
     try:
         result = await get_unidades_proyecto_quality_issues_paginated(
             report_id=report_id,
@@ -799,6 +858,7 @@ async def get_unidades_proyecto_calidad_datos_issues(
     "/unidades-proyecto/calidad-datos/historial",
     tags=["Unidades de Proyecto"],
     summary=" Historial de Snapshots de Calidad",
+    dependencies=[Depends(require_unidades("read"))],
 )
 @optional_rate_limit("30/minute")
 async def get_unidades_proyecto_calidad_datos_historial(
@@ -812,6 +872,9 @@ async def get_unidades_proyecto_calidad_datos_historial(
         raise HTTPException(
             status_code=503, detail="Firebase no disponible - verifica las credenciales"
         )
+
+    # F2: este reporte agrega datos de todos los centros gestores.
+    _require_global_unidades_access(request)
 
     try:
         result = await get_unidades_proyecto_quality_history(limit=limit)
@@ -829,6 +892,7 @@ async def get_unidades_proyecto_calidad_datos_historial(
     "/unidades-proyecto/calidad-datos/centros-gestores",
     tags=["Unidades de Proyecto"],
     summary=" Diagnóstico Agrupado por Centro Gestor (Paginado)",
+    dependencies=[Depends(require_unidades("read"))],
 )
 @optional_rate_limit("30/minute")
 async def get_unidades_proyecto_calidad_datos_centros_gestores(
@@ -854,6 +918,9 @@ async def get_unidades_proyecto_calidad_datos_centros_gestores(
         raise HTTPException(
             status_code=503, detail="Firebase no disponible - verifica las credenciales"
         )
+
+    # F2: este reporte agrega datos de todos los centros gestores.
+    _require_global_unidades_access(request)
 
     if sort_by not in {"issue_rate", "with_issues", "total_records", "name"}:
         raise HTTPException(
@@ -886,6 +953,7 @@ async def get_unidades_proyecto_calidad_datos_centros_gestores(
     "/unidades-proyecto/calidad-datos/centros-gestores/faltantes",
     tags=["Unidades de Proyecto"],
     summary=" Candidatos de Corrección: nombre_centro_gestor Faltante",
+    dependencies=[Depends(require_unidades("read"))],
 )
 @optional_rate_limit("30/minute")
 async def get_unidades_proyecto_calidad_datos_centros_gestores_faltantes(
@@ -908,6 +976,9 @@ async def get_unidades_proyecto_calidad_datos_centros_gestores_faltantes(
         raise HTTPException(
             status_code=503, detail="Firebase no disponible - verifica las credenciales"
         )
+
+    # F2: este reporte agrega datos de todos los centros gestores.
+    _require_global_unidades_access(request)
 
     if record_type is not None and record_type.lower() not in {
         "unidad",
@@ -946,9 +1017,19 @@ async def get_unidades_proyecto_calidad_datos_centros_gestores_faltantes(
     "/unidades-proyecto/init-360",
     tags=["Artefacto de Captura #360"],
     summary=" GET |  Listados | Datos Iniciales para Captura #360",
+    dependencies=[Depends(require_unidades("read"))],
 )
 @optional_rate_limit("60/minute")
-async def get_unidades_proyecto_init_360(request: Request):
+async def get_unidades_proyecto_init_360(
+    request: Request,
+    nombre_centro_gestor: Optional[str] = Query(
+        None, description="Filtrar por centro gestor"
+    ),
+    limit: int = Query(
+        500, ge=1, le=5000, description="Máximo de registros a devolver"
+    ),
+    offset: int = Query(0, ge=0, description="Offset de paginación"),
+):
     """
     ##  GET |  Listados | Obtener Datos Iniciales para Artefacto de Captura #360
 
@@ -1004,6 +1085,24 @@ async def get_unidades_proyecto_init_360(request: Request):
     if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
         raise HTTPException(status_code=503, detail="Firebase or scripts not available")
 
+    # F2: aplicar scoping por centro gestor según el rol del usuario.
+    current_user = getattr(request.state, "current_user", None)
+    if current_user is not None:
+        nombre_centro_gestor = enforce_unidades_access(
+            current_user, "read:unidades", nombre_centro_gestor
+        )
+
+    # F20: cache por (centro_gestor, limit, offset) con TTL de 5 min.
+    cache_key = get_cache_key(
+        "init_360",
+        nombre_centro_gestor=nombre_centro_gestor or "__ALL__",
+        limit=limit,
+        offset=offset,
+    )
+    cached_value, hit = get_from_cache(cache_key, max_age_seconds=300)
+    if hit:
+        return create_utf8_response(cached_value)
+
     try:
         # Conectar a Firestore
         db = get_firestore_client()
@@ -1037,8 +1136,10 @@ async def get_unidades_proyecto_init_360(request: Request):
             "direccion",
         ]
 
-        # Consultar colección
+        # Consultar colección con filtro opcional por centro gestor (F2 + F20).
         query = db.collection("unidades_proyecto")
+        if nombre_centro_gestor:
+            query = query.where("nombre_centro_gestor", "==", nombre_centro_gestor)
         docs = query.stream()
 
         # Procesar documentos
@@ -1082,22 +1183,38 @@ async def get_unidades_proyecto_init_360(request: Request):
 
             registros_filtrados.append(registro)
 
+        # F20: paginación tras el filtrado lógico.
+        total_count = len(registros_filtrados)
+        paginated = registros_filtrados[offset : offset + limit]
+
         # Preparar respuesta
         response_data = {
             "success": True,
-            "data": registros_filtrados,
-            "count": len(registros_filtrados),
+            "data": paginated,
+            "count": len(paginated),
+            "total": total_count,
+            "pagination": {
+                "limit": limit,
+                "offset": offset,
+                "returned": len(paginated),
+                "total": total_count,
+                "has_more": offset + len(paginated) < total_count,
+            },
             "collection": "unidades_proyecto",
             "timestamp": datetime.now().isoformat(),
             "last_updated": "2025-11-26T00:00:00Z",
-            "message": f"Se obtuvieron {len(registros_filtrados)} registros que cumplen los criterios del artefacto #360",
+            "message": f"Se obtuvieron {len(paginated)} de {total_count} registros que cumplen los criterios del artefacto #360",
             "filters_applied": {
                 "excluded_clase_up": exclusion_clase_up,
                 "excluded_tipo_equipamiento": exclusion_tipo_equipamiento,
                 "excluded_tipo_intervencion": exclusion_tipo_intervencion,
+                "nombre_centro_gestor": nombre_centro_gestor,
             },
             "fields_returned": campos_requeridos,
         }
+
+        # F20: cachear resultado (5 min)
+        set_in_cache(cache_key, response_data)
 
         return create_utf8_response(response_data)
 
@@ -1113,6 +1230,7 @@ async def get_unidades_proyecto_init_360(request: Request):
     "/intervenciones",
     tags=["Unidades de Proyecto"],
     summary=" GET | Filtrar Intervenciones",
+    dependencies=[Depends(require_unidades("read"))],
 )
 @optional_rate_limit("60/minute")
 async def get_intervenciones_filtradas_endpoint(
@@ -1139,6 +1257,15 @@ async def get_intervenciones_filtradas_endpoint(
     unidad: Optional[str] = Query(None, description="Unidad"),
     upid: Optional[str] = Query(None, description="UPID"),
     url_proceso: Optional[str] = Query(None, description="URL proceso"),
+    limit: int = Query(
+        1000,
+        ge=1,
+        le=10000,
+        description="Número máximo de registros a retornar (1-10000, default 1000)",
+    ),
+    offset: int = Query(
+        0, ge=0, description="Número de registros a omitir para paginación"
+    ),
 ):
     """
     ##  GET | Filtrar Intervenciones
@@ -1177,6 +1304,12 @@ async def get_intervenciones_filtradas_endpoint(
     """
     if not FIREBASE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Firebase not available")
+
+    current_user = getattr(request.state, "current_user", None)
+    if current_user is not None:
+        nombre_centro_gestor = enforce_unidades_access(
+            current_user, "read:unidades", nombre_centro_gestor
+        )
 
     try:
         db = get_firestore_client()
@@ -1270,6 +1403,9 @@ async def get_intervenciones_filtradas_endpoint(
         ]
 
         query = query.select(fields)
+        if offset > 0:
+            query = query.offset(offset)
+        query = query.limit(limit)
         docs = query.stream()
 
         filters_payload = {
@@ -1366,6 +1502,11 @@ async def get_intervenciones_filtradas_endpoint(
                 "data": data,
                 "count": len(data),
                 "filters": filters_payload,
+                "pagination": {
+                    "limit": limit,
+                    "offset": offset,
+                    "returned": len(data),
+                },
             }
         )
     except Exception as e:
@@ -1378,8 +1519,10 @@ async def get_intervenciones_filtradas_endpoint(
     "/unidades-proyecto/intervenciones/export-xlsx",
     tags=["Unidades de Proyecto"],
     summary=" Exportar Intervenciones a XLSX",
+    dependencies=[Depends(require_unidades("read"))],
 )
 async def exportar_intervenciones_xlsx(
+    request: Request,
     avance_obra: Optional[float] = Query(None, description="Avance de obra"),
     bpin: Optional[int] = Query(None, description="BPIN"),
     cantidad: Optional[int] = Query(None, description="Cantidad"),
@@ -1409,6 +1552,12 @@ async def exportar_intervenciones_xlsx(
     """
     if not FIREBASE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Firebase not available")
+
+    current_user = getattr(request.state, "current_user", None)
+    if current_user is not None:
+        nombre_centro_gestor = enforce_unidades_access(
+            current_user, "read:unidades", nombre_centro_gestor
+        )
 
     excluded_fields = {
         "referencia_proceso",
@@ -1561,6 +1710,7 @@ async def exportar_intervenciones_xlsx(
 @router.get(
     "/avances_unidades_proyecto",
     tags=["Unidades de Proyecto"],
+    dependencies=[Depends(require_unidades("read"))],
     summary=" GET | Leer avances de Unidades de Proyecto",
     response_description="Lista de avances con enlaces normalizados para imágenes y documentos",
     responses={
@@ -1677,6 +1827,13 @@ async def get_avances_unidades_proyecto(
     """
     if not FIREBASE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Firebase not available")
+
+    # F2: aplicar scoping por centro gestor. Si el usuario tiene acceso
+    # restringido, se devuelve sólo los avances cuyo doc tenga el centro forzado.
+    current_user = getattr(request.state, "current_user", None)
+    forced_centro = None
+    if current_user is not None:
+        forced_centro = enforce_unidades_access(current_user, "read:unidades", None)
 
     try:
         db = get_firestore_client()
@@ -1907,6 +2064,15 @@ async def get_avances_unidades_proyecto(
                 doc_data = normalize_value(doc_data)
             doc_data = _normalize_avance_links(doc_data, doc.id)
 
+            if (
+                forced_centro is not None
+                and str(doc_data.get("nombre_centro_gestor") or "") != forced_centro
+            ):
+                raise HTTPException(
+                    status_code=403,
+                    detail="No tiene acceso a avances de este centro gestor",
+                )
+
             return create_utf8_response(
                 {
                     "data": [doc_data],
@@ -1926,6 +2092,11 @@ async def get_avances_unidades_proyecto(
             if should_convert:
                 doc_data = normalize_value(doc_data)
             doc_data = _normalize_avance_links(doc_data, doc.id)
+            if (
+                forced_centro is not None
+                and str(doc_data.get("nombre_centro_gestor") or "") != forced_centro
+            ):
+                continue
             data.append(doc_data)
 
         return create_utf8_response(
@@ -1948,6 +2119,7 @@ async def get_avances_unidades_proyecto(
     "/avances_unidades_proyecto",
     tags=["Unidades de Proyecto"],
     summary=" DELETE | Eliminar avance UP y soportes S3",
+    dependencies=[Depends(require_unidades("delete"))],
 )
 @optional_rate_limit("30/minute")
 async def eliminar_avance_unidades_proyecto(
@@ -1966,6 +2138,10 @@ async def eliminar_avance_unidades_proyecto(
     if not FIREBASE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Firebase not available")
 
+    current_user = getattr(request.state, "current_user", None)
+    if current_user is None:
+        raise HTTPException(status_code=401, detail="No autenticado")
+
     try:
         db = get_firestore_client()
         if db is None:
@@ -1981,6 +2157,13 @@ async def eliminar_avance_unidades_proyecto(
             )
 
         doc_data = doc.to_dict() or {}
+
+        # F2: validar centro_gestor del avance
+        enforce_unidades_access(
+            current_user,
+            "delete:unidades",
+            doc_data.get("nombre_centro_gestor"),
+        )
 
         # Inicializar S3 para borrado
         try:
@@ -2129,6 +2312,7 @@ async def eliminar_avance_unidades_proyecto(
     "/solicitudes_cambios_unidades_proyecto",
     tags=["Unidades de Proyecto"],
     summary=" GET | Consultar Solicitudes de Cambios de Unidades de Proyecto",
+    dependencies=[Depends(require_unidades("read"))],
 )
 @optional_rate_limit("60/minute")
 async def consultar_solicitudes_cambios_unidades_proyecto(
@@ -2142,6 +2326,9 @@ async def consultar_solicitudes_cambios_unidades_proyecto(
 ):
     if not FIREBASE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Firebase not available")
+
+    current_user = getattr(request.state, "current_user", None) or {}
+    effective_centro = enforce_unidades_access(current_user, "read:unidades", None)
 
     try:
         db = get_firestore_client()
@@ -2177,6 +2364,15 @@ async def consultar_solicitudes_cambios_unidades_proyecto(
             if should_convert:
                 doc_data = normalize_value(doc_data)
             doc_data["id"] = doc.id
+
+            if (
+                effective_centro
+                and doc_data.get("nombre_centro_gestor") != effective_centro
+            ):
+                raise HTTPException(
+                    status_code=403,
+                    detail="No autorizado para acceder a esta solicitud",
+                )
 
             return create_utf8_response(
                 {
@@ -2238,6 +2434,11 @@ async def consultar_solicitudes_cambios_unidades_proyecto(
             if should_convert:
                 doc_data = normalize_value(doc_data)
             doc_data["id"] = doc.id
+            if (
+                effective_centro
+                and doc_data.get("nombre_centro_gestor") != effective_centro
+            ):
+                continue
             data.append(doc_data)
 
         return create_utf8_response(
@@ -2268,6 +2469,7 @@ async def consultar_solicitudes_cambios_unidades_proyecto(
     "/solicitudes_cambios_intervenciones",
     tags=["Unidades de Proyecto"],
     summary=" GET | Consultar Solicitudes de Cambios de Intervenciones",
+    dependencies=[Depends(require_unidades("read"))],
 )
 @optional_rate_limit("60/minute")
 async def consultar_solicitudes_cambios_intervenciones(
@@ -2284,6 +2486,9 @@ async def consultar_solicitudes_cambios_intervenciones(
 ):
     if not FIREBASE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Firebase not available")
+
+    current_user = getattr(request.state, "current_user", None) or {}
+    effective_centro = enforce_unidades_access(current_user, "read:unidades", None)
 
     try:
         db = get_firestore_client()
@@ -2319,6 +2524,15 @@ async def consultar_solicitudes_cambios_intervenciones(
             if should_convert:
                 doc_data = normalize_value(doc_data)
             doc_data["id"] = doc.id
+
+            if (
+                effective_centro
+                and doc_data.get("nombre_centro_gestor") != effective_centro
+            ):
+                raise HTTPException(
+                    status_code=403,
+                    detail="No autorizado para acceder a esta solicitud",
+                )
 
             return create_utf8_response(
                 {
@@ -2387,6 +2601,11 @@ async def consultar_solicitudes_cambios_intervenciones(
             if should_convert:
                 doc_data = normalize_value(doc_data)
             doc_data["id"] = doc.id
+            if (
+                effective_centro
+                and doc_data.get("nombre_centro_gestor") != effective_centro
+            ):
+                continue
             data.append(doc_data)
 
         return create_utf8_response(
@@ -2452,6 +2671,7 @@ class SolicitudCambioUnidadProyectoRequest(BaseModel):
     "/solicitudes_cambios_unidad_proyecto",
     tags=["Unidades de Proyecto"],
     summary=" POST | Solicitud de cambios en Unidad de Proyecto",
+    dependencies=[Depends(require_unidades("write"))],
 )
 @optional_rate_limit("30/minute")
 async def crear_solicitud_cambio_unidad_proyecto(
@@ -2498,16 +2718,14 @@ async def crear_solicitud_cambio_unidad_proyecto(
             and geometry_val.get("type")
             and geometry_val.get("coordinates")
         ):
-            basemaps_dir = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)), "basemaps"
-            )
+            _validate_crs_coords(_normalizar_geometry(geometry_val))
             comuna = _buscar_en_geojson(
-                os.path.join(basemaps_dir, "comunas_corregimientos.geojson"),
+                os.path.join(BASEMAPS_DIR, "comunas_corregimientos.geojson"),
                 "comuna_corregimiento",
                 geometry_val,
             )
             barrio = _buscar_en_geojson(
-                os.path.join(basemaps_dir, "barrios_veredas.geojson"),
+                os.path.join(BASEMAPS_DIR, "barrios_veredas.geojson"),
                 "barrio_vereda",
                 geometry_val,
             )
@@ -2555,6 +2773,7 @@ async def crear_solicitud_cambio_unidad_proyecto(
     "/solicitudes_cambios_intervencion",
     tags=["Unidades de Proyecto"],
     summary=" POST | Solicitud de cambios en Intervención",
+    dependencies=[Depends(require_unidades("write"))],
 )
 @optional_rate_limit("30/minute")
 async def crear_solicitud_cambio_intervencion(
@@ -2648,6 +2867,91 @@ def _normalizar_geometry(geometry_dict: dict) -> dict:
     return geometry_dict
 
 
+# Bounding box aproximado para Cali, Colombia (EPSG:4326)
+# lon ∈ [-77.0, -76.0], lat ∈ [3.0, 4.0]
+_CALI_BBOX = {"lon_min": -77.0, "lon_max": -76.0, "lat_min": 3.0, "lat_max": 4.0}
+
+
+def _require_global_unidades_access(request: Request) -> None:
+    """F2: gate para endpoints de diagnóstico agregado.
+
+    Si el usuario sólo tiene permisos ``:own_centro`` / ``:basic``, no debe
+    ver datos agregados de todos los centros gestores. Lanza HTTPException(403).
+    """
+    current_user = getattr(request.state, "current_user", None)
+    if current_user is None:
+        return  # auth deshabilitada (tests) – respetar comportamiento previo
+    forced = enforce_unidades_access(current_user, "read:unidades", None)
+    if forced is not None:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Este reporte agrega información de múltiples centros gestores "
+                "y requiere acceso global a unidades."
+            ),
+        )
+
+
+def _validate_crs_coords(geometry_dict: dict) -> None:
+    """Valida que las coordenadas estén en EPSG:4326 dentro del bounding box de Cali.
+
+    Recorre recursivamente la estructura `coordinates` (admite Point, LineString,
+    Polygon, MultiPolygon, etc.) y verifica que cada par [lon, lat] esté dentro
+    del rango razonable. Lanza HTTPException(400) si detecta valores fuera de
+    rango o si la geometría carece de los campos básicos.
+    """
+    if not isinstance(geometry_dict, dict):
+        raise HTTPException(status_code=400, detail="Geometría inválida")
+    coords = geometry_dict.get("coordinates")
+    if coords is None:
+        raise HTTPException(status_code=400, detail="Geometría sin 'coordinates'")
+
+    def _check_pair(pair):
+        if (
+            not isinstance(pair, (list, tuple))
+            or len(pair) < 2
+            or not isinstance(pair[0], (int, float))
+            or not isinstance(pair[1], (int, float))
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Coordenadas deben ser pares numéricos [lon, lat]",
+            )
+        lon, lat = float(pair[0]), float(pair[1])
+        if not (-180.0 <= lon <= 180.0 and -90.0 <= lat <= 90.0):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Coordenadas fuera de EPSG:4326 (lon={lon}, lat={lat})",
+            )
+        if not (
+            _CALI_BBOX["lon_min"] <= lon <= _CALI_BBOX["lon_max"]
+            and _CALI_BBOX["lat_min"] <= lat <= _CALI_BBOX["lat_max"]
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Coordenadas fuera del bounding box de Cali "
+                    f"(lon={lon}, lat={lat}). Esperado EPSG:4326 dentro de Cali."
+                ),
+            )
+
+    def _walk(node):
+        # nodo es lista: si los dos primeros son numéricos, es un par; si no, recursivo
+        if (
+            isinstance(node, (list, tuple))
+            and len(node) >= 2
+            and isinstance(node[0], (int, float))
+            and isinstance(node[1], (int, float))
+        ):
+            _check_pair(node)
+            return
+        if isinstance(node, (list, tuple)):
+            for item in node:
+                _walk(item)
+
+    _walk(coords)
+
+
 def _buscar_en_geojson(
     geojson_path: str, property_name: str, point_coords_or_geometry=None
 ) -> Optional[str]:
@@ -2685,10 +2989,11 @@ def _buscar_proyectos_estrategicos(geometry_input) -> list:
     Acepta [lon, lat] (legacy) o un dict GeoJSON geometry de cualquier tipo (Point, Polygon, LineString, etc.).
     """
     nombres = []
-    estrategicos_dir = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "basemaps", "proyectos_estrategicos"
-    )
+    estrategicos_dir = PROYECTOS_ESTRATEGICOS_DIR
     if not os.path.isdir(estrategicos_dir):
+        logger.warning(
+            "proyectos_estrategicos: directorio no encontrado en %s", estrategicos_dir
+        )
         return []
     try:
         if isinstance(geometry_input, dict) and geometry_input.get("type"):
@@ -2722,6 +3027,7 @@ def _buscar_proyectos_estrategicos(geometry_input) -> list:
 @router.post(
     "/crear_unidad_proyecto",
     tags=["Unidades de Proyecto"],
+    dependencies=[Depends(require_unidades("write"))],
     summary=" POST | Crear Unidad de Proyecto",
     description=(
         "Crea una nueva Unidad de Proyecto. Variables auto-calculadas:\n\n"
@@ -2755,9 +3061,30 @@ async def crear_unidad_proyecto(
         description="Geometría GeoJSON tipo Point con coordenadas [longitud, latitud]",
         example={"type": "Point", "coordinates": [0.0, 0.0]},
     ),
+    nombre_centro_gestor: Optional[str] = Body(
+        None,
+        description=(
+            "Centro gestor responsable. Si el usuario no es global se "
+            "fuerza al centro_gestor_assigned del usuario actual."
+        ),
+        example="DAGMA",
+    ),
 ):
     if not FIREBASE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Firebase not available")
+
+    # --- Authorization scoping (F2/F3) ---
+    current_user = getattr(request.state, "current_user", None)
+    if current_user is None:
+        raise HTTPException(status_code=401, detail="No autenticado")
+    effective_centro = enforce_unidades_access(
+        current_user, "write:unidades", nombre_centro_gestor
+    )
+    # Si el usuario solo tiene own_centro o no envió valor, forzamos su centro.
+    if not effective_centro:
+        effective_centro = current_user.get(
+            "centro_gestor_assigned"
+        ) or current_user.get("nombre_centro_gestor")
 
     try:
         db = get_firestore_client()
@@ -2791,20 +3118,17 @@ async def crear_unidad_proyecto(
         # --- Auto-detectar comuna_corregimiento y barrio_vereda desde geometry ---
         comuna_corregimiento = None
         barrio_vereda = None
-        basemaps_dir = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "basemaps"
-        )
-
         proyectos_estrategicos = []
 
         if geometry and geometry.get("type") and geometry.get("coordinates"):
+            _validate_crs_coords(_normalizar_geometry(geometry))
             comuna_corregimiento = _buscar_en_geojson(
-                os.path.join(basemaps_dir, "comunas_corregimientos.geojson"),
+                os.path.join(BASEMAPS_DIR, "comunas_corregimientos.geojson"),
                 "comuna_corregimiento",
                 geometry,
             )
             barrio_vereda = _buscar_en_geojson(
-                os.path.join(basemaps_dir, "barrios_veredas.geojson"),
+                os.path.join(BASEMAPS_DIR, "barrios_veredas.geojson"),
                 "barrio_vereda",
                 geometry,
             )
@@ -2820,6 +3144,7 @@ async def crear_unidad_proyecto(
             "barrio_vereda": barrio_vereda,
             "direccion": direccion,
             "geometry": geometry,
+            "nombre_centro_gestor": effective_centro,
         }
         unidad_payload = {
             key: value for key, value in unidad_payload.items() if value is not None
@@ -2828,8 +3153,28 @@ async def crear_unidad_proyecto(
         unidad_payload["proyectos_estrategicos"] = proyectos_estrategicos
         unidad_payload["created_at"] = now_iso
         unidad_payload["updated_at"] = now_iso
+        unidad_payload["created_by"] = current_user.get("uid")
 
         db.collection("unidades_proyecto").document(new_upid).set(unidad_payload)
+
+        # --- Audit (F6) ---
+        try:
+            db.collection("cambios_implementados_unidades_proyecto").add(
+                {
+                    "upid": new_upid,
+                    "accion": "crear",
+                    "uid": current_user.get("uid"),
+                    "email": current_user.get("email"),
+                    "nombre_centro_gestor": effective_centro,
+                    "payload": unidad_payload,
+                    "timestamp": now_iso,
+                }
+            )
+        except Exception as audit_err:
+            logger.warning(
+                "crear_unidad_proyecto: fallo registrando auditoría: %s",
+                audit_err,
+            )
 
         return create_utf8_response(
             {"id": new_upid, "collection": "unidades_proyecto", "data": unidad_payload}
@@ -2846,6 +3191,7 @@ async def crear_unidad_proyecto(
     "/crear_intervencion",
     tags=["Unidades de Proyecto"],
     summary=" POST | Crear Intervención",
+    dependencies=[Depends(require_unidades("write"))],
 )
 @optional_rate_limit("30/minute")
 async def crear_intervencion(
@@ -2875,6 +3221,16 @@ async def crear_intervencion(
 ):
     if not FIREBASE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Firebase not available")
+
+    current_user = getattr(request.state, "current_user", None)
+    if current_user is None:
+        raise HTTPException(status_code=401, detail="No autenticado")
+
+    effective_centro = enforce_unidades_access(
+        current_user, "write:unidades", nombre_centro_gestor
+    )
+    if effective_centro and not nombre_centro_gestor:
+        nombre_centro_gestor = effective_centro
 
     try:
         db = get_firestore_client()
@@ -2966,11 +3322,34 @@ async def crear_intervencion(
         intervencion_payload["intervencion_id"] = new_intervencion_id
         intervencion_payload["created_at"] = now_iso
         intervencion_payload["updated_at"] = now_iso
+        intervencion_payload["created_by"] = current_user.get("uid")
 
         doc_id = str(uuid.uuid4())
         db.collection("intervenciones_unidades_proyecto").document(doc_id).set(
             intervencion_payload
         )
+
+        # Audit (F6)
+        try:
+            db.collection("cambios_implementados_intervenciones").add(
+                {
+                    "intervencion_id": new_intervencion_id,
+                    "doc_id": doc_id,
+                    "upid": upid_value,
+                    "accion": "crear",
+                    "uid": current_user.get("uid"),
+                    "email": current_user.get("email"),
+                    "nombre_centro_gestor": intervencion_payload.get(
+                        "nombre_centro_gestor"
+                    ),
+                    "payload_nuevo": intervencion_payload,
+                    "timestamp": now_iso,
+                }
+            )
+        except Exception as audit_err:
+            logger.warning(
+                "crear_intervencion: fallo registrando auditoría: %s", audit_err
+            )
 
         return create_utf8_response(
             {
@@ -3069,6 +3448,7 @@ class ModificarIntervencionRequest(BaseModel):
     "/modificar/unidad_proyecto",
     tags=["Unidades de Proyecto"],
     summary=" PUT | Modificar Unidad de Proyecto",
+    dependencies=[Depends(require_unidades("write"))],
 )
 @optional_rate_limit("30/minute")
 async def modificar_unidad_proyecto(
@@ -3080,6 +3460,10 @@ async def modificar_unidad_proyecto(
 ):
     if not FIREBASE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Firebase not available")
+
+    current_user = getattr(request.state, "current_user", None)
+    if current_user is None:
+        raise HTTPException(status_code=401, detail="No autenticado")
 
     try:
         db = get_firestore_client()
@@ -3114,6 +3498,14 @@ async def modificar_unidad_proyecto(
                 detail=f"No existe unidad_proyecto con upid: {upid_value}",
             )
 
+        # F2: validar centro_gestor del doc existente
+        previous_doc_data = doc_snap.to_dict() or {}
+        enforce_unidades_access(
+            current_user,
+            "write:unidades",
+            previous_doc_data.get("nombre_centro_gestor"),
+        )
+
         changes = {
             key: value for key, value in body.items() if key not in {"upid", "aprobado"}
         }
@@ -3125,16 +3517,14 @@ async def modificar_unidad_proyecto(
             and geometry_val.get("type")
             and geometry_val.get("coordinates")
         ):
-            basemaps_dir = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)), "basemaps"
-            )
+            _validate_crs_coords(_normalizar_geometry(geometry_val))
             comuna = _buscar_en_geojson(
-                os.path.join(basemaps_dir, "comunas_corregimientos.geojson"),
+                os.path.join(BASEMAPS_DIR, "comunas_corregimientos.geojson"),
                 "comuna_corregimiento",
                 geometry_val,
             )
             barrio = _buscar_en_geojson(
-                os.path.join(basemaps_dir, "barrios_veredas.geojson"),
+                os.path.join(BASEMAPS_DIR, "barrios_veredas.geojson"),
                 "barrio_vereda",
                 geometry_val,
             )
@@ -3170,6 +3560,9 @@ async def modificar_unidad_proyecto(
                 "upid": upid_value,
                 "aprobado": aprobado,
                 "ejecutado": aprobado,
+                "accion": "modificar",
+                "uid": current_user.get("uid"),
+                "email": current_user.get("email"),
                 "datos_anteriores": previous_data,
                 "datos_solicitados": changes,
                 "datos_resultantes": updated_data,
@@ -3198,6 +3591,7 @@ async def modificar_unidad_proyecto(
     "/modificar/intervencion",
     tags=["Unidades de Proyecto"],
     summary=" PUT | Modificar Intervención",
+    dependencies=[Depends(require_unidades("write"))],
 )
 @optional_rate_limit("30/minute")
 async def modificar_intervencion(
@@ -3209,6 +3603,10 @@ async def modificar_intervencion(
 ):
     if not FIREBASE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Firebase not available")
+
+    current_user = getattr(request.state, "current_user", None)
+    if current_user is None:
+        raise HTTPException(status_code=401, detail="No autenticado")
 
     try:
         db = get_firestore_client()
@@ -3247,6 +3645,15 @@ async def modificar_intervencion(
                 detail=f"No existe intervención con intervencion_id: {intervencion_id_value}",
             )
 
+        # F2: validar centro_gestor del doc existente
+        doc = docs[0]
+        previous_data = doc.to_dict() or {}
+        enforce_unidades_access(
+            current_user,
+            "write:unidades",
+            previous_data.get("nombre_centro_gestor"),
+        )
+
         extra_data = body.get("extra_data") or {}
         if not isinstance(extra_data, dict):
             raise HTTPException(
@@ -3267,9 +3674,6 @@ async def modificar_intervencion(
                 status_code=400, detail="No se enviaron campos a modificar"
             )
 
-        doc = docs[0]
-        previous_data = doc.to_dict() or {}
-
         changes_to_apply = dict(changes)
         if aprobado:
             now_iso = datetime.now().isoformat()
@@ -3288,6 +3692,9 @@ async def modificar_intervencion(
                 "intervencion_id": intervencion_id_value,
                 "aprobado": aprobado,
                 "ejecutado": aprobado,
+                "accion": "modificar",
+                "uid": current_user.get("uid"),
+                "email": current_user.get("email"),
                 "datos_anteriores": previous_data,
                 "datos_solicitados": changes,
                 "datos_resultantes": updated_data,
@@ -3316,6 +3723,7 @@ async def modificar_intervencion(
     "/eliminar_unidad_proyecto",
     tags=["Unidades de Proyecto"],
     summary=" DELETE | Eliminar Unidad de Proyecto",
+    dependencies=[Depends(require_unidades("delete"))],
 )
 @optional_rate_limit("30/minute")
 async def eliminar_unidad_proyecto(
@@ -3324,6 +3732,10 @@ async def eliminar_unidad_proyecto(
 ):
     if not FIREBASE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Firebase not available")
+
+    current_user = getattr(request.state, "current_user", None)
+    if current_user is None:
+        raise HTTPException(status_code=401, detail="No autenticado")
 
     try:
         db = get_firestore_client()
@@ -3340,10 +3752,39 @@ async def eliminar_unidad_proyecto(
                 status_code=404, detail=f"No existe unidad_proyecto con upid: {upid}"
             )
 
-        deleted_count = 0
+        # Validar centro_gestor del recurso antes de eliminar (F2)
         for doc in docs:
+            data = doc.to_dict() or {}
+            enforce_unidades_access(
+                current_user,
+                "delete:unidades",
+                data.get("nombre_centro_gestor"),
+            )
+
+        deleted_count = 0
+        now_iso = datetime.now().isoformat()
+        for doc in docs:
+            data = doc.to_dict() or {}
             doc.reference.delete()
             deleted_count += 1
+            # Audit (F6)
+            try:
+                db.collection("cambios_implementados_unidades_proyecto").add(
+                    {
+                        "upid": upid,
+                        "accion": "eliminar",
+                        "uid": current_user.get("uid"),
+                        "email": current_user.get("email"),
+                        "nombre_centro_gestor": data.get("nombre_centro_gestor"),
+                        "payload_previo": data,
+                        "timestamp": now_iso,
+                    }
+                )
+            except Exception as audit_err:
+                logger.warning(
+                    "eliminar_unidad_proyecto: fallo registrando auditoría: %s",
+                    audit_err,
+                )
 
         return create_utf8_response(
             {
@@ -3365,6 +3806,7 @@ async def eliminar_unidad_proyecto(
     "/eliminar_intervencion",
     tags=["Unidades de Proyecto"],
     summary=" DELETE | Eliminar Intervención",
+    dependencies=[Depends(require_unidades("delete"))],
 )
 @optional_rate_limit("30/minute")
 async def eliminar_intervencion(
@@ -3373,6 +3815,10 @@ async def eliminar_intervencion(
 ):
     if not FIREBASE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Firebase not available")
+
+    current_user = getattr(request.state, "current_user", None)
+    if current_user is None:
+        raise HTTPException(status_code=401, detail="No autenticado")
 
     try:
         db = get_firestore_client()
@@ -3392,10 +3838,39 @@ async def eliminar_intervencion(
                 detail=f"No existe intervención con intervencion_id: {intervencion_id}",
             )
 
-        deleted_count = 0
+        # Validar centro_gestor (F2)
         for doc in docs:
+            data = doc.to_dict() or {}
+            enforce_unidades_access(
+                current_user,
+                "delete:unidades",
+                data.get("nombre_centro_gestor"),
+            )
+
+        deleted_count = 0
+        now_iso = datetime.now().isoformat()
+        for doc in docs:
+            data = doc.to_dict() or {}
             doc.reference.delete()
             deleted_count += 1
+            # Audit (F6)
+            try:
+                db.collection("cambios_implementados_intervenciones").add(
+                    {
+                        "intervencion_id": intervencion_id,
+                        "accion": "eliminar",
+                        "uid": current_user.get("uid"),
+                        "email": current_user.get("email"),
+                        "nombre_centro_gestor": data.get("nombre_centro_gestor"),
+                        "payload_previo": data,
+                        "timestamp": now_iso,
+                    }
+                )
+            except Exception as audit_err:
+                logger.warning(
+                    "eliminar_intervencion: fallo registrando auditoría: %s",
+                    audit_err,
+                )
 
         return create_utf8_response(
             {
@@ -3417,6 +3892,7 @@ async def eliminar_intervencion(
     "/registrar_avance_up",
     tags=["Unidades de Proyecto"],
     summary=" POST | Registrar Avance UP",
+    dependencies=[Depends(require_unidades("write"))],
 )
 @optional_rate_limit("30/minute")
 async def registrar_avance_up(
@@ -3862,6 +4338,7 @@ async def registrar_avance_up(
     "/intervenciones/sincronizar-links-secop",
     tags=["Unidades de Proyecto"],
     summary=" POST | Sincronizar Links SECOP de Intervenciones (incremental)",
+    dependencies=[Depends(require_unidades("write"))],
 )
 @optional_rate_limit("5/minute")
 async def sincronizar_links_secop_intervenciones(request: Request):
@@ -4353,6 +4830,7 @@ async def sincronizar_links_secop_intervenciones(request: Request):
     "/intervenciones/links-secop",
     tags=["Unidades de Proyecto"],
     summary=" GET | Leer Links SECOP de Intervenciones",
+    dependencies=[Depends(require_unidades("read"))],
 )
 @optional_rate_limit("30/minute")
 async def leer_links_secop_intervenciones(
@@ -4380,6 +4858,13 @@ async def leer_links_secop_intervenciones(
     """
     if not FIREBASE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Firebase not available")
+
+    # F2: aplicar scoping por centro gestor según el rol del usuario.
+    current_user = getattr(request.state, "current_user", None)
+    if current_user is not None:
+        nombre_centro_gestor = enforce_unidades_access(
+            current_user, "read:unidades", nombre_centro_gestor
+        )
 
     db = get_firestore_client()
     if db is None:
@@ -4462,6 +4947,7 @@ async def leer_links_secop_intervenciones(
     "/unidades-proyecto/geometry",
     tags=["Unidades de Proyecto"],
     summary="GET | Geometrías GeoJSON de Unidades de Proyecto",
+    dependencies=[Depends(require_unidades("read"))],
 )
 @optional_rate_limit("60/minute")
 async def get_geometry_unidades_proyecto(
@@ -4488,6 +4974,11 @@ async def get_geometry_unidades_proyecto(
         raise HTTPException(
             status_code=503, detail="Scripts de unidades proyecto no disponibles"
         )
+
+    current_user = getattr(request.state, "current_user", None) or {}
+    nombre_centro_gestor = enforce_unidades_access(
+        current_user, "read:unidades", nombre_centro_gestor
+    )
 
     filters: Dict[str, Any] = {}
     if upid:
@@ -4533,6 +5024,7 @@ async def get_geometry_unidades_proyecto(
     "/unidades-proyecto/attributes",
     tags=["Unidades de Proyecto"],
     summary="GET | Atributos tabulares de Unidades de Proyecto",
+    dependencies=[Depends(require_unidades("read"))],
 )
 @optional_rate_limit("60/minute")
 async def get_attributes_unidades_proyecto(
@@ -4560,6 +5052,11 @@ async def get_attributes_unidades_proyecto(
         raise HTTPException(
             status_code=503, detail="Scripts de unidades proyecto no disponibles"
         )
+
+    current_user = getattr(request.state, "current_user", None) or {}
+    nombre_centro_gestor = enforce_unidades_access(
+        current_user, "read:unidades", nombre_centro_gestor
+    )
 
     filters: Dict[str, Any] = {}
     if upid:
@@ -4616,6 +5113,7 @@ _FILTERABLE_FIELDS = [
     "/unidades-proyecto/filters",
     tags=["Unidades de Proyecto"],
     summary="GET | Opciones de filtros disponibles",
+    dependencies=[Depends(require_unidades("read"))],
 )
 @optional_rate_limit("60/minute")
 async def get_filters_unidades_proyecto(

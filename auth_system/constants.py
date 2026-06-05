@@ -17,7 +17,7 @@ ROLE_HIERARCHY = {
     "gestor_contratos": 3,
     "analista": 4,
     "visualizador": 5,
-    "publico": 6
+    "publico": 6,
 }
 
 # DEFINICIÓN COMPLETA DE ROLES Y SUS PERMISOS
@@ -60,9 +60,8 @@ ROLES = {
             # GeoJSON
             "download:geojson",
             "upload:geojson",
-        ]
+        ],
     },
-    
     "admin_general": {
         "name": "Administrador General",
         "level": 1,
@@ -94,9 +93,8 @@ ROLES = {
             # GeoJSON
             "download:geojson",
             "upload:geojson",
-        ]
+        ],
     },
-    
     "admin_centro_gestor": {
         "name": "Administrador de Centro Gestor",
         "level": 2,
@@ -122,9 +120,8 @@ ROLES = {
             # GeoJSON
             "download:geojson:own_centro",
             "upload:geojson:own_centro",
-        ]
+        ],
     },
-    
     "editor_datos": {
         "name": "Editor de Datos",
         "level": 3,
@@ -143,9 +140,8 @@ ROLES = {
             # GeoJSON
             "download:geojson",
             "upload:geojson",
-        ]
+        ],
     },
-    
     "gestor_contratos": {
         "name": "Gestor de Contratos",
         "level": 3,
@@ -166,9 +162,8 @@ ROLES = {
             "read:emprestito",
             "write:emprestito",
             "process:emprestito",
-        ]
+        ],
     },
-    
     "analista": {
         "name": "Analista",
         "level": 4,
@@ -188,9 +183,8 @@ ROLES = {
             "download:geojson",
             # Dashboard
             "view:dashboard",
-        ]
+        ],
     },
-    
     "visualizador": {
         "name": "Visualizador",
         "level": 5,
@@ -204,9 +198,8 @@ ROLES = {
             "read:contratos:basic",
             # Dashboard básico
             "view:dashboard:basic",
-        ]
+        ],
     },
-    
     "publico": {
         "name": "Público",
         "level": 6,
@@ -215,8 +208,8 @@ ROLES = {
             # Solo datos públicos
             "read:proyectos:public",
             "view:dashboard:public",
-        ]
-    }
+        ],
+    },
 }
 
 # RUTAS PÚBLICAS QUE NO REQUIEREN AUTENTICACIÓN
@@ -235,7 +228,7 @@ PUBLIC_PATHS = [
     "/auth/register",
     "/auth/google",
     "/auth/config",
-    "/auth/validate-session"
+    "/auth/validate-session",
 ]
 
 # PERMISOS DISPONIBLES EN EL SISTEMA
@@ -243,40 +236,38 @@ PUBLIC_PATHS = [
 AVAILABLE_PERMISSIONS = {
     # Acciones
     "actions": [
-        "read",     # Lectura de datos
-        "write",    # Creación y actualización
-        "delete",   # Eliminación de datos
-        "manage",   # Gestión administrativa
-        "upload",   # Carga de archivos
-        "download", # Descarga de archivos
-        "export",   # Exportación de datos
-        "view",     # Visualización
-        "create",   # Creación específica
-        "update",   # Actualización específica
-        "assign",   # Asignación
+        "read",  # Lectura de datos
+        "write",  # Creación y actualización
+        "delete",  # Eliminación de datos
+        "manage",  # Gestión administrativa
+        "upload",  # Carga de archivos
+        "download",  # Descarga de archivos
+        "export",  # Exportación de datos
+        "view",  # Visualización
+        "create",  # Creación específica
+        "update",  # Actualización específica
+        "assign",  # Asignación
         "process",  # Procesamiento
     ],
-    
     # Recursos
     "resources": [
-        "proyectos",          # Proyectos presupuestales
-        "unidades",           # Unidades de proyecto
-        "contratos",          # Contratos de empréstito
-        "reportes_contratos", # Reportes de seguimiento
-        "emprestito",         # Gestión de empréstito
-        "users",              # Usuarios del sistema
-        "roles",              # Roles y permisos
-        "audit_logs",         # Logs de auditoría
-        "geojson",            # Archivos GeoJSON
-        "dashboard",          # Dashboard
+        "proyectos",  # Proyectos presupuestales
+        "unidades",  # Unidades de proyecto
+        "contratos",  # Contratos de empréstito
+        "reportes_contratos",  # Reportes de seguimiento
+        "emprestito",  # Gestión de empréstito
+        "users",  # Usuarios del sistema
+        "roles",  # Roles y permisos
+        "audit_logs",  # Logs de auditoría
+        "geojson",  # Archivos GeoJSON
+        "dashboard",  # Dashboard
     ],
-    
     # Scopes (opcional)
     "scopes": [
         "own_centro",  # Solo datos del centro gestor del usuario
-        "public",      # Solo datos públicos
-        "basic",       # Solo información básica
-    ]
+        "public",  # Solo datos públicos
+        "basic",  # Solo información básica
+    ],
 }
 
 # COLECCIONES DE FIREBASE
@@ -286,6 +277,12 @@ FIREBASE_COLLECTIONS = {
     "permissions": "permissions",
     "audit_logs": "audit_logs",
     "proyectos": "proyectos_presupuestales",
-    "unidades": "unidades-proyecto",
-    "contratos": "contratos_emprestito"
+    "unidades": "unidades_proyecto",
+    "intervenciones": "intervenciones_unidades_proyecto",
+    "avances_up": "avances_unidades_proyecto",
+    "cambios_unidades": "cambios_implementados_unidades_proyecto",
+    "cambios_intervenciones": "cambios_implementados_intervenciones",
+    "solicitudes_unidades": "solicitudes_cambios_unidades_proyecto",
+    "solicitudes_intervenciones": "solicitudes_cambios_intervenciones",
+    "contratos": "contratos_emprestito",
 }

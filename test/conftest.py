@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 from datetime import datetime, timezone
 
 # Ensure project root is on the path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from fastapi.testclient import TestClient
 
@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 def client():
     """FastAPI TestClient"""
     from main import app
+
     return TestClient(app, raise_server_exceptions=False)
 
 
@@ -32,7 +33,9 @@ def mock_firebase_user():
     user.email_verified = True
     user.phone_number = "+573001234567"
     user.user_metadata = MagicMock()
-    user.user_metadata.creation_timestamp = int(datetime.now(timezone.utc).timestamp() * 1000)
+    user.user_metadata.creation_timestamp = int(
+        datetime.now(timezone.utc).timestamp() * 1000
+    )
     return user
 
 
@@ -42,29 +45,39 @@ def mock_firestore_db():
     db = MagicMock()
     # Default: empty collection stream
     db.collection.return_value.stream.return_value = iter([])
-    db.collection.return_value.document.return_value.get.return_value = MagicMock(exists=False)
+    db.collection.return_value.document.return_value.get.return_value = MagicMock(
+        exists=False
+    )
     return db
 
 
 @pytest.fixture
 def mock_super_admin_context(mock_firebase_user, mock_firestore_db):
     """Patch Firebase auth + Firestore to simulate a super_admin user"""
-    mock_firestore_db.collection.return_value.document.return_value.get.return_value = MagicMock(
-        exists=True,
-        to_dict=MagicMock(return_value={
-            "uid": "admin_uid",
-            "email": "admin@cali.gov.co",
-            "roles": ["super_admin"],
-            "is_active": True,
-            "nombre_centro_gestor": "DATIC",
-            "name": "Admin User",
-        }),
+    mock_firestore_db.collection.return_value.document.return_value.get.return_value = (
+        MagicMock(
+            exists=True,
+            to_dict=MagicMock(
+                return_value={
+                    "uid": "admin_uid",
+                    "email": "admin@cali.gov.co",
+                    "roles": ["super_admin"],
+                    "is_active": True,
+                    "nombre_centro_gestor": "DATIC",
+                    "name": "Admin User",
+                }
+            ),
+        )
     )
 
     patches = {
         "verify": patch(
             "firebase_admin.auth.verify_id_token",
-            return_value={"uid": "admin_uid", "email": "admin@cali.gov.co", "email_verified": True},
+            return_value={
+                "uid": "admin_uid",
+                "email": "admin@cali.gov.co",
+                "email_verified": True,
+            },
         ),
         "firestore": patch(
             "database.firebase_config.get_firestore_client",
@@ -76,3 +89,57 @@ def mock_super_admin_context(mock_firebase_user, mock_firestore_db):
     yield mocks
     for p in patches.values():
         p.stop()
+
+
+@pytest.fixture
+def super_admin_client():
+    """TestClient con auth de super_admin bypaseada para tests de endpoints protegidos.
+
+    Parchea:
+    - ``firebase_admin.auth.verify_id_token`` para que el middleware acepte el
+      header ``Authorization: Bearer test``.
+    - ``auth_system.decorators.get_user_with_permissions`` para devolver un
+      usuario super_admin con todos los permisos (``["*"]``).
+    """
+    from main import app
+
+    async def _fake_get_user_with_permissions(request):
+        user = {
+            "uid": "test_super_admin",
+            "email": "admin@cali.gov.co",
+            "roles": ["super_admin"],
+            "is_active": True,
+            "nombre_centro_gestor": "DATIC",
+            "name": "Test Admin",
+            "permissions": ["*"],
+        }
+        try:
+            request.state.current_user = user
+        except Exception:
+            pass
+        return user
+
+    patches = [
+        patch(
+            "firebase_admin.auth.verify_id_token",
+            return_value={
+                "uid": "test_super_admin",
+                "email": "admin@cali.gov.co",
+                "email_verified": True,
+            },
+        ),
+        patch(
+            "auth_system.decorators.get_user_with_permissions",
+            side_effect=_fake_get_user_with_permissions,
+        ),
+    ]
+    for p in patches:
+        p.start()
+
+    client = TestClient(app, raise_server_exceptions=False)
+    client.headers.update({"Authorization": "Bearer test_token"})
+    try:
+        yield client
+    finally:
+        for p in patches:
+            p.stop()
