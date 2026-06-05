@@ -35,7 +35,11 @@ router = APIRouter()
 # Availability flags — importación segura
 # ---------------------------------------------------------------------------
 try:
-    from database.firebase_config import FIREBASE_AVAILABLE, get_firestore_client, PROJECT_ID
+    from database.firebase_config import (
+        FIREBASE_AVAILABLE,
+        get_firestore_client,
+        PROJECT_ID,
+    )
 except Exception:
     FIREBASE_AVAILABLE = False
     PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID", "NOT_CONFIGURED")
@@ -67,6 +71,7 @@ try:
         UserRegistrationRequest,
         UserLoginRequest,
     )
+
     USER_MODELS_AVAILABLE = True
 except Exception:
     USER_MODELS_AVAILABLE = False
@@ -83,8 +88,10 @@ except Exception:
         email: str
         password: str
 
+
 try:
     from api.scripts import SCRIPTS_AVAILABLE as _SCRIPTS_AVAILABLE
+
     SCRIPTS_AVAILABLE = _SCRIPTS_AVAILABLE
 except Exception:
     SCRIPTS_AVAILABLE = False
@@ -98,6 +105,7 @@ def startup_print(message: str) -> None:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def check_user_management_availability():
     """[OK] FUNCIONAL: Verificación simple sin lógica redundante"""
@@ -585,6 +593,142 @@ async def register_user(request: Request, registration_data: UserRegistrationReq
         )
 
 
+# ---------------------------------------------------------------------------
+# Forgot-password — genera enlace Firebase + envía correo HTML personalizado
+# ---------------------------------------------------------------------------
+
+try:
+    from api.scripts import generate_password_reset_link
+
+    _FORGOT_AVAILABLE = True
+except Exception:
+    generate_password_reset_link = None  # type: ignore[assignment]
+    _FORGOT_AVAILABLE = False
+
+try:
+    from api.utils.email_service import (
+        send_password_reset_email,
+        EMAIL_SERVICE_AVAILABLE,
+    )
+except Exception:
+    send_password_reset_email = None  # type: ignore[assignment]
+    EMAIL_SERVICE_AVAILABLE = False
+
+
+@router.post("/auth/forgot-password", tags=["Administración y Control de Accesos"])
+@optional_rate_limit("5/minute")
+async def forgot_password(request: Request):
+    """
+    ## Recuperación de Contraseña con Correo HTML Personalizado
+
+    Genera un enlace de recuperación a través de Firebase Admin SDK y envía
+    un correo HTML con botón, nombre del usuario y consejos de seguridad.
+
+    ### Body JSON:
+    ```json
+    { "email": "usuario@ejemplo.com" }
+    ```
+
+    ### Respuesta exitosa:
+    ```json
+    {
+      "success": true,
+      "message": "Correo de recuperación enviado exitosamente",
+      "email_sent": true
+    }
+    ```
+
+    > Nota: por seguridad, la respuesta es siempre exitosa aunque el email
+    > no exista en el sistema (evita enumeración de usuarios).
+    """
+    try:
+        body = await request.json()
+        email = (body.get("email") or "").strip().lower()
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error": "Body JSON inválido", "code": "INVALID_BODY"},
+        )
+
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "El campo 'email' es obligatorio",
+                "code": "EMAIL_REQUIRED",
+            },
+        )
+
+    # Respuesta genérica que no revela si el usuario existe
+    generic_ok = {
+        "success": True,
+        "message": "Si existe una cuenta con ese correo, recibirás las instrucciones en breve.",
+        "email_sent": False,
+    }
+
+    if not _FORGOT_AVAILABLE or generate_password_reset_link is None:
+        logger.warning("generate_password_reset_link not available")
+        return JSONResponse(content=generic_ok)
+
+    # Generar enlace de reseteo con Firebase Admin SDK
+    result = await generate_password_reset_link(email)
+    if not result.get("success"):
+        # No revelar que el usuario no existe — devolver respuesta genérica igualmente
+        logger.info(
+            f"forgot-password: link generation failed for {email}: {result.get('code')}"
+        )
+        return JSONResponse(content=generic_ok)
+
+    reset_link = result["reset_link"]
+
+    # Obtener nombre del usuario desde Firebase
+    display_name = ""
+    try:
+        auth_client = None
+        from database.firebase_config import get_auth_client as _get_auth
+
+        auth_client = _get_auth()
+        user_record = auth_client.get_user_by_email(email)
+        display_name = user_record.display_name or ""
+        # Si Firebase no tiene display_name, intentar desde Firestore
+        if not display_name:
+            db = get_firestore_client()
+            doc = db.collection("users").document(user_record.uid).get()
+            if doc.exists:
+                data = doc.to_dict() or {}
+                display_name = data.get("fullname") or data.get("name") or ""
+    except Exception as exc:
+        logger.debug(f"Could not fetch display_name for {email}: {exc}")
+
+    # Enviar correo HTML personalizado
+    email_sent = False
+    if EMAIL_SERVICE_AVAILABLE and send_password_reset_email is not None:
+        email_result = send_password_reset_email(
+            to_email=email,
+            reset_link=reset_link,
+            display_name=display_name,
+        )
+        email_sent = email_result.get("success", False)
+        if not email_sent:
+            logger.warning(
+                f"Custom email failed for {email}: {email_result.get('code')}. "
+                "Falling back — user must use the reset link directly."
+            )
+    else:
+        logger.info(
+            "SMTP not configured. Reset link generated but not emailed. "
+            f"Reset link for {email}: (see server logs if needed)"
+        )
+
+    return JSONResponse(
+        content={
+            "success": True,
+            "message": "Si existe una cuenta con ese correo, recibirás las instrucciones en breve.",
+            "email_sent": email_sent,
+        }
+    )
+
+
 @router.post("/auth/change-password", tags=["Administración y Control de Accesos"])
 @optional_rate_limit("5/minute")
 async def change_password(
@@ -722,7 +866,9 @@ async def get_firebase_config():
 # La documentación de integración está disponible en README.md
 
 
-@router.get("/auth/workload-identity/status", tags=["Administración y Control de Accesos"])
+@router.get(
+    "/auth/workload-identity/status", tags=["Administración y Control de Accesos"]
+)
 async def get_workload_identity_status():
     """
     ##  Estado de Autenticación con Google Cloud
@@ -1215,5 +1361,3 @@ def check_emprestito_availability():
                 "code": "EMPRESTITO_SERVICES_UNAVAILABLE",
             },
         )
-
-
