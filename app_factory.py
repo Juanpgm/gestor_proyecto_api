@@ -102,8 +102,10 @@ try:
     from api.routers.auth_routes import router as auth_routes_router
 
     _AUTH_ROUTES_AVAILABLE = True
+    logger.info("auth_routes router imported successfully")
 except Exception as exc:
-    logger.warning(f"auth_routes router not available: {exc}")
+    import traceback
+    logger.error(f"auth_routes router not available: {exc}\n{traceback.format_exc()}")
     _AUTH_ROUTES_AVAILABLE = False
 
 try:
