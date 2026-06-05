@@ -105,6 +105,7 @@ try:
     logger.info("auth_routes router imported successfully")
 except Exception as exc:
     import traceback
+
     logger.error(f"auth_routes router not available: {exc}\n{traceback.format_exc()}")
     _AUTH_ROUTES_AVAILABLE = False
 
@@ -131,6 +132,17 @@ try:
 except Exception as exc:
     logger.warning(f"emprestito router not available: {exc}")
     _EMPRESTITO_AVAILABLE = False
+
+try:
+    from api.routers.comunicaciones import router as comunicaciones_router
+
+    _COMUNICACIONES_AVAILABLE = True
+    logger.info("comunicaciones router imported successfully")
+except Exception as exc:
+    import traceback as _tb
+
+    logger.error(f"comunicaciones router not available: {exc}\n{_tb.format_exc()}")
+    _COMUNICACIONES_AVAILABLE = False
 
 
 # ---------------------------------------------------------------------------
@@ -445,6 +457,10 @@ def create_app() -> FastAPI:
     if _CAPTURA_360_AVAILABLE:
         app.include_router(captura_360_router)
         logger.info("Router included: captura_360")
+
+    if _COMUNICACIONES_AVAILABLE:
+        app.include_router(comunicaciones_router)
+        logger.info("Router included: comunicaciones")
 
     # -- Static files --
     static_path = os.path.join(os.path.dirname(__file__), "static")

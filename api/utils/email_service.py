@@ -253,7 +253,9 @@ def send_password_reset_email(
 
         # Resolver hostname manualmente forzando IPv4 para evitar ENETUNREACH en Railway
         try:
-            host_ipv4 = socket.getaddrinfo(SMTP_HOST, SMTP_PORT, socket.AF_INET)[0][4][0]
+            host_ipv4 = socket.getaddrinfo(SMTP_HOST, SMTP_PORT, socket.AF_INET)[0][4][
+                0
+            ]
         except Exception:
             host_ipv4 = SMTP_HOST  # fallback al hostname si no se puede resolver
 

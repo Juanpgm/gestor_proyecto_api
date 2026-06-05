@@ -21,18 +21,23 @@ logger = logging.getLogger(__name__)
 
 _CACHE_MAX_SIZE = 1000
 _cache_lock = threading.Lock()
-_simple_cache: OrderedDict = OrderedDict()   # key -> value
-_cache_timestamps: dict = {}                  # key -> datetime
+_simple_cache: OrderedDict = OrderedDict()  # key -> value
+_cache_timestamps: dict = {}  # key -> datetime
+_cache_func_map: dict = {}  # key -> func_name (para invalidación por prefijo)
 
 
 # ---------------------------------------------------------------------------
 # API pública
 # ---------------------------------------------------------------------------
 
+
 def get_cache_key(func_name: str, *args, **kwargs) -> str:
     """Genera una clave de caché única y determinista."""
     key_data = f"{func_name}:{args!s}:{sorted(kwargs.items())!s}"
-    return hashlib.md5(key_data.encode()).hexdigest()
+    key = hashlib.md5(key_data.encode()).hexdigest()
+    with _cache_lock:
+        _cache_func_map[key] = func_name
+    return key
 
 
 def get_from_cache(cache_key: str, max_age_seconds: int = 300) -> Tuple[Any, bool]:
@@ -46,12 +51,16 @@ def get_from_cache(cache_key: str, max_age_seconds: int = 300) -> Tuple[Any, boo
     with _cache_lock:
         if cache_key in _simple_cache:
             cached_time = _cache_timestamps.get(cache_key)
-            if cached_time and (datetime.now() - cached_time).total_seconds() < max_age_seconds:
+            if (
+                cached_time
+                and (datetime.now() - cached_time).total_seconds() < max_age_seconds
+            ):
                 _simple_cache.move_to_end(cache_key)
                 return _simple_cache[cache_key], True
             # Entrada expirada — desalojar
             _simple_cache.pop(cache_key, None)
             _cache_timestamps.pop(cache_key, None)
+            _cache_func_map.pop(cache_key, None)
     return None, False
 
 
@@ -64,8 +73,31 @@ def set_in_cache(cache_key: str, value: Any) -> None:
         while len(_simple_cache) >= _CACHE_MAX_SIZE:
             oldest_key, _ = _simple_cache.popitem(last=False)
             _cache_timestamps.pop(oldest_key, None)
+            _cache_func_map.pop(oldest_key, None)
         _simple_cache[cache_key] = value
         _cache_timestamps[cache_key] = datetime.now()
+
+
+def clear_cache_by_prefix(func_name_prefix: str) -> int:
+    """Evict all cache entries whose func_name starts with *func_name_prefix*.
+
+    Returns the number of entries removed.
+    Útil para invalidar el cache del dashboard / init-360 tras mutaciones de
+    unidades_proyecto o intervenciones_unidades_proyecto.
+    """
+    with _cache_lock:
+        keys_to_delete = [
+            k
+            for k, fn in list(_cache_func_map.items())
+            if fn.startswith(func_name_prefix) and k in _simple_cache
+        ]
+        removed = 0
+        for key in keys_to_delete:
+            _simple_cache.pop(key, None)
+            _cache_timestamps.pop(key, None)
+            _cache_func_map.pop(key, None)
+            removed += 1
+        return removed
 
 
 def async_cache(ttl_seconds: int = 300):
@@ -78,6 +110,7 @@ def async_cache(ttl_seconds: int = 300):
         async def mi_endpoint():
             ...
     """
+
     def decorator(func):
         import copy
         from functools import wraps
@@ -102,4 +135,5 @@ def async_cache(ttl_seconds: int = 300):
             return result
 
         return wrapper
+
     return decorator

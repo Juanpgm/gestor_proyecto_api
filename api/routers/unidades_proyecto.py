@@ -38,7 +38,12 @@ from fastapi import (
 from pydantic import BaseModel, Field
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from api.core.cache import get_cache_key, get_from_cache, set_in_cache
+from api.core.cache import (
+    get_cache_key,
+    get_from_cache,
+    set_in_cache,
+    clear_cache_by_prefix,
+)
 from api.core.responses import clean_firebase_data, create_utf8_response
 from api.core.security import optional_rate_limit
 from auth_system.decorators import require_unidades, enforce_unidades_access
@@ -1319,30 +1324,48 @@ async def get_intervenciones_filtradas_endpoint(
             )
 
         # Pre-cargar tipo_equipamiento desde unidades_proyecto (no existe en intervenciones)
-        unidades_props_lookup = {}
-        for udoc in (
-            db.collection("unidades_proyecto")
-            .select(
-                ["upid", "clase_up", "clase_obra", "tipo_equipamiento", "properties"]
-            )
-            .stream()
-        ):
-            ud = udoc.to_dict()
-            props = (
-                ud.get("properties", {})
-                if isinstance(ud.get("properties"), dict)
-                else {}
-            )
-            u_upid = ud.get("upid") or props.get("upid")
-            if u_upid:
-                unidades_props_lookup[u_upid] = {
-                    "clase_up": ud.get("clase_up")
-                    or ud.get("clase_obra")
-                    or props.get("clase_up")
-                    or props.get("clase_obra"),
-                    "tipo_equipamiento": ud.get("tipo_equipamiento")
-                    or props.get("tipo_equipamiento"),
-                }
+        # Se cachea 5 min para evitar un stream completo en cada consulta de intervenciones.
+        _lookup_cache_key = get_cache_key(
+            "intervenciones_unidades_lookup",
+            nombre_centro_gestor=nombre_centro_gestor or "__ALL__",
+        )
+        cached_lookup, lookup_hit = get_from_cache(
+            _lookup_cache_key, max_age_seconds=300
+        )
+        if lookup_hit:
+            unidades_props_lookup = cached_lookup
+        else:
+            unidades_props_lookup = {}
+            for udoc in (
+                db.collection("unidades_proyecto")
+                .select(
+                    [
+                        "upid",
+                        "clase_up",
+                        "clase_obra",
+                        "tipo_equipamiento",
+                        "properties",
+                    ]
+                )
+                .stream()
+            ):
+                ud = udoc.to_dict()
+                props = (
+                    ud.get("properties", {})
+                    if isinstance(ud.get("properties"), dict)
+                    else {}
+                )
+                u_upid = ud.get("upid") or props.get("upid")
+                if u_upid:
+                    unidades_props_lookup[u_upid] = {
+                        "clase_up": ud.get("clase_up")
+                        or ud.get("clase_obra")
+                        or props.get("clase_up")
+                        or props.get("clase_obra"),
+                        "tipo_equipamiento": ud.get("tipo_equipamiento")
+                        or props.get("tipo_equipamiento"),
+                    }
+            set_in_cache(_lookup_cache_key, unidades_props_lookup)
 
         query = db.collection("intervenciones_unidades_proyecto")
         if avance_obra is not None:
@@ -2952,15 +2975,45 @@ def _validate_crs_coords(geometry_dict: dict) -> None:
     _walk(coords)
 
 
+@lru_cache(maxsize=32)
+def _load_geojson_cached(geojson_path: str) -> dict:
+    """Carga y cachea en memoria un archivo GeoJSON desde disco.
+    Se invoca como máximo una vez por ruta (lru_cache con maxsize=32).
+    Reduce los ~100 MB de I/O por request en creación/modificación de UP."""
+    with open(geojson_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+@lru_cache(maxsize=4)
+def _list_estrategicos_filenames(estrategicos_dir: str) -> tuple:
+    """Retorna una tupla ordenada de nombres .geojson en el directorio (cacheada).
+    Evita llamar os.listdir en cada request de modificación/creación."""
+    if not os.path.isdir(estrategicos_dir):
+        return ()
+    return tuple(
+        sorted(
+            f for f in os.listdir(estrategicos_dir) if f.lower().endswith(".geojson")
+        )
+    )
+
+
+def _invalidate_unidades_cache() -> None:
+    """Invalida entradas del cache de servidor relacionadas con unidades_proyecto.
+    Se llama tras cualquier mutación (crear, modificar, eliminar UP o intervención)."""
+    clear_cache_by_prefix("unidades_proyecto")
+    clear_cache_by_prefix("init_360")
+    clear_cache_by_prefix("intervenciones_unidades_lookup")
+
+
 def _buscar_en_geojson(
     geojson_path: str, property_name: str, point_coords_or_geometry=None
 ) -> Optional[str]:
     """Cruza una geometría GeoJSON con una capa y retorna la propiedad del polígono que la contiene.
     Acepta [lon, lat] (legacy) o un dict GeoJSON geometry de cualquier tipo.
-    Para geometrías no-Point usa el centroide para determinar contención."""
+    Para geometrías no-Point usa el centroide para determinar contención.
+    Usa _load_geojson_cached para evitar recargar el archivo en cada request."""
     try:
-        with open(geojson_path, "r", encoding="utf-8") as f:
-            geojson_data = json.load(f)
+        geojson_data = _load_geojson_cached(geojson_path)
         if isinstance(point_coords_or_geometry, dict) and point_coords_or_geometry.get(
             "type"
         ):
@@ -2987,12 +3040,15 @@ def _buscar_proyectos_estrategicos(geometry_input) -> list:
     """Intersecta una geometría GeoJSON con todos los GeoJSON en basemaps/proyectos_estrategicos/
     y retorna lista de Name coincidentes.
     Acepta [lon, lat] (legacy) o un dict GeoJSON geometry de cualquier tipo (Point, Polygon, LineString, etc.).
+    Usa _load_geojson_cached y _list_estrategicos_filenames para minimizar I/O de disco.
     """
     nombres = []
     estrategicos_dir = PROYECTOS_ESTRATEGICOS_DIR
-    if not os.path.isdir(estrategicos_dir):
+    filenames = _list_estrategicos_filenames(estrategicos_dir)
+    if not filenames:
         logger.warning(
-            "proyectos_estrategicos: directorio no encontrado en %s", estrategicos_dir
+            "proyectos_estrategicos: directorio vacío o no encontrado en %s",
+            estrategicos_dir,
         )
         return []
     try:
@@ -3002,13 +3058,10 @@ def _buscar_proyectos_estrategicos(geometry_input) -> list:
             geom = ShapelyPoint(geometry_input[0], geometry_input[1])
         else:
             return []
-        for filename in os.listdir(estrategicos_dir):
-            if not filename.lower().endswith(".geojson"):
-                continue
+        for filename in filenames:
             filepath = os.path.join(estrategicos_dir, filename)
             try:
-                with open(filepath, "r", encoding="utf-8") as f:
-                    geojson_data = json.load(f)
+                geojson_data = _load_geojson_cached(filepath)
                 for feature in geojson_data.get("features", []):
                     polygon = shapely_shape(feature["geometry"])
                     if polygon.intersects(geom):
@@ -3018,9 +3071,7 @@ def _buscar_proyectos_estrategicos(geometry_input) -> list:
             except Exception as e:
                 logger.warning(f"Error procesando {filename}: {type(e).__name__}")
     except Exception as e:
-        logger.warning(
-            f"Error leyendo directorio proyectos_estrategicos: {type(e).__name__}"
-        )
+        logger.warning(f"Error en _buscar_proyectos_estrategicos: {type(e).__name__}")
     return nombres
 
 
@@ -3176,6 +3227,7 @@ async def crear_unidad_proyecto(
                 audit_err,
             )
 
+        _invalidate_unidades_cache()
         return create_utf8_response(
             {"id": new_upid, "collection": "unidades_proyecto", "data": unidad_payload}
         )
@@ -3351,6 +3403,7 @@ async def crear_intervencion(
                 "crear_intervencion: fallo registrando auditoría: %s", audit_err
             )
 
+        _invalidate_unidades_cache()
         return create_utf8_response(
             {
                 "id": doc_id,
@@ -3569,6 +3622,7 @@ async def modificar_unidad_proyecto(
             }
         )
 
+        _invalidate_unidades_cache()
         return create_utf8_response(
             {
                 "id": upid_value,
@@ -3701,6 +3755,7 @@ async def modificar_intervencion(
             }
         )
 
+        _invalidate_unidades_cache()
         return create_utf8_response(
             {
                 "id": doc.id,
@@ -3786,6 +3841,7 @@ async def eliminar_unidad_proyecto(
                     audit_err,
                 )
 
+        _invalidate_unidades_cache()
         return create_utf8_response(
             {
                 "deleted": True,
@@ -3872,6 +3928,7 @@ async def eliminar_intervencion(
                     audit_err,
                 )
 
+        _invalidate_unidades_cache()
         return create_utf8_response(
             {
                 "deleted": True,
