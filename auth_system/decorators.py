@@ -43,10 +43,20 @@ async def get_current_user(
         from firebase_admin import auth
         from database.firebase_config import get_firestore_client
 
-        # Verificar token de Firebase
-        token = credentials.credentials
-        decoded_token = auth.verify_id_token(token)
-        user_uid = decoded_token["uid"]
+        # Reutilizar el UID ya decodificado por AuthorizationMiddleware (evita
+        # una segunda llamada a verify_id_token que cuesta ~100-150 ms extra).
+        user_uid = getattr(request.state, "user_uid", None)
+        if not user_uid:
+            # Fallback: ruta no pasó por el middleware (p.ej. pruebas directas).
+            # Se ejecuta en un executor para no bloquear el event loop de asyncio.
+            import asyncio
+
+            token = credentials.credentials
+            loop = asyncio.get_event_loop()
+            decoded_token = await loop.run_in_executor(
+                None, auth.verify_id_token, token
+            )
+            user_uid = decoded_token["uid"]
 
         # Obtener datos completos del usuario desde Firestore
         db = get_firestore_client()
@@ -72,8 +82,12 @@ async def get_current_user(
                 status_code=status.HTTP_403_FORBIDDEN, detail="Usuario inactivo"
             )
 
-        # Agregar permisos al objeto de usuario
-        user_data["permissions"] = get_user_permissions(user_uid, db)
+        # Agregar permisos al objeto de usuario.
+        # Pasamos user_data ya cargado para evitar que get_user_permissions
+        # haga una segunda lectura del mismo documento.
+        user_data["permissions"] = get_user_permissions(
+            user_uid, db, user_data=user_data
+        )
 
         return user_data
 

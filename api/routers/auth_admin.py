@@ -3,6 +3,7 @@ Router de Administración de Usuarios, Roles y Permisos
 Endpoints para gestión completa del sistema de autorización
 """
 
+import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional, List
 from datetime import datetime, timezone
@@ -741,6 +742,10 @@ async def list_roles(
         None,
         description="UID del usuario a consultar. Si no se envía, retorna roles/permisos de todos los usuarios",
     ),
+    include_usage: bool = Query(
+        False,
+        description="Incluir conteo de usuarios por rol (requiere scan completo de Firestore, lento)",
+    ),
     current_user: dict = Depends(get_current_user),
 ):
     """
@@ -754,50 +759,40 @@ async def list_roles(
 
     try:
         db = _get_db_or_raise()
-
         users_collection_name = FIREBASE_COLLECTIONS["users"]
-        users_docs = list(db.collection(users_collection_name).stream())
+        loop = asyncio.get_event_loop()
 
-        roles_usage = {role_id: 0 for role_id in ROLES.keys()}
-        unknown_roles = {}
+        # Build catalog from in-memory ROLES constant (no Firestore needed)
+        def _build_catalog(usage: dict) -> list:
+            catalog = []
+            for role_id, role_data in ROLES.items():
+                catalog.append(
+                    {
+                        "role_id": role_id,
+                        "name": role_data["name"],
+                        "level": role_data["level"],
+                        "description": role_data["description"],
+                        "permissions": role_data["permissions"],
+                        "permissions_count": len(role_data["permissions"]),
+                        "assigned_users": usage.get(role_id, 0),
+                    }
+                )
+            catalog.sort(key=lambda x: x["level"])
+            return catalog
 
-        for user_doc in users_docs:
-            user_data = user_doc.to_dict() or {}
-            user_roles = _normalize_roles(user_data.get("roles", []))
-
-            for role in user_roles:
-                role_str = str(role)
-                if role_str in roles_usage:
-                    roles_usage[role_str] += 1
-                else:
-                    unknown_roles[role_str] = unknown_roles.get(role_str, 0) + 1
-
-        roles_list = []
-        for role_id, role_data in ROLES.items():
-            roles_list.append(
-                {
-                    "role_id": role_id,
-                    "name": role_data["name"],
-                    "level": role_data["level"],
-                    "description": role_data["description"],
-                    "permissions": role_data["permissions"],
-                    "permissions_count": len(role_data["permissions"]),
-                    "assigned_users": roles_usage.get(role_id, 0),
-                }
-            )
-
-        roles_list.sort(key=lambda x: x["level"])
-
+        # --- Single user path (fast: one doc fetch) ---
         if uid:
             target_uid = current_user.get("uid") if uid == "me" else uid
-            user_doc = db.collection(users_collection_name).document(target_uid).get()
+            user_doc = await loop.run_in_executor(
+                None,
+                lambda: db.collection(users_collection_name).document(target_uid).get(),
+            )
             if not user_doc.exists:
                 raise HTTPException(status_code=404, detail="Usuario no encontrado")
-
             user_payload = _build_user_roles_payload(
                 target_uid, user_doc.to_dict() or {}, db
             )
-
+            roles_list = _build_catalog({})
             return {
                 "success": True,
                 "data": user_payload,
@@ -808,13 +803,39 @@ async def list_roles(
                 "roles_catalog": roles_list,
             }
 
-        users_roles_permissions = []
-        for user_doc in users_docs:
-            user_uid = user_doc.id
-            user_data = user_doc.to_dict() or {}
-            users_roles_permissions.append(
-                _build_user_roles_payload(user_uid, user_data, db)
-            )
+        # --- Catalog-only path (fast: no Firestore scan) ---
+        if not include_usage:
+            roles_list = _build_catalog({})
+            return {
+                "success": True,
+                "data": roles_list,
+                "count": len(roles_list),
+                "scope": "catalog_only",
+                "connected_uid": current_user.get("uid"),
+                "roles_catalog": roles_list,
+            }
+
+        # --- Full scan path (slow, only when include_usage=True) ---
+        def _scan_users():
+            docs = list(db.collection(users_collection_name).stream())
+            usage = {role_id: 0 for role_id in ROLES.keys()}
+            unknown = {}
+            payloads = []
+            for doc in docs:
+                data = doc.to_dict() or {}
+                for role in _normalize_roles(data.get("roles", [])):
+                    role_str = str(role)
+                    if role_str in usage:
+                        usage[role_str] += 1
+                    else:
+                        unknown[role_str] = unknown.get(role_str, 0) + 1
+                payloads.append(_build_user_roles_payload(doc.id, data, db))
+            return docs, usage, unknown, payloads
+
+        users_docs, roles_usage, unknown_roles, users_roles_permissions = (
+            await loop.run_in_executor(None, _scan_users)
+        )
+        roles_list = _build_catalog(roles_usage)
 
         return {
             "success": True,
@@ -1006,37 +1027,76 @@ async def get_system_stats(
 
     try:
         db = _get_db_or_raise()
+        loop = asyncio.get_event_loop()
 
-        users_docs = list(db.collection(FIREBASE_COLLECTIONS["users"]).stream())
-        users_count = len(users_docs)
+        # Count total users using aggregation (fast, no full scan)
+        async def _get_total_users() -> int:
+            try:
+                result = await loop.run_in_executor(
+                    None,
+                    lambda: db.collection(FIREBASE_COLLECTIONS["users"]).count().get(),
+                )
+                return result[0][0].value if result else 0
+            except Exception:
+                return 0
 
-        # Contar por rol
-        users_by_role = {}
-        users_without_roles = 0
-        unknown_roles = {}
-        users_data_for_response = []
-        for user_doc in users_docs:
-            user_data = user_doc.to_dict() or {}
-            user_data["uid"] = user_doc.id
+        # Count audit logs using aggregation (fast)
+        async def _get_total_logs() -> int:
+            try:
+                result = await loop.run_in_executor(
+                    None,
+                    lambda: db.collection(FIREBASE_COLLECTIONS["audit_logs"])
+                    .count()
+                    .get(),
+                )
+                return result[0][0].value if result else 0
+            except Exception:
+                return 0
 
-            if include_users:
-                users_data_for_response.append(sanitize_user_data(user_data))
+        # Scan all users for role breakdown (slow, run in executor)
+        def _scan_users_for_roles(with_data: bool):
+            docs = list(db.collection(FIREBASE_COLLECTIONS["users"]).stream())
+            by_role = {}
+            without_roles = 0
+            unknown = {}
+            user_data_list = []
+            for doc in docs:
+                data = doc.to_dict() or {}
+                data["uid"] = doc.id
+                if with_data:
+                    user_data_list.append(sanitize_user_data(data))
+                roles = _normalize_roles(data.get("roles", []))
+                if not roles:
+                    without_roles += 1
+                    continue
+                for role in roles:
+                    role_str = str(role)
+                    if role_str in ROLES:
+                        by_role[role_str] = by_role.get(role_str, 0) + 1
+                    else:
+                        unknown[role_str] = unknown.get(role_str, 0) + 1
+            return len(docs), by_role, without_roles, unknown, user_data_list
 
-            roles = _normalize_roles(user_data.get("roles", []))
-            if len(roles) == 0:
-                users_without_roles += 1
-                continue
-            for role in roles:
-                role_str = str(role)
-                if role_str in ROLES:
-                    users_by_role[role_str] = users_by_role.get(role_str, 0) + 1
-                else:
-                    unknown_roles[role_str] = unknown_roles.get(role_str, 0) + 1
-
-        # Contar logs de auditoría
-        logs_count = len(
-            list(db.collection(FIREBASE_COLLECTIONS["audit_logs"]).stream())
+        # Run aggregation queries in parallel, role scan in executor
+        total_users_task = asyncio.ensure_future(_get_total_users())
+        total_logs_task = asyncio.ensure_future(_get_total_logs())
+        role_scan_task = loop.run_in_executor(
+            None, _scan_users_for_roles, include_users
         )
+
+        total_users, total_logs, role_scan = await asyncio.gather(
+            total_users_task, total_logs_task, role_scan_task
+        )
+        (
+            scanned_count,
+            users_by_role,
+            users_without_roles,
+            unknown_roles,
+            users_data_for_response,
+        ) = role_scan
+
+        # Use aggregation count as canonical total (more accurate than scan count)
+        users_count = total_users if total_users > 0 else scanned_count
 
         response_data = {
             "total_users": users_count,
@@ -1044,7 +1104,7 @@ async def get_system_stats(
             "users_by_role": users_by_role,
             "users_without_roles": users_without_roles,
             "unknown_roles_in_users": unknown_roles,
-            "total_audit_logs": logs_count,
+            "total_audit_logs": total_logs,
             "default_role": DEFAULT_USER_ROLE,
         }
 

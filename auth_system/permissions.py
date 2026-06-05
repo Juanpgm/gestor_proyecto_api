@@ -88,13 +88,17 @@ def _get_permissions_from_collection(user_uid: str, db_client) -> List[str]:
     return list(collected_permissions)
 
 
-def get_user_permissions(user_uid: str, db_client=None) -> List[str]:
+def get_user_permissions(
+    user_uid: str, db_client=None, user_data: dict = None
+) -> List[str]:
     """
     Obtiene todos los permisos de un usuario basándose en sus roles
 
     Args:
         user_uid: UID del usuario en Firebase
         db_client: Cliente de Firestore (opcional, se obtiene si no se proporciona)
+        user_data: Documento del usuario ya cargado (opcional). Si se provee se
+                   evita releer el documento desde Firestore.
 
     Returns:
         Lista de permisos del usuario
@@ -105,15 +109,19 @@ def get_user_permissions(user_uid: str, db_client=None) -> List[str]:
         db_client = get_firestore_client()
 
     try:
-        # Obtener documento del usuario
-        user_doc = (
-            db_client.collection(FIREBASE_COLLECTIONS["users"]).document(user_uid).get()
-        )
+        # Reutilizar user_data si ya fue cargado por el llamador (p.ej. get_current_user)
+        if user_data is None:
+            user_doc = (
+                db_client.collection(FIREBASE_COLLECTIONS["users"])
+                .document(user_uid)
+                .get()
+            )
 
-        if not user_doc.exists:
-            return []
+            if not user_doc.exists:
+                return []
 
-        user_data = user_doc.to_dict()
+            user_data = user_doc.to_dict()
+
         user_roles = _normalize_roles(user_data.get("roles", []))
 
         if "super_admin" in user_roles:

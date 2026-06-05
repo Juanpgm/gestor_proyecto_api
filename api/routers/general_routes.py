@@ -70,6 +70,7 @@ try:
         get_unique_nombres_centros_gestores,
         test_firebase_connection,
     )
+
     SCRIPTS_AVAILABLE = True
 except Exception:
     SCRIPTS_AVAILABLE = False
@@ -82,6 +83,7 @@ except Exception:
 # ---------------------------------------------------------------------------
 # Utilidades internas de CRUD genérico sobre Firestore
 # ---------------------------------------------------------------------------
+
 
 def _get_collection(collection_name: str):
     if not FIREBASE_AVAILABLE:
@@ -102,7 +104,9 @@ def _create_record(collection_name: str, payload: Optional[Any]) -> Dict[str, An
     return {"success": True, "id": doc_id, "collection": collection_name, "data": data}
 
 
-def _get_records(collection_name: str, registro_id: Optional[str], limit: int) -> Dict[str, Any]:
+def _get_records(
+    collection_name: str, registro_id: Optional[str], limit: int
+) -> Dict[str, Any]:
     col = _get_collection(collection_name)
     if registro_id:
         doc = col.document(registro_id).get()
@@ -113,53 +117,90 @@ def _get_records(collection_name: str, registro_id: Optional[str], limit: int) -
             )
         row = clean_firebase_data(doc.to_dict() or {})
         row["id"] = doc.id
-        return {"success": True, "collection": collection_name, "count": 1, "data": [row]}
+        return {
+            "success": True,
+            "collection": collection_name,
+            "count": 1,
+            "data": [row],
+        }
     docs = col.limit(limit).stream()
     data = []
     for doc in docs:
         row = clean_firebase_data(doc.to_dict() or {})
         row["id"] = doc.id
         data.append(row)
-    return {"success": True, "collection": collection_name, "count": len(data), "data": data, "limit": limit}
+    return {
+        "success": True,
+        "collection": collection_name,
+        "count": len(data),
+        "data": data,
+        "limit": limit,
+    }
 
 
-def _update_record(collection_name: str, registro_id: str, payload: Optional[Any]) -> Dict[str, Any]:
+def _update_record(
+    collection_name: str, registro_id: str, payload: Optional[Any]
+) -> Dict[str, Any]:
     col = _get_collection(collection_name)
     doc_ref = col.document(registro_id)
-    if not doc_ref.get().exists:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Registro no encontrado en {collection_name}: {registro_id}",
-        )
     updates = payload_to_dict(payload)
     if not updates:
-        raise HTTPException(status_code=400, detail="Debe enviar al menos un campo para actualizar")
+        raise HTTPException(
+            status_code=400, detail="Debe enviar al menos un campo para actualizar"
+        )
     updates["updated_at"] = timestamp_colombia_iso()
-    doc_ref.update(updates)
-    updated = clean_firebase_data(doc_ref.get().to_dict() or {})
-    updated["id"] = registro_id
-    return {"success": True, "collection": collection_name, "id": registro_id, "data": updated}
+    try:
+        # update() raises google.api_core.exceptions.NotFound if doc doesn't exist
+        # — no pre-check read needed.
+        doc_ref.update(updates)
+    except Exception as exc:
+        exc_name = type(exc).__name__
+        if "NotFound" in exc_name or getattr(exc, "code", None) == 404:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Registro no encontrado en {collection_name}: {registro_id}",
+            )
+        raise
+    # Return the merged payload without a second round-trip to Firestore.
+    updated = clean_firebase_data({**updates, "id": registro_id})
+    return {
+        "success": True,
+        "collection": collection_name,
+        "id": registro_id,
+        "data": updated,
+    }
 
 
 def _delete_record(collection_name: str, registro_id: str) -> Dict[str, Any]:
     col = _get_collection(collection_name)
     doc_ref = col.document(registro_id)
-    if not doc_ref.get().exists:
+    # Delete directly — if the document doesn't exist Firestore silently succeeds,
+    # so we verify existence only when we need to surface a 404 to the caller.
+    snapshot = doc_ref.get()
+    if not snapshot.exists:
         raise HTTPException(
             status_code=404,
             detail=f"Registro no encontrado en {collection_name}: {registro_id}",
         )
     doc_ref.delete()
-    return {"success": True, "collection": collection_name, "id": registro_id, "deleted_at": timestamp_colombia_iso()}
+    return {
+        "success": True,
+        "collection": collection_name,
+        "id": registro_id,
+        "deleted_at": timestamp_colombia_iso(),
+    }
 
 
 # ---------------------------------------------------------------------------
 # Reportar Bug
 # ---------------------------------------------------------------------------
 
+
 @router.post("/reportar-bug", summary="Reportar Bug")
 async def reportar_bug(
-    payload: Optional[ReportarBugRequest] = Body(None, description="Campos opcionales del reporte de bug")
+    payload: Optional[ReportarBugRequest] = Body(
+        None, description="Campos opcionales del reporte de bug"
+    )
 ):
     try:
         return create_utf8_response(_create_record("general_reportes_bug", payload))
@@ -175,11 +216,15 @@ async def get_reportes_bug(
     limit: int = Query(50, ge=1, le=200),
 ):
     try:
-        return create_utf8_response(_get_records("general_reportes_bug", registro_id, limit))
+        return create_utf8_response(
+            _get_records("general_reportes_bug", registro_id, limit)
+        )
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Error consultando reportes: {exc!s}")
+        raise HTTPException(
+            status_code=500, detail=f"Error consultando reportes: {exc!s}"
+        )
 
 
 @router.put("/reportar-bug/{registro_id}", summary="Actualizar Reporte de Bug")
@@ -188,11 +233,15 @@ async def update_reportar_bug(
     payload: Optional[ReportarBugRequest] = Body(None),
 ):
     try:
-        return create_utf8_response(_update_record("general_reportes_bug", registro_id, payload))
+        return create_utf8_response(
+            _update_record("general_reportes_bug", registro_id, payload)
+        )
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Error actualizando reporte: {exc!s}")
+        raise HTTPException(
+            status_code=500, detail=f"Error actualizando reporte: {exc!s}"
+        )
 
 
 @router.delete("/reportar-bug/{registro_id}", summary="Eliminar Reporte de Bug")
@@ -202,7 +251,9 @@ async def delete_reportar_bug(registro_id: str):
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Error eliminando reporte: {exc!s}")
+        raise HTTPException(
+            status_code=500, detail=f"Error eliminando reporte: {exc!s}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -212,19 +263,25 @@ async def delete_reportar_bug(registro_id: str):
 _COL_ESCALADA = "general_solicitudes_escalada_privilegios"
 
 
-@router.post("/solicitar-escalada-privilegios", summary="Solicitar Escalada de Privilegios")
+@router.post(
+    "/solicitar-escalada-privilegios", summary="Solicitar Escalada de Privilegios"
+)
 async def solicitar_escalada_privilegios(
-    payload: Optional[SolicitarEscaladaPrivilegiosRequest] = Body(None)
+    payload: Optional[SolicitarEscaladaPrivilegiosRequest] = Body(None),
 ):
     try:
         return create_utf8_response(_create_record(_COL_ESCALADA, payload))
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Error solicitando escalada: {exc!s}")
+        raise HTTPException(
+            status_code=500, detail=f"Error solicitando escalada: {exc!s}"
+        )
 
 
-@router.get("/solicitar-escalada-privilegios", summary="Consultar Solicitudes de Escalada")
+@router.get(
+    "/solicitar-escalada-privilegios", summary="Consultar Solicitudes de Escalada"
+)
 async def get_solicitudes_escalada_privilegios(
     registro_id: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=200),
@@ -234,10 +291,15 @@ async def get_solicitudes_escalada_privilegios(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Error consultando solicitudes: {exc!s}")
+        raise HTTPException(
+            status_code=500, detail=f"Error consultando solicitudes: {exc!s}"
+        )
 
 
-@router.put("/solicitar-escalada-privilegios/{registro_id}", summary="Actualizar Solicitud de Escalada")
+@router.put(
+    "/solicitar-escalada-privilegios/{registro_id}",
+    summary="Actualizar Solicitud de Escalada",
+)
 async def update_solicitar_escalada_privilegios(
     registro_id: str,
     payload: Optional[SolicitarEscaladaPrivilegiosRequest] = Body(None),
@@ -247,17 +309,24 @@ async def update_solicitar_escalada_privilegios(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Error actualizando solicitud: {exc!s}")
+        raise HTTPException(
+            status_code=500, detail=f"Error actualizando solicitud: {exc!s}"
+        )
 
 
-@router.delete("/solicitar-escalada-privilegios/{registro_id}", summary="Eliminar Solicitud de Escalada")
+@router.delete(
+    "/solicitar-escalada-privilegios/{registro_id}",
+    summary="Eliminar Solicitud de Escalada",
+)
 async def delete_solicitar_escalada_privilegios(registro_id: str):
     try:
         return create_utf8_response(_delete_record(_COL_ESCALADA, registro_id))
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Error eliminando solicitud: {exc!s}")
+        raise HTTPException(
+            status_code=500, detail=f"Error eliminando solicitud: {exc!s}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -274,7 +343,9 @@ async def realizar_recomendacion(payload: RealizarRecomendacionRequest = Body(..
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Error registrando recomendacion: {exc!s}")
+        raise HTTPException(
+            status_code=500, detail=f"Error registrando recomendacion: {exc!s}"
+        )
 
 
 @router.get("/realizar-recomendacion", summary="Consultar Recomendaciones")
@@ -283,11 +354,15 @@ async def get_recomendaciones(
     limit: int = Query(50, ge=1, le=200),
 ):
     try:
-        return create_utf8_response(_get_records(_COL_RECOMENDACIONES, registro_id, limit))
+        return create_utf8_response(
+            _get_records(_COL_RECOMENDACIONES, registro_id, limit)
+        )
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Error consultando recomendaciones: {exc!s}")
+        raise HTTPException(
+            status_code=500, detail=f"Error consultando recomendaciones: {exc!s}"
+        )
 
 
 @router.put("/realizar-recomendacion/{registro_id}", summary="Actualizar Recomendacion")
@@ -296,26 +371,35 @@ async def update_recomendacion(
     payload: Optional[ActualizarRecomendacionRequest] = Body(None),
 ):
     try:
-        return create_utf8_response(_update_record(_COL_RECOMENDACIONES, registro_id, payload))
+        return create_utf8_response(
+            _update_record(_COL_RECOMENDACIONES, registro_id, payload)
+        )
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Error actualizando recomendacion: {exc!s}")
+        raise HTTPException(
+            status_code=500, detail=f"Error actualizando recomendacion: {exc!s}"
+        )
 
 
-@router.delete("/realizar-recomendacion/{registro_id}", summary="Eliminar Recomendacion")
+@router.delete(
+    "/realizar-recomendacion/{registro_id}", summary="Eliminar Recomendacion"
+)
 async def delete_recomendacion(registro_id: str):
     try:
         return create_utf8_response(_delete_record(_COL_RECOMENDACIONES, registro_id))
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Error eliminando recomendacion: {exc!s}")
+        raise HTTPException(
+            status_code=500, detail=f"Error eliminando recomendacion: {exc!s}"
+        )
 
 
 # ---------------------------------------------------------------------------
 # Centros Gestores
 # ---------------------------------------------------------------------------
+
 
 @router.get("/centros-gestores/nombres-unicos")
 async def get_all_nombres_centros_gestores_unique():
@@ -347,6 +431,7 @@ async def get_all_nombres_centros_gestores_unique():
 # Firebase Status / Collections
 # ---------------------------------------------------------------------------
 
+
 @router.get("/firebase/status", tags=["Firebase"])
 async def firebase_status():
     """Verificar estado de la conexion con Firebase."""
@@ -356,10 +441,18 @@ async def firebase_status():
         return cached
 
     if not FIREBASE_AVAILABLE:
-        return {"connected": False, "error": "Firebase SDK not available", "status": "unavailable"}
+        return {
+            "connected": False,
+            "error": "Firebase SDK not available",
+            "status": "unavailable",
+        }
 
     if not SCRIPTS_AVAILABLE or test_firebase_connection is None:
-        return {"connected": False, "error": "Scripts not available", "status": "limited"}
+        return {
+            "connected": False,
+            "error": "Scripts not available",
+            "status": "limited",
+        }
 
     try:
         result = await test_firebase_connection()
@@ -384,7 +477,10 @@ async def get_firebase_collections(request: Request):
     try:
         data = await get_collections_info(limit_docs_per_collection=10)
         if not data.get("success"):
-            raise HTTPException(status_code=500, detail=data.get("error", "Error obteniendo colecciones"))
+            raise HTTPException(
+                status_code=500,
+                detail=data.get("error", "Error obteniendo colecciones"),
+            )
         set_in_cache(cache_key, data)
         return data
     except HTTPException:
@@ -408,7 +504,9 @@ async def get_firebase_collections_summary(request: Request):
     try:
         data = await get_collections_summary()
         if not data.get("success"):
-            raise HTTPException(status_code=500, detail=data.get("error", "Error obteniendo resumen"))
+            raise HTTPException(
+                status_code=500, detail=data.get("error", "Error obteniendo resumen")
+            )
         set_in_cache(cache_key, data)
         return data
     except HTTPException:

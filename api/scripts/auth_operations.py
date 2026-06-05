@@ -550,7 +550,9 @@ async def verify_phone_auth_code(
 # FUNCIONES DE VALIDACIÓN DE SESIONES
 # ============================================================================
 
-_session_executor = ThreadPoolExecutor(max_workers=10, thread_name_prefix="auth-session")
+_session_executor = ThreadPoolExecutor(
+    max_workers=10, thread_name_prefix="auth-session"
+)
 
 
 def _verify_token_sync(id_token: str):
@@ -666,11 +668,13 @@ async def validate_user_session(id_token: str) -> Dict[str, Any]:
     try:
         user_record, user_doc = await asyncio.wait_for(
             loop.run_in_executor(_session_executor, _get_user_and_firestore_sync, uid),
-            timeout=20.0
+            timeout=20.0,
         )
     except (asyncio.TimeoutError, Exception) as e:
         err_msg = str(e) if str(e) else type(e).__name__
-        logger.warning(f"auth.validate_session enrichment failed for uid={uid}: {err_msg}")
+        logger.warning(
+            f"auth.validate_session enrichment failed for uid={uid}: {err_msg}"
+        )
         # Retornar sesión válida con datos básicos del token
         return {
             "valid": True,
