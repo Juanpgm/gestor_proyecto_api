@@ -17,6 +17,7 @@ Configuración requerida (variables de entorno):
 import logging
 import os
 import smtplib
+import socket
 import ssl
 import uuid
 from datetime import datetime
@@ -250,18 +251,25 @@ def send_password_reset_email(
 
         context = ssl.create_default_context()
 
+        # Resolver hostname manualmente forzando IPv4 para evitar ENETUNREACH en Railway
+        try:
+            host_ipv4 = socket.getaddrinfo(SMTP_HOST, SMTP_PORT, socket.AF_INET)[0][4][0]
+        except Exception:
+            host_ipv4 = SMTP_HOST  # fallback al hostname si no se puede resolver
+
         if SMTP_USE_TLS:
-            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as server:
-                server.ehlo()
+            with smtplib.SMTP(host_ipv4, SMTP_PORT, timeout=15) as server:
+                server.ehlo(SMTP_HOST)
                 server.starttls(context=context)
-                server.ehlo()
+                server.ehlo(SMTP_HOST)
                 server.login(SMTP_USER, SMTP_PASSWORD)
                 server.sendmail(SMTP_USER, to_email, msg.as_string())
         else:
             # SSL directo (puerto 465)
             with smtplib.SMTP_SSL(
-                SMTP_HOST, SMTP_PORT, context=context, timeout=15
+                host_ipv4, SMTP_PORT, context=context, timeout=15
             ) as server:
+                server.ehlo(SMTP_HOST)
                 server.login(SMTP_USER, SMTP_PASSWORD)
                 server.sendmail(SMTP_USER, to_email, msg.as_string())
 
