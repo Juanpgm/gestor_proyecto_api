@@ -1,0 +1,89 @@
+﻿name: CI/CD Backend
+
+on:
+  push:
+    branches: [master, main, dev]
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-test.txt
+
+      - name: Run pytest
+        run: python -m pytest test/ -v --tb=short --timeout=60 -x
+        env:
+          FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY_DEV }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY_DEV }}
+          ENVIRONMENT: test
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: us-east-1
+
+  deploy-dev:
+    name: Deploy to Railway Dev
+    needs: test
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    environment: dev
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to Railway Dev service
+        uses: bervproject/railway-deploy@main
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        with:
+          service: ${{ secrets.RAILWAY_SERVICE_DEV_ID }}
+
+      - name: Deployment complete
+        run: echo "Dev deployment complete."
+
+  deploy-prod:
+    name: Deploy to Railway Production
+    needs: test
+    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Verify deployer identity
+        run: |
+          ALLOWED_USER="Juanpgm"
+          if [ "${{ github.actor }}" != "$ALLOWED_USER" ]; then
+            echo "ERROR: Only $ALLOWED_USER can deploy to production."
+            exit 1
+          fi
+          echo "Authorized: $ALLOWED_USER"
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to Railway Production
+        uses: bervproject/railway-deploy@main
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        with:
+          service: ${{ secrets.RAILWAY_SERVICE_ID }}
+
+      - name: Deployment complete
+        run: echo "Production deployment complete."
