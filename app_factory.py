@@ -393,6 +393,7 @@ def create_app() -> FastAPI:
             "/auth/google",
             "/auth/config",
             "/auth/validate-session",
+            "/auth/forgot-password",
             "/auth/workload-identity/status",
             "/unidades-proyecto/captura-estado-360",
         ]

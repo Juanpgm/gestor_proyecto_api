@@ -229,6 +229,7 @@ PUBLIC_PATHS = [
     "/auth/google",
     "/auth/config",
     "/auth/validate-session",
+    "/auth/forgot-password",
 ]
 
 # PERMISOS DISPONIBLES EN EL SISTEMA
