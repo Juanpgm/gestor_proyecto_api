@@ -75,6 +75,20 @@ def _build_user_payload(user_record, firestore_data: Dict[str, Any]) -> Dict[str
 
     profile_complete = bool(fullname and centro_gestor and cellphone)
 
+    # Derivar permisos desde los roles resueltos (sin consulta Firestore extra)
+    try:
+        from auth_system.constants import ROLES as _ROLES
+        if "super_admin" in roles:
+            permissions = ["*"]
+        else:
+            _perms: set = set()
+            for _role in roles:
+                if _role in _ROLES:
+                    _perms.update(_ROLES[_role].get("permissions", []))
+            permissions = list(_perms)
+    except Exception:
+        permissions = []
+
     return {
         "uid": user_record.uid,
         "email": user_record.email,
@@ -90,7 +104,9 @@ def _build_user_payload(user_record, firestore_data: Dict[str, Any]) -> Dict[str
         "roles": roles,
         "primary_role": roles[0],
         "roles_source": role_source,
-        "profile_complete": profile_complete
+        "permissions": permissions,
+        "profile_complete": profile_complete,
+        "session_valid": True,
     }
 
 # ============================================================================
@@ -602,6 +618,8 @@ async def validate_user_session(id_token: str) -> Dict[str, Any]:
                 "email": decoded_token.get('email'),
                 "email_verified": decoded_token.get('email_verified', False),
                 "roles": [DEFAULT_SESSION_ROLE],
+                "permissions": [],
+                "session_valid": True,
                 "roles_source": "token_fallback",
                 "profile_complete": False,
             },
