@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 # Dedicated thread pool for middleware Firebase calls.
 # Keeps gRPC zombie threads (300s retries on 429) isolated from
 # the default asyncio executor so call_next / other I/O stays healthy.
-_middleware_executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="mw-fb")
+_middleware_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="mw-fb")
 
 
 class AuthorizationMiddleware(BaseHTTPMiddleware):
@@ -85,7 +85,7 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
                     loop.run_in_executor(
                         _middleware_executor, auth.verify_id_token, token
                     ),
-                    timeout=8.0,
+                    timeout=15.0,
                 )
             except asyncio.TimeoutError:
                 logger.warning("middleware: verify_id_token timed out for %s", path)
