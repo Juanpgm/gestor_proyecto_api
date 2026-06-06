@@ -206,10 +206,11 @@ def send_password_reset_email(
     display_name: str = "",
 ) -> dict:
     """
-    Envía el correo de recuperación de contraseña con plantilla HTML.
+    Envía el correo de recuperación de contraseña usando la plantilla Jinja2
+    ``password_reset.html`` y el servicio unificado de comunicaciones.
 
     Returns:
-        {"success": True} o {"success": False, "error": str}
+        {"success": True} o {"success": False, "error": str, "code": str}
     """
     if not EMAIL_SERVICE_AVAILABLE:
         logger.warning(
@@ -223,79 +224,49 @@ def send_password_reset_email(
         }
 
     try:
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = "Restablece tu contraseña de CaliTrack"
-        msg["From"] = f"{SMTP_FROM_NAME} <{SMTP_USER}>"
-        msg["To"] = to_email
-        msg["Reply-To"] = f"{SMTP_FROM_NAME} <{SMTP_USER}>"
-        # Message-ID único mejora la entregabilidad y evita duplicados
-        msg["Message-ID"] = f"<{uuid.uuid4()}@calitrack>"
-        # Cabeceras que ayudan a evitar la carpeta de spam
-        msg["X-Mailer"] = "CaliTrack Mailer 1.0"
-        msg["X-Priority"] = "3"
-        msg["Precedence"] = "transactional"
-
-        text_part = MIMEText(
-            _build_password_reset_text(display_name, reset_link, to_email),
-            "plain",
-            "utf-8",
+        from api.services.comunicaciones_service import (
+            _render_template,
+            _send_raw_email,
         )
-        html_part = MIMEText(
-            _build_password_reset_html(display_name, reset_link, to_email),
-            "html",
-            "utf-8",
-        )
-        # El orden importa: adjuntar plain primero, HTML al final (preferred)
-        msg.attach(text_part)
-        msg.attach(html_part)
-
-        context = ssl.create_default_context()
-
-        # Resolver hostname manualmente forzando IPv4 para evitar ENETUNREACH en Railway
-        try:
-            host_ipv4 = socket.getaddrinfo(SMTP_HOST, SMTP_PORT, socket.AF_INET)[0][4][
-                0
-            ]
-        except Exception:
-            host_ipv4 = SMTP_HOST  # fallback al hostname si no se puede resolver
-
-        if SMTP_USE_TLS:
-            with smtplib.SMTP(host_ipv4, SMTP_PORT, timeout=15) as server:
-                server.ehlo(SMTP_HOST)
-                server.starttls(context=context)
-                server.ehlo(SMTP_HOST)
-                server.login(SMTP_USER, SMTP_PASSWORD)
-                server.sendmail(SMTP_USER, to_email, msg.as_string())
-        else:
-            # SSL directo (puerto 465)
-            with smtplib.SMTP_SSL(
-                host_ipv4, SMTP_PORT, context=context, timeout=15
-            ) as server:
-                server.ehlo(SMTP_HOST)
-                server.login(SMTP_USER, SMTP_PASSWORD)
-                server.sendmail(SMTP_USER, to_email, msg.as_string())
-
-        logger.info(f"Password reset email sent to {to_email}")
-        return {"success": True}
-
-    except smtplib.SMTPAuthenticationError:
-        logger.error("SMTP authentication failed — check SMTP_USER and SMTP_PASSWORD")
-        return {
-            "success": False,
-            "error": "Error de autenticación SMTP",
-            "code": "SMTP_AUTH_ERROR",
-        }
-    except smtplib.SMTPException as exc:
-        logger.error(f"SMTP error sending to {to_email}: {exc}")
-        return {
-            "success": False,
-            "error": "Error enviando correo",
-            "code": "SMTP_ERROR",
-        }
     except Exception as exc:
-        logger.error(f"Unexpected error sending reset email to {to_email}: {exc}")
+        logger.error("comunicaciones_service no disponible: %s", exc)
         return {
             "success": False,
-            "error": "Error inesperado al enviar correo",
+            "error": "Servicio de mensajería no disponible",
+            "code": "MESSAGING_SERVICE_UNAVAILABLE",
+        }
+
+    first_name = display_name.split()[0] if display_name else "Usuario"
+
+    html_body = _render_template(
+        "password_reset.html",
+        {
+            "subject": "Restablece tu contraseña de CaliTrack",
+            "header_color": "#1a56db",
+            "header_title": "CaliTrack — Recuperación de contraseña",
+            "header_subtitle": "Municipio de Santiago de Cali",
+            "first_name": first_name,
+            "email": to_email,
+            "reset_link": reset_link,
+        },
+    )
+
+    ok, channel, error = _send_raw_email(
+        to=to_email,
+        subject="Restablece tu contraseña de CaliTrack",
+        html_body=html_body,
+        template="password_reset",
+        text_body=_build_password_reset_text(display_name, reset_link, to_email),
+        sent_by="forgot_password",
+    )
+
+    if ok:
+        logger.info("Password reset email sent to %s via %s", to_email, channel)
+        return {"success": True, "channel": channel}
+    else:
+        logger.error("Failed to send reset email to %s: %s", to_email, error)
+        return {
+            "success": False,
+            "error": error or "Error enviando correo",
             "code": "EMAIL_SEND_ERROR",
         }

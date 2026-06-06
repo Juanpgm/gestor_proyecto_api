@@ -144,6 +144,15 @@ except Exception as exc:
     logger.error(f"comunicaciones router not available: {exc}\n{_tb.format_exc()}")
     _COMUNICACIONES_AVAILABLE = False
 
+try:
+    from api.routers.notifications_router import router as notifications_router
+
+    _NOTIFICATIONS_AVAILABLE = True
+    logger.info("notifications router imported successfully")
+except Exception as exc:
+    logger.warning(f"notifications router not available: {exc}")
+    _NOTIFICATIONS_AVAILABLE = False
+
 
 # ---------------------------------------------------------------------------
 # Lifespan (startup / shutdown)
@@ -461,6 +470,10 @@ def create_app() -> FastAPI:
     if _COMUNICACIONES_AVAILABLE:
         app.include_router(comunicaciones_router)
         logger.info("Router included: comunicaciones")
+
+    if _NOTIFICATIONS_AVAILABLE:
+        app.include_router(notifications_router)
+        logger.info("Router included: notifications")
 
     # -- Static files --
     static_path = os.path.join(os.path.dirname(__file__), "static")

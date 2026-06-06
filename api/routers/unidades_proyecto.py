@@ -2776,6 +2776,30 @@ async def crear_solicitud_cambio_unidad_proyecto(
             solicitud_payload
         )
 
+        # Notificar a admin_general y super_admin
+        try:
+            from api.services.notifications_service import notificar_nueva_solicitud
+
+            actor_nombre = getattr(request.state, "user_nombre", None) or "Usuario"
+            actor_role_val = (
+                getattr(request.state, "user_role", None) or "admin_centro_gestor"
+            )
+            actor_cg = getattr(request.state, "user_centro_gestor", None)
+            notificar_nueva_solicitud(
+                actor_nombre=actor_nombre,
+                actor_role=actor_role_val,
+                actor_centro_gestor=actor_cg,
+                modulo="unidades_proyecto",
+                tipo_registro="unidad_proyecto",
+                referencia_id=upid_value,
+            )
+        except Exception as notif_err:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                f"Notificación UP no enviada: {notif_err}"
+            )
+
         return create_utf8_response(
             {
                 "id": doc_id,
@@ -2861,6 +2885,33 @@ async def crear_solicitud_cambio_intervencion(
         db.collection("solicitudes_cambios_intervenciones").document(doc_id).set(
             solicitud_payload
         )
+
+        # Notificar a admin_general y super_admin
+        try:
+            from api.services.notifications_service import notificar_nueva_solicitud
+
+            actor_nombre = getattr(request.state, "user_nombre", None) or "Usuario"
+            actor_role_val = (
+                getattr(request.state, "user_role", None) or "admin_centro_gestor"
+            )
+            actor_cg = (
+                getattr(request.state, "user_centro_gestor", None)
+                or nombre_centro_gestor
+            )
+            notificar_nueva_solicitud(
+                actor_nombre=actor_nombre,
+                actor_role=actor_role_val,
+                actor_centro_gestor=actor_cg,
+                modulo="intervenciones",
+                tipo_registro="intervencion",
+                referencia_id=intervencion_id or upid,
+            )
+        except Exception as notif_err:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                f"Notificación intervencion no enviada: {notif_err}"
+            )
 
         return create_utf8_response(
             {

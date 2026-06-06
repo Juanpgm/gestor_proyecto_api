@@ -10,7 +10,9 @@ import json
 import logging
 import os
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from functools import lru_cache
+from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 from fastapi import (
     APIRouter,
@@ -172,6 +174,79 @@ except Exception:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+try:
+    from api.utils.s3_document_manager import S3DocumentManager, BOTO3_AVAILABLE
+except Exception:
+    S3DocumentManager = None  # type: ignore
+    BOTO3_AVAILABLE = False
+
+
+def _bool_from_env(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _s3_presigned_enabled() -> bool:
+    return _bool_from_env("S3_USE_PRESIGNED_URLS", True)
+
+
+def _s3_presigned_expiration() -> int:
+    try:
+        return int(os.getenv("S3_PRESIGNED_URL_EXPIRATION_SECONDS", "3600"))
+    except Exception:
+        return 3600
+
+
+def _extract_s3_bucket_key_from_url(url: str) -> Tuple[Optional[str], Optional[str]]:
+    if not url:
+        return None, None
+    try:
+        parsed = urlparse(url)
+        host = (parsed.netloc or "").lower()
+        path = (parsed.path or "").lstrip("/")
+        if host.endswith("amazonaws.com"):
+            if ".s3." in host:
+                bucket = host.split(".s3.")[0]
+                return bucket or None, path or None
+            if host.startswith("s3.") or host == "s3.amazonaws.com":
+                if "/" in path:
+                    bucket, key = path.split("/", 1)
+                    return bucket or None, key or None
+        return None, None
+    except Exception:
+        return None, None
+
+
+@lru_cache(maxsize=6)
+def _get_s3_client_for_presign_cached(credentials_path: str = ""):
+    try:
+        if not BOTO3_AVAILABLE or S3DocumentManager is None:
+            return None
+        manager = S3DocumentManager(credentials_path=credentials_path or None)
+        return manager.s3_client
+    except Exception:
+        return None
+
+
+def _generate_presigned_s3_url(
+    bucket: str, key: str, credentials_path: str = ""
+) -> Optional[str]:
+    if not _s3_presigned_enabled() or not bucket or not key:
+        return None
+    try:
+        s3_client = _get_s3_client_for_presign_cached(credentials_path or "")
+        if s3_client is None:
+            return None
+        return s3_client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": bucket, "Key": key},
+            ExpiresIn=_s3_presigned_expiration(),
+        )
+    except Exception:
+        return None
 
 
 def check_emprestito_availability():
@@ -4115,6 +4190,27 @@ async def crear_solicitud_cambio_emprestito(
             solicitud_data
         )
 
+        # Notificar a admin_general y super_admin sobre nueva solicitud
+        try:
+            from api.services.notifications_service import notificar_nueva_solicitud
+
+            # Intentar extraer info del actor del header de autenticación o del body
+            actor_nombre = getattr(request.state, "user_nombre", None) or "Usuario"
+            actor_role_val = (
+                getattr(request.state, "user_role", None) or "admin_centro_gestor"
+            )
+            actor_cg = getattr(request.state, "user_centro_gestor", None)
+            notificar_nueva_solicitud(
+                actor_nombre=actor_nombre,
+                actor_role=actor_role_val,
+                actor_centro_gestor=actor_cg,
+                modulo="emprestito",
+                tipo_registro=tipo_registro,
+                referencia_id=referencia_id,
+            )
+        except Exception as notif_err:
+            logger.warning(f"Notificación de nueva solicitud no enviada: {notif_err}")
+
         return create_utf8_response(
             {
                 "success": True,
@@ -4234,6 +4330,15 @@ async def consultar_solicitudes_cambios_emprestito(
 async def aprobar_solicitud_cambio_emprestito(
     request: Request,
     solicitud_id: str = Path(..., description="ID de la solicitud a aprobar"),
+    actor_nombre: Optional[str] = Body(
+        None, embed=True, description="Nombre del usuario que aprueba"
+    ),
+    actor_role: Optional[str] = Body(
+        None, embed=True, description="Rol del usuario que aprueba"
+    ),
+    actor_centro_gestor: Optional[str] = Body(
+        None, embed=True, description="Centro gestor del usuario que aprueba"
+    ),
 ):
     """
     ## [OK] PUT | Aprobar solicitud de cambio de empréstito
@@ -4355,8 +4460,28 @@ async def aprobar_solicitud_cambio_emprestito(
                 "estado": "aprobada",
                 "fecha_aprobacion": now_iso,
                 "updated_at": now_iso,
+                "actor_nombre": actor_nombre,
+                "actor_role": actor_role,
+                "actor_centro_gestor": actor_centro_gestor,
             }
         )
+
+        # Disparar notificación a admin_centro_gestor del centro gestor afectado
+        try:
+            from api.services.notifications_service import notificar_solicitud_resuelta
+
+            nombre_cg = sol_data.get("nombre_centro_gestor") or referencia_id or ""
+            notificar_solicitud_resuelta(
+                tipo="solicitud_aprobada",
+                nombre_centro_gestor_solicitante=nombre_cg,
+                actor_nombre=actor_nombre or "Administrador",
+                actor_role=actor_role or "admin_general",
+                actor_centro_gestor=actor_centro_gestor,
+                modulo="emprestito",
+                referencia_id=referencia_id,
+            )
+        except Exception as notif_err:
+            logger.warning(f"Notificación de aprobación no enviada: {notif_err}")
 
         return create_utf8_response(
             {
@@ -4391,6 +4516,15 @@ async def rechazar_solicitud_cambio_emprestito(
     request: Request,
     solicitud_id: str = Path(..., description="ID de la solicitud a rechazar"),
     motivo_rechazo: str = Body(..., embed=True, description="Motivo del rechazo"),
+    actor_nombre: Optional[str] = Body(
+        None, embed=True, description="Nombre del usuario que rechaza"
+    ),
+    actor_role: Optional[str] = Body(
+        None, embed=True, description="Rol del usuario que rechaza"
+    ),
+    actor_centro_gestor: Optional[str] = Body(
+        None, embed=True, description="Centro gestor del usuario que rechaza"
+    ),
 ):
     """
     ## [ERROR] PUT | Rechazar solicitud de cambio de empréstito
@@ -4436,8 +4570,33 @@ async def rechazar_solicitud_cambio_emprestito(
                 "motivo_rechazo": motivo_rechazo.strip(),
                 "fecha_rechazo": now_iso,
                 "updated_at": now_iso,
+                "actor_nombre": actor_nombre,
+                "actor_role": actor_role,
+                "actor_centro_gestor": actor_centro_gestor,
             }
         )
+
+        # Disparar notificación a admin_centro_gestor del centro gestor afectado
+        try:
+            from api.services.notifications_service import notificar_solicitud_resuelta
+
+            nombre_cg = (
+                sol_data.get("nombre_centro_gestor")
+                or sol_data.get("referencia_id")
+                or ""
+            )
+            notificar_solicitud_resuelta(
+                tipo="solicitud_rechazada",
+                nombre_centro_gestor_solicitante=nombre_cg,
+                actor_nombre=actor_nombre or "Administrador",
+                actor_role=actor_role or "admin_general",
+                actor_centro_gestor=actor_centro_gestor,
+                modulo="emprestito",
+                referencia_id=sol_data.get("referencia_id"),
+                motivo_rechazo=motivo_rechazo.strip(),
+            )
+        except Exception as notif_err:
+            logger.warning(f"Notificación de rechazo no enviada: {notif_err}")
 
         return create_utf8_response(
             {

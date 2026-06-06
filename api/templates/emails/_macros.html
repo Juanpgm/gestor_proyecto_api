@@ -1,0 +1,81 @@
+{# Macros reutilizables para correos CaliTrack #} {% macro cta_button(url,
+label, color='#1a56db') -%} {% if url and label %}
+<table
+  role="presentation"
+  cellpadding="0"
+  cellspacing="0"
+  border="0"
+  align="center"
+  style="margin: 28px auto 8px"
+>
+  <tr>
+    <td align="center" bgcolor="{{ color }}" style="border-radius: 8px">
+      <a
+        href="{{ url }}"
+        target="_blank"
+        style="
+          display: inline-block;
+          padding: 13px 32px;
+          font-size: 14px;
+          font-weight: 600;
+          color: #ffffff;
+          text-decoration: none;
+          border-radius: 8px;
+          letter-spacing: 0.3px;
+        "
+      >
+        {{ label }}
+      </a>
+    </td>
+  </tr>
+</table>
+{% endif %} {%- endmacro %} {% macro priority_pill(priority) -%} {% set labels =
+{'info': 'Información', 'warning': 'Aviso importante', 'urgent': 'Urgente'} %}
+{% set colors = {'info': '#1a56db', 'warning': '#f59e0b', 'urgent': '#dc2626'}
+%} {% set bgs = {'info': '#eff6ff', 'warning': '#fffbeb', 'urgent': '#fef2f2'}
+%}
+<span
+  style="display:inline-block;font-size:11px;font-weight:700;letter-spacing:1px;
+             text-transform:uppercase;padding:4px 10px;border-radius:999px;
+             color:{{ colors.get(priority, colors['info']) }};
+             background-color:{{ bgs.get(priority, bgs['info']) }};"
+>
+  {{ labels.get(priority, labels['info']) }}
+</span>
+{%- endmacro %} {% macro kv_table(rows) -%}
+<table
+  role="presentation"
+  width="100%"
+  cellpadding="0"
+  cellspacing="0"
+  border="0"
+  style="border: 1px solid #e5e7eb; border-radius: 8px; margin: 18px 0"
+>
+  {% for row in rows %}
+  <tr>
+    <td
+      style="
+        padding: 10px 14px;
+        background-color: #f9fafb;
+        font-size: 13px;
+        color: #374151;
+        width: 38%;
+        border-bottom: 1px solid #e5e7eb;
+      "
+    >
+      {{ row.label }}
+    </td>
+    <td
+      style="
+        padding: 10px 14px;
+        font-size: 13px;
+        color: #111827;
+        border-bottom: 1px solid #e5e7eb;
+      "
+    >
+      {{ row.value }}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{%- endmacro %}

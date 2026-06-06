@@ -1,0 +1,28 @@
+{% extends "_base.html" %} {% import "_macros.html" as m %} {% block content %}
+{{ m.priority_pill(priority) }}
+
+<h2
+  style="
+    margin: 14px 0 16px;
+    font-size: 22px;
+    font-weight: 700;
+    line-height: 1.3;
+    color: #111827;
+  "
+>
+  {{ subject }}
+</h2>
+
+<div style="font-size: 15px; line-height: 1.7; color: #111827">
+  {{ message_html | safe }}
+</div>
+
+{{ m.cta_button(cta_url, cta_label, header_color | default('#1a56db')) }}
+
+<hr style="border: none; border-top: 1px solid #e5e7eb; margin: 32px 0 0" />
+
+<p style="margin: 18px 0 0; font-size: 12px; color: #9ca3af; line-height: 1.6">
+  Este mensaje fue enviado desde el módulo de Comunicaciones de CaliTrack. Si
+  recibiste este correo por error, por favor ignóralo.
+</p>
+{% endblock %}
