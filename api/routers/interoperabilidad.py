@@ -42,6 +42,7 @@ try:
         get_reporte_contrato_by_id,
         get_reportes_by_centro_gestor,
         get_reportes_by_referencia_contrato,
+        delete_reporte_contrato,
         REPORTES_CONTRATOS_AVAILABLE,
     )
 except Exception:
@@ -51,6 +52,7 @@ except Exception:
     get_reporte_contrato_by_id = None
     get_reportes_by_centro_gestor = None
     get_reportes_by_referencia_contrato = None
+    delete_reporte_contrato = None
 
 try:
     from database.firebase_config import FIREBASE_AVAILABLE
@@ -519,6 +521,42 @@ async def obtener_reportes_por_referencia_contrato(referencia_contrato: str):
         raise HTTPException(
             status_code=500,
             detail=f"Error obteniendo reportes por referencia: {str(e)}",
+        )
+
+
+@router.delete(
+    "/reportes_contratos/{reporte_id}",
+    tags=["Interoperabilidad con Artefacto de Seguimiento"],
+)
+async def eliminar_reporte_contrato(
+    reporte_id: str = Path(..., description="ID del reporte a eliminar")
+):
+    """
+    ##  Eliminar Reporte de Contrato
+
+    **Propósito**: Eliminar un reporte de contrato de empréstito por su ID.
+    Solo permitido para roles con permiso `write:reportes_contratos` (super_admin / admin_general).
+    """
+    if (
+        not FIREBASE_AVAILABLE
+        or not SCRIPTS_AVAILABLE
+        or not REPORTES_CONTRATOS_AVAILABLE
+        or delete_reporte_contrato is None
+    ):
+        raise HTTPException(status_code=503, detail="Servicios no disponibles")
+
+    try:
+        result = await delete_reporte_contrato(reporte_id)
+        if not result["success"]:
+            raise HTTPException(
+                status_code=404, detail=result.get("error", "Error eliminando reporte")
+            )
+        return JSONResponse(content=result, status_code=200)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error eliminando reporte: {str(e)}"
         )
 
 
