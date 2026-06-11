@@ -94,22 +94,20 @@ def diagnose(email: str) -> int:
 
     # 4) Diagnóstico de Unidades de Proyecto
     _print_section("4) Acceso a 'Unidades de Proyecto'")
-    has_read = any(
-        p in perms or p == "*"
+    has_read = "*" in perms or any(
+        p in perms
         for p in (
             "read:unidades",
             "read:unidades:own_centro",
             "read:unidades:basic",
-            "*",
+            "read:unidades:public",
         )
     )
-    has_write = any(
-        p in perms or p == "*"
-        for p in ("write:unidades", "write:unidades:own_centro", "*")
+    has_write = "*" in perms or any(
+        p in perms for p in ("write:unidades", "write:unidades:own_centro")
     )
-    has_delete = any(
-        p in perms or p == "*"
-        for p in ("delete:unidades", "delete:unidades:own_centro", "*")
+    has_delete = "*" in perms or any(
+        p in perms for p in ("delete:unidades", "delete:unidades:own_centro")
     )
     print(f"   read:unidades     → {'✅' if has_read else '❌'}")
     print(f"   write:unidades    → {'✅' if has_write else '❌'}")

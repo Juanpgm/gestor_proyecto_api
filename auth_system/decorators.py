@@ -278,10 +278,10 @@ def _user_centro_gestor(user_data: dict) -> Optional[str]:
 
 
 def _has_permission(perms: List[str], required: str) -> Tuple[bool, bool]:
-    """Eval煤a un permiso ``action:resource``. Devuelve ``(has_any, only_own_centro)``.
+    """Evalúa un permiso ``action:resource``. Devuelve ``(has_any, only_own_centro)``.
 
-    ``has_any``: tiene alguna variante del permiso (global, own_centro, basic).
-    ``only_own_centro``: tiene exclusivamente la versi贸n ``:own_centro`` o ``:basic``
+    ``has_any``: tiene alguna variante del permiso (global, own_centro, basic, public).
+    ``only_own_centro``: tiene exclusivamente la versión ``:own_centro``
     (debe forzarse el filtro por su centro).
     """
     if not perms:
@@ -290,10 +290,12 @@ def _has_permission(perms: List[str], required: str) -> Tuple[bool, bool]:
         return (True, False)
     action = required.split(":")[0]
     if f"{action}:*" in perms or required in perms:
-        # 驴Tambi茅n tiene :own_centro? Si solo tiene own_centro, ya entr贸 por otro check
+        # ¿También tiene :own_centro? Si solo tiene own_centro, ya entró por otro check
         return (True, False)
-    if f"{required}:own_centro" in perms or f"{required}:basic" in perms:
+    if f"{required}:own_centro" in perms:
         return (True, True)
+    if f"{required}:basic" in perms or f"{required}:public" in perms:
+        return (True, False)
     return (False, False)
 
 

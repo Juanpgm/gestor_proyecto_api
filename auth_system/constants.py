@@ -208,6 +208,7 @@ ROLES = {
             # Solo datos públicos
             "read:proyectos:public",
             "view:dashboard:public",
+            "read:unidades:public",
         ],
     },
 }
