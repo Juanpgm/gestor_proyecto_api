@@ -230,6 +230,9 @@ PUBLIC_PATHS = [
     "/auth/config",
     "/auth/validate-session",
     "/auth/forgot-password",
+    "/auth/workload-identity/status",
+    "/centros-gestores/",
+    "/unidades-proyecto/captura-estado-360",
 ]
 
 # PERMISOS DISPONIBLES EN EL SISTEMA
