@@ -2385,8 +2385,8 @@ async def get_pagos_emprestito_all() -> Dict[str, Any]:
         try:
             for doc in get_all_docs_paginated(db_client.collection('contratos_emprestito')):
                 data = doc.to_dict()
-                ref = data.get('referencia_contrato', '').strip()
-                bp = data.get('bp', '').strip()
+                ref = str(data.get('referencia_contrato') or '').strip()
+                bp = str(data.get('bp') or '').strip()
                 if ref and bp:
                     contratos_map[ref] = bp
             logger.info(f"✓ Cargados {len(contratos_map)} contratos con BP")
@@ -2398,8 +2398,8 @@ async def get_pagos_emprestito_all() -> Dict[str, Any]:
         try:
             for doc in get_all_docs_paginated(db_client.collection('convenios_transferencias_emprestito')):
                 data = doc.to_dict()
-                ref = data.get('referencia_contrato', '').strip()
-                bp = data.get('bp', '').strip()
+                ref = str(data.get('referencia_contrato') or '').strip()
+                bp = str(data.get('bp') or '').strip()
                 if ref and bp:
                     convenios_map[ref] = bp
             logger.info(f"✓ Cargados {len(convenios_map)} convenios con BP")
@@ -2411,8 +2411,8 @@ async def get_pagos_emprestito_all() -> Dict[str, Any]:
         try:
             for doc in get_all_docs_paginated(db_client.collection('ordenes_compra_emprestito')):
                 data = doc.to_dict()
-                centro = data.get('nombre_centro_gestor', '').strip()
-                bp = data.get('bp', '').strip()
+                centro = str(data.get('nombre_centro_gestor') or '').strip()
+                bp = str(data.get('bp') or '').strip()
                 if centro and bp:
                     ordenes_map[centro] = bp
             logger.info(f"✓ Cargadas {len(ordenes_map)} órdenes con BP")
@@ -2433,8 +2433,8 @@ async def get_pagos_emprestito_all() -> Dict[str, Any]:
             
             # Heredar BP
             bp_heredado = ''
-            referencia_contrato = pago_data.get('referencia_contrato', '').strip()
-            nombre_centro_gestor = pago_data.get('nombre_centro_gestor', '').strip()
+            referencia_contrato = str(pago_data.get('referencia_contrato') or '').strip()
+            nombre_centro_gestor = str(pago_data.get('nombre_centro_gestor') or '').strip()
             
             # PRIORIDAD 1: Buscar en contratos_map
             if referencia_contrato and referencia_contrato in contratos_map:
@@ -2538,8 +2538,8 @@ async def get_rpc_contratos_emprestito_all() -> Dict[str, Any]:
         try:
             for doc in get_all_docs_paginated(db_client.collection('contratos_emprestito')):
                 data = doc.to_dict()
-                ref = data.get('referencia_contrato', '').strip()
-                bp = data.get('bp', '').strip()
+                ref = str(data.get('referencia_contrato') or '').strip()
+                bp = str(data.get('bp') or '').strip()
                 if ref and bp:
                     contratos_map[ref] = bp
             logger.info(f"✓ Cargados {len(contratos_map)} contratos con BP")
@@ -2551,8 +2551,8 @@ async def get_rpc_contratos_emprestito_all() -> Dict[str, Any]:
         try:
             for doc in get_all_docs_paginated(db_client.collection('convenios_transferencias_emprestito')):
                 data = doc.to_dict()
-                ref = data.get('referencia_contrato', '').strip()
-                bp = data.get('bp', '').strip()
+                ref = str(data.get('referencia_contrato') or '').strip()
+                bp = str(data.get('bp') or '').strip()
                 if ref and bp:
                     convenios_map[ref] = bp
             logger.info(f"✓ Cargados {len(convenios_map)} convenios con BP")
@@ -2564,8 +2564,8 @@ async def get_rpc_contratos_emprestito_all() -> Dict[str, Any]:
         try:
             for doc in get_all_docs_paginated(db_client.collection('ordenes_compra_emprestito')):
                 data = doc.to_dict()
-                centro = data.get('nombre_centro_gestor', '').strip()
-                bp = data.get('bp', '').strip()
+                centro = str(data.get('nombre_centro_gestor') or '').strip()
+                bp = str(data.get('bp') or '').strip()
                 if centro and bp:
                     ordenes_map[centro] = bp
             logger.info(f"✓ Cargadas {len(ordenes_map)} órdenes con BP")
@@ -2585,8 +2585,8 @@ async def get_rpc_contratos_emprestito_all() -> Dict[str, Any]:
             rpc_data['id'] = doc.id
             
             bp_heredado = ''
-            referencia_contrato = rpc_data.get('referencia_contrato', '').strip()
-            nombre_centro_gestor = rpc_data.get('nombre_centro_gestor', '').strip()
+            referencia_contrato = str(rpc_data.get('referencia_contrato') or '').strip()
+            nombre_centro_gestor = str(rpc_data.get('nombre_centro_gestor') or '').strip()
             
             # PRIORIDAD 1: Buscar en contratos_map
             if referencia_contrato and referencia_contrato in contratos_map:
