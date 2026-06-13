@@ -340,7 +340,7 @@ try:
             return {"success": False, "error": "Control de cambios not available"}
 
     print(
-        f"✅ Emprestito operations imported successfully - AVAILABLE: {EMPRESTITO_OPERATIONS_AVAILABLE}"
+        f"[OK] Emprestito operations imported successfully - AVAILABLE: {EMPRESTITO_OPERATIONS_AVAILABLE}"
     )
 
     # Importar funciones optimizadas si están disponibles
@@ -361,7 +361,7 @@ try:
         )
 
         print(
-            f"✅ Emprestito optimized functions loaded - OPTIMIZED_AVAILABLE: {EMPRESTITO_OPTIMIZED_AVAILABLE}"
+            f"[OK] Emprestito optimized functions loaded - OPTIMIZED_AVAILABLE: {EMPRESTITO_OPTIMIZED_AVAILABLE}"
         )
     except ImportError as opt_e:
         print(f"Warning: Emprestito optimized functions not available: {opt_e}")
@@ -648,7 +648,7 @@ try:
     )
 
     print(
-        f"✅ Proyectos presupuestales operations imported successfully - AVAILABLE: {PROYECTOS_PRESUPUESTALES_OPERATIONS_AVAILABLE}"
+        f"[OK] Proyectos presupuestales operations imported successfully - AVAILABLE: {PROYECTOS_PRESUPUESTALES_OPERATIONS_AVAILABLE}"
     )
 except ImportError as e:
     print(f"Warning: Proyectos presupuestales operations not available: {e}")
@@ -673,7 +673,7 @@ try:
     )
 
     print(
-        f"✅ TVEC enrich operations imported successfully - AVAILABLE: {TVEC_ENRICH_OPERATIONS_AVAILABLE}"
+        f"[OK] TVEC enrich operations imported successfully - AVAILABLE: {TVEC_ENRICH_OPERATIONS_AVAILABLE}"
     )
 except ImportError as e:
     print(f"Warning: TVEC enrich operations not available: {e}")
@@ -703,7 +703,7 @@ try:
     )
 
     print(
-        f"✅ Ordenes compra operations imported successfully - AVAILABLE: {ORDENES_COMPRA_OPERATIONS_AVAILABLE}"
+        f"[OK] Ordenes compra operations imported successfully - AVAILABLE: {ORDENES_COMPRA_OPERATIONS_AVAILABLE}"
     )
 except ImportError as e:
     print(f"Warning: Ordenes compra operations not available: {e}")
@@ -752,7 +752,7 @@ try:
     )
 
     EMPRESTITO_QUALITY_AVAILABLE = True
-    print(f"✅ Emprestito quality metrics imported successfully")
+    print(f"[OK] Emprestito quality metrics imported successfully")
 except ImportError as e:
     print(f"Warning: Emprestito quality metrics not available: {e}")
     EMPRESTITO_QUALITY_AVAILABLE = False
@@ -789,7 +789,7 @@ try:
     )
 
     print(
-        f"✅ Flujo caja operations imported successfully - AVAILABLE: {FLUJO_CAJA_OPERATIONS_AVAILABLE}"
+        f"[OK] Flujo caja operations imported successfully - AVAILABLE: {FLUJO_CAJA_OPERATIONS_AVAILABLE}"
     )
 except ImportError as e:
     print(f"Warning: Flujo caja operations not available: {e}")
@@ -824,7 +824,7 @@ try:
     )
 
     print(
-        f"✅ Captura 360 operations imported successfully - AVAILABLE: {CAPTURA_360_OPERATIONS_AVAILABLE}"
+        f"[OK] Captura 360 operations imported successfully - AVAILABLE: {CAPTURA_360_OPERATIONS_AVAILABLE}"
     )
 except ImportError as e:
     print(f"Warning: Captura 360 operations not available: {e}")

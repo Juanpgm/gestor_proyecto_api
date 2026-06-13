@@ -36,6 +36,48 @@ except Exception as e:
     FIRESTORE_AVAILABLE = False
     logger.warning(f"Firebase no disponible: {e}")
 
+
+# ---------------------------------------------------------------------------
+# Funciones utilitarias (definidas antes de su primer uso)
+# ---------------------------------------------------------------------------
+
+def serialize_datetime_objects(obj):
+    """Serializar objetos datetime para JSON"""
+    if isinstance(obj, dict):
+        return {key: serialize_datetime_objects(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [serialize_datetime_objects(item) for item in obj]
+    elif hasattr(obj, 'timestamp'):  # Firebase Timestamp
+        return obj.strftime('%Y-%m-%d %H:%M:%S')
+    elif isinstance(obj, datetime):
+        return obj.strftime('%Y-%m-%d %H:%M:%S')
+    else:
+        return obj
+
+
+def get_all_docs_paginated(collection_ref, batch_size: int = 500):
+    """Obtener todos los documentos de una colección usando paginación por cursor."""
+    docs = []
+    last_doc = None
+
+    while True:
+        query = collection_ref.order_by("__name__").limit(batch_size)
+        if last_doc is not None:
+            query = query.start_after(last_doc)
+
+        batch_docs = query.get()
+        if not batch_docs:
+            break
+
+        docs.extend(batch_docs)
+        last_doc = batch_docs[-1]
+
+        if len(batch_docs) < batch_size:
+            break
+
+    return docs
+
+
 async def get_procesos_emprestito_all() -> Dict[str, Any]:
     """Obtener todos los registros de la colección procesos_emprestito"""
     try:
@@ -114,41 +156,6 @@ async def get_procesos_emprestito_all() -> Dict[str, Any]:
             "count": 0
         }
 
-def serialize_datetime_objects(obj):
-    """Serializar objetos datetime para JSON"""
-    if isinstance(obj, dict):
-        return {key: serialize_datetime_objects(value) for key, value in obj.items()}
-    elif isinstance(obj, list):
-        return [serialize_datetime_objects(item) for item in obj]
-    elif hasattr(obj, 'timestamp'):  # Firebase Timestamp
-        return obj.strftime('%Y-%m-%d %H:%M:%S')
-    elif isinstance(obj, datetime):
-        return obj.strftime('%Y-%m-%d %H:%M:%S')
-    else:
-        return obj
-
-
-def get_all_docs_paginated(collection_ref, batch_size: int = 500):
-    """Obtener todos los documentos de una colección usando paginación por cursor."""
-    docs = []
-    last_doc = None
-
-    while True:
-        query = collection_ref.order_by("__name__").limit(batch_size)
-        if last_doc is not None:
-            query = query.start_after(last_doc)
-
-        batch_docs = query.get()
-        if not batch_docs:
-            break
-
-        docs.extend(batch_docs)
-        last_doc = batch_docs[-1]
-
-        if len(batch_docs) < batch_size:
-            break
-
-    return docs
 
 async def restaurar_procesos_emprestito_usando_post() -> Dict[str, Any]:
     """
@@ -522,6 +529,7 @@ async def obtener_datos_tvec(referencia_proceso: str) -> Dict[str, Any]:
     """
     try:
         # Importar Socrata aquí para evitar errores de importación si no está disponible
+        # pyrefly: ignore [missing-import]
         from sodapy import Socrata
         
         # Cliente para API de TVEC con app_token para eliminar límites
@@ -1391,7 +1399,7 @@ async def obtener_contratos_desde_proceso_contractual(offset: int = 0, limit: in
                 proceso_contractual = proceso_data.get('proceso_contractual', '')
 
                 if not referencia_proceso or not proceso_contractual:
-                    logger.warning(f"❌ Proceso incompleto {i}/{total_procesos}: {proceso_doc.id}")
+                    logger.warning(f"❌ Proceso incompleto {i}/{procesos_en_lote}: {proceso_doc.id}")
                     procesos_con_errores_tecnicos.append({
                         "id": proceso_doc.id,
                         "referencia_proceso": referencia_proceso or "N/A",

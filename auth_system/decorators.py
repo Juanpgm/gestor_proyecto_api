@@ -159,7 +159,13 @@ def require_role(roles: List[str]):
         async def wrapper(
             *args, current_user: dict = Depends(get_current_user), **kwargs
         ):
-            user_roles = current_user.get("roles", [])
+            raw_roles = current_user.get("roles", [])
+            if isinstance(raw_roles, str):
+                user_roles = [raw_roles.strip()]
+            elif isinstance(raw_roles, (list, tuple, set)):
+                user_roles = [str(r).strip() for r in raw_roles]
+            else:
+                user_roles = []
 
             has_required_role = any(role in user_roles for role in roles)
 
@@ -224,11 +230,11 @@ def optional_auth():
 
 
 # ---------------------------------------------------------------------------
-# Helpers de autorizaci贸n para endpoints (uso directo dentro del handler)
+# Helpers de autorización para endpoints (uso directo dentro del handler)
 # ---------------------------------------------------------------------------
 async def get_user_with_permissions(request: Request) -> dict:
     """Obtiene el usuario y sus permisos a partir de ``request.state.user_uid``
-    (que ya coloc贸 el ``AuthorizationMiddleware``). Evita re-verificar el token.
+    (que ya colocó el ``AuthorizationMiddleware``). Evita re-verificar el token.
 
     Lanza HTTPException(401) si no hay usuario autenticado.
     Lanza HTTPException(404) si el documento del usuario no existe.
@@ -307,11 +313,11 @@ def enforce_unidades_access(
     """Valida acceso a recursos de unidades_proyecto y aplica scoping por centro_gestor.
 
     - Verifica que el usuario tenga ``permission_required`` (en cualquiera de sus variantes).
-    - Si su 煤nico permiso es ``:own_centro`` / ``:basic``, fuerza/valida que
+    - Si su único permiso es ``:own_centro`` / ``:basic``, fuerza/valida que
       ``requested_centro`` coincida con su ``centro_gestor_assigned``.
 
     Devuelve el ``centro_gestor`` efectivo que debe usarse para filtrar (o
-    ``None`` si el usuario es global y no filtr贸).
+    ``None`` si el usuario es global y no filtró).
     Lanza HTTPException(403) si no tiene permisos.
     """
     perms = user_data.get("permissions", []) or []
