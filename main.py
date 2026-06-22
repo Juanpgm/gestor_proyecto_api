@@ -24,6 +24,13 @@ Toda la logica de routers, middlewares y ciclo de vida esta en:
 
 import logging
 import os
+import sys
+
+# Ensure stdout/stderr use UTF-8 on Windows (avoids UnicodeEncodeError from emoji in logs)
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 from app_factory import create_app
 

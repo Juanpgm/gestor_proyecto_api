@@ -170,10 +170,14 @@ def _priority_from_matrix(severity: str, vol_band: str) -> Dict[str, str]:
 
 def _compute_weighted_dqs(total_records: int, severity_counter: Dict[str, int]) -> Dict[str, Any]:
     if total_records <= 0:
+        # Sin registros NO es "calidad perfecta": antes devolvía 100/Optimo y
+        # enmascaraba cargas vacías o fallidas como dataset impecable. Se marca
+        # explícitamente como "sin datos" para no mentir en el tablero.
         return {
-            "score": 100.0,
-            "classification": _classify_dqs(100.0),
+            "score": None,
+            "classification": {"status": "sin_datos", "semaforo": "gris", "label": "Sin datos"},
             "by_severity": {k: {"count": 0, "weighted_impact": 0.0} for k in SEVERITY_WEIGHTS},
+            "no_data": True,
         }
     weighted_impact = 0.0
     by_severity: Dict[str, Dict[str, Any]] = {}

@@ -418,7 +418,7 @@ def create_app() -> FastAPI:
             "/auth/validate-session",
             "/auth/forgot-password",
             "/auth/workload-identity/status",
-            "/centros-gestores/",
+            "/centros-gestores",
             "/unidades-proyecto/captura-estado-360",
         ]
         app.add_middleware(AuthorizationMiddleware, public_paths=public_paths)

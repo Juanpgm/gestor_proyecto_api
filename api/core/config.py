@@ -8,6 +8,7 @@ Uso:
 """
 
 import os
+import re
 from typing import List
 
 
@@ -81,14 +82,30 @@ def get_cors_origins() -> List[str]:
 
 def get_cors_origin_regex() -> str:
     """
-    Patrón regex para permitir variantes de Vercel dinámicamente.
-    Vercel genera URLs como: project-name-hash-team.vercel.app
+    Patrón regex para permitir despliegues de Vercel del equipo del proyecto.
+
+    Vercel genera URLs como ``{project}-{hash}-{team-slug}.vercel.app`` (y
+    ``{project}-git-{branch}-{team-slug}.vercel.app`` para previews de rama).
+
+    El patrón se **ancla al team-slug**: así un atacante no puede registrar un
+    proyecto con el mismo prefijo en OTRA cuenta de Vercel y pasar el CORS
+    (el ``.*`` anterior permitía exactamente eso). El slug es configurable vía
+    ``VERCEL_TEAM_SLUG`` por si el equipo cambia.
     """
-    vercel_patterns = [
-        r"https://artefacto-calitrack-360-frontend.*\.vercel\.app",
-        r"https://gestor-proyectos-vercel.*\.vercel\.app",
+    team_slug = os.getenv("VERCEL_TEAM_SLUG", "juan-pablos-projects-56fe2e60")
+    project_names = [
+        "gestor-proyectos-vercel",
+        "artefacto-calitrack-360-frontend",
     ]
-    return "|".join(f"({p})" for p in vercel_patterns)
+    slug = re.escape(team_slug)
+    patterns: List[str] = []
+    for name in project_names:
+        esc = re.escape(name)
+        # Despliegues con hash o preview de rama, anclados al team-slug.
+        patterns.append(rf"https://{esc}(-[a-z0-9-]+)?-{slug}\.vercel\.app")
+        # Alias de producción "limpio" (sin hash ni slug).
+        patterns.append(rf"https://{esc}\.vercel\.app")
+    return "|".join(f"({p})" for p in patterns)
 
 
 # Computed once at import time — used by middleware config in app_factory

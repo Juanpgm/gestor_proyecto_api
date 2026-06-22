@@ -24,7 +24,7 @@ Documento:
 
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -33,6 +33,9 @@ NOTIFICACIONES_COLLECTION = "notificaciones"
 
 # Roles que reciben notificaciones de nuevas solicitudes
 ROLES_SUPERVISORES = ["admin_general", "super_admin"]
+
+# America/Bogotá = UTC-5
+_BOGOTA_TZ = timezone(timedelta(hours=-5))
 
 
 def _get_db():
@@ -46,7 +49,8 @@ def _get_db():
 
 
 def _now_iso() -> str:
-    return datetime.now().isoformat()
+    """ISO timestamp con offset UTC-5 (Bogotá) para que el browser lo interprete correctamente."""
+    return datetime.now(tz=_BOGOTA_TZ).isoformat()
 
 
 # ---------------------------------------------------------------------------
@@ -65,6 +69,7 @@ def crear_notificacion(
     modulo: str,
     referencia_id: Optional[str] = None,
     destinatario_centro_gestor: Optional[str] = None,
+    actor_email: Optional[str] = None,
 ) -> Optional[str]:
     """
     Crea una notificación individual en Firestore.
@@ -83,6 +88,7 @@ def crear_notificacion(
             "titulo": titulo,
             "mensaje": mensaje,
             "actor_nombre": actor_nombre,
+            "actor_email": actor_email,
             "actor_role": actor_role,
             "actor_centro_gestor": actor_centro_gestor,
             "destinatario_role": destinatario_role,
@@ -117,6 +123,7 @@ def notificar_solicitud_resuelta(
     modulo: str,
     referencia_id: Optional[str] = None,
     motivo_rechazo: Optional[str] = None,
+    actor_email: Optional[str] = None,
 ) -> int:
     """
     Notifica a todos los admin_centro_gestor del centro gestor afectado.
@@ -145,6 +152,7 @@ def notificar_solicitud_resuelta(
         titulo=titulo,
         mensaje=mensaje,
         actor_nombre=actor_nombre,
+        actor_email=actor_email,
         actor_role=actor_role,
         actor_centro_gestor=actor_centro_gestor,
         destinatario_role="admin_centro_gestor",
@@ -167,6 +175,7 @@ def notificar_nueva_solicitud(
     modulo: str,
     tipo_registro: str,
     referencia_id: Optional[str] = None,
+    actor_email: Optional[str] = None,
 ) -> int:
     """
     Crea una notificación para cada rol supervisor (admin_general, super_admin).
@@ -186,6 +195,7 @@ def notificar_nueva_solicitud(
             titulo=titulo,
             mensaje=mensaje,
             actor_nombre=actor_nombre,
+            actor_email=actor_email,
             actor_role=actor_role,
             actor_centro_gestor=actor_centro_gestor,
             destinatario_role=rol,

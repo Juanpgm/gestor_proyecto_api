@@ -9,8 +9,10 @@ Endpoints:
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
+
+_BOGOTA_TZ = timezone(timedelta(hours=-5))
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
@@ -213,7 +215,7 @@ async def marcar_leida(
         if not doc.exists:
             raise HTTPException(status_code=404, detail="Notificación no encontrada")
 
-        now_iso = datetime.now().isoformat()
+        now_iso = datetime.now(tz=_BOGOTA_TZ).isoformat()
         ref.update({"leida": True, "leida_en": now_iso})
 
         return JSONResponse(
@@ -292,9 +294,9 @@ async def marcar_todas_leidas(
             .where("leida", "==", False)
         )
         docs = list(query.stream())
-        now_iso = datetime.now().isoformat()
-        batch = db.batch()
+        now_iso = datetime.now(tz=_BOGOTA_TZ).isoformat()
         count = 0
+        pending = []
 
         for doc in docs:
             data = doc.to_dict() or {}
@@ -302,11 +304,16 @@ async def marcar_todas_leidas(
                 dest_cg = data.get("destinatario_centro_gestor") or ""
                 if dest_cg.lower() != centro_gestor.strip().lower():
                     continue
-            ref = db.collection(NOTIFICACIONES_COLLECTION).document(doc.id)
-            batch.update(ref, {"leida": True, "leida_en": now_iso})
+            pending.append(doc.id)
             count += 1
 
-        if count > 0:
+        # Firestore batch limit is 500 writes
+        for i in range(0, len(pending), 500):
+            chunk = pending[i : i + 500]
+            batch = db.batch()
+            for doc_id in chunk:
+                ref = db.collection(NOTIFICACIONES_COLLECTION).document(doc_id)
+                batch.update(ref, {"leida": True, "leida_en": now_iso})
             batch.commit()
 
         return JSONResponse(

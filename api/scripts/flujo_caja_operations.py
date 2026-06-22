@@ -15,6 +15,14 @@ import tempfile
 # Configurar logger
 logger = logging.getLogger(__name__)
 
+# Abreviaturas de mes en español -> número de mes. Permite parsear columnas de
+# desembolso con formato "mmm-yy" (ej. jul-25, ene-26) de forma dinámica, sin
+# atar el reporte a un año fiscal fijo.
+MESES_ABREV: Dict[str, int] = {
+    'ene': 1, 'feb': 2, 'mar': 3, 'abr': 4, 'may': 5, 'jun': 6,
+    'jul': 7, 'ago': 8, 'sep': 9, 'set': 9, 'oct': 10, 'nov': 11, 'dic': 12,
+}
+
 # Importar Firebase
 try:
     from database.firebase_config import get_firestore_client
@@ -79,41 +87,56 @@ def process_flujo_caja_excel(file_content: bytes, filename: str) -> Dict[str, An
                 value_name='Monto_Desembolso'
             )
             
-            # Extraer el mes de la columna de desembolso
-            # Buscar patrones de mes en formato jul-25, ago-25, etc.
-            df_melted['Mes'] = df_melted['Columna_Desembolso'].str.extract(r'(jul-25|ago-25|sep-25|oct-25|nov-25|dic-25|ene-26|feb-26|mar-26|abr-26|may-26|jun-26)')
-            
+            # Extraer mes y año de la columna de desembolso de forma dinámica.
+            # Acepta cualquier "mmm-yy" en español (jul-25, ene-26, ...) en lugar
+            # de un rango de meses hardcodeado que caduca cada año fiscal.
+            mes_match = df_melted['Columna_Desembolso'].str.extract(
+                r'([a-zA-Z]{3,4})-(\d{2})'
+            )
+            df_melted['_mes_abrev'] = mes_match[0].str.lower()
+            df_melted['_mes_yy'] = mes_match[1]
+            df_melted['_mes_num'] = df_melted['_mes_abrev'].map(MESES_ABREV)
+
+            # Avisar (no en silencio) qué columnas con monto se descartan por no
+            # tener un mes reconocible — antes desaparecían sin dejar rastro.
+            con_monto = df_melted['Monto_Desembolso'].notna()
+            mes_no_reconocido = con_monto & df_melted['_mes_num'].isna()
+            n_descartados = int(mes_no_reconocido.sum())
+            if n_descartados:
+                columnas_desconocidas = sorted(
+                    df_melted.loc[mes_no_reconocido, 'Columna_Desembolso'].unique()
+                )
+                logger.warning(
+                    "flujo_caja: %d registros descartados por mes no reconocido en columnas: %s",
+                    n_descartados,
+                    columnas_desconocidas,
+                )
+
             # Filtrar solo registros con mes válido y monto no nulo
-            df_final = df_melted.dropna(subset=['Mes', 'Monto_Desembolso'])
-            df_final = df_final[df_final['Monto_Desembolso'] != 0]  # Opcional: excluir montos en 0
-            
+            df_final = df_melted.dropna(
+                subset=['_mes_num', '_mes_yy', 'Monto_Desembolso']
+            )
+            df_final = df_final[df_final['Monto_Desembolso'] != 0].copy()  # excluir montos en 0
+
             # Renombrar columnas para consistencia
             df_final = df_final.rename(columns={'Monto_Desembolso': 'Desembolso'})
-            
+
             if df_final.empty:
                 return {
                     "success": False,
                     "error": "No se encontraron datos válidos de desembolso",
-                    "details": "Verificar que las columnas contengan fechas en formato jul-25, ago-25, etc."
+                    "details": "Verificar que las columnas contengan fechas en formato mmm-yy (ej. jul-25, ene-26)."
                 }
-            
-            # Crear columna Periodo en formato fecha (año-mes) para Looker Studio
-            meses_map = {
-                'jul-25': '2025-07-01',
-                'ago-25': '2025-08-01', 
-                'sep-25': '2025-09-01',
-                'oct-25': '2025-10-01',
-                'nov-25': '2025-11-01',
-                'dic-25': '2025-12-01',
-                'ene-26': '2026-01-01',
-                'feb-26': '2026-02-01',
-                'mar-26': '2026-03-01',
-                'abr-26': '2026-04-01',
-                'may-26': '2026-05-01',
-                'jun-26': '2026-06-01'
-            }
-            
-            df_final['Periodo'] = pd.to_datetime(df_final['Mes'].map(meses_map))
+
+            # Etiqueta de mes legible (mmm-yy) y columna Periodo (año-mes) para Looker Studio
+            df_final['Mes'] = df_final['_mes_abrev'] + '-' + df_final['_mes_yy']
+            df_final['Periodo'] = pd.to_datetime(
+                {
+                    'year': 2000 + df_final['_mes_yy'].astype(int),
+                    'month': df_final['_mes_num'].astype(int),
+                    'day': 1,
+                }
+            )
             
             # Reordenar columnas para incluir todas las columnas base
             columnas_ordenadas = ['Responsable', 'Organismo', 'Banco', 'BP Proyecto', 'Descripcion BP', 'Mes', 'Periodo', 'Desembolso', 'Columna_Desembolso']

@@ -1099,6 +1099,35 @@ async def delete_user(
         #  VERIFICAR AUTENTICACIÓN FIREBASE
         current_user = await verify_firebase_token(request)
 
+        from auth_system.permissions import get_user_permissions
+        from database.firebase_config import get_firestore_client
+
+        firestore_client = get_firestore_client()
+        if firestore_client is None:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "success": False,
+                    "error": "No se pudo conectar a Firestore",
+                    "code": "FIRESTORE_UNAVAILABLE",
+                },
+            )
+
+        #  VERIFICAR PERMISO DE GESTIÓN DE USUARIOS (evita IDOR: cualquier
+        #  usuario autenticado podía eliminar cualquier cuenta).
+        current_permissions = get_user_permissions(
+            current_user["uid"], firestore_client
+        )
+        if "*" not in current_permissions and "manage:users" not in current_permissions:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "success": False,
+                    "error": "Permiso denegado",
+                    "code": "INSUFFICIENT_PERMISSIONS",
+                },
+            )
+
         check_user_management_availability()
 
         result = await delete_user_account(

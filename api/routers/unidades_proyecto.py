@@ -194,6 +194,81 @@ def _extract_s3_bucket_key_from_url(url: str) -> Tuple[Optional[str], Optional[s
         return None, None
 
 
+def _collect_avance_s3_objects(doc_data: dict, default_bucket: str) -> set:
+    """Extract (bucket, key) pairs from an avance document covering new and legacy schemas."""
+    object_pairs: set = set()
+
+    def _register(url: str = "", bucket: str = "", key: str = "") -> None:
+        resolved_bucket = (bucket or "").strip()
+        resolved_key = (key or "").strip()
+        if (not resolved_bucket or not resolved_key) and url:
+            parsed_bucket, parsed_key = _extract_s3_bucket_key_from_url(url)
+            resolved_bucket = resolved_bucket or (parsed_bucket or "")
+            resolved_key = resolved_key or (parsed_key or "")
+        if resolved_key:
+            object_pairs.add((resolved_bucket or default_bucket, resolved_key))
+
+    for soporte in doc_data.get("soportes") or []:
+        if not isinstance(soporte, dict):
+            continue
+        _register(
+            url=str(soporte.get("url_directa") or soporte.get("url") or ""),
+            bucket=str(soporte.get("bucket") or ""),
+            key=str(soporte.get("s3_key") or ""),
+        )
+    for url in doc_data.get("imagenes_urls") or []:
+        _register(url=str(url))
+    for url in doc_data.get("documentos_urls") or []:
+        _register(url=str(url))
+    for url in doc_data.get("registro_fotografico_urls") or []:
+        _register(url=str(url))
+    for url in doc_data.get("documentos_soporte_urls") or []:
+        _register(url=str(url))
+
+    return object_pairs
+
+
+def _delete_s3_objects_batch(s3_client, object_pairs: set) -> tuple:
+    """Batch-delete S3 objects grouped by bucket. Returns (deleted_list, failed_list)."""
+    deleted: List[Dict] = []
+    failed: List[Dict] = []
+    bucket_to_keys: Dict[str, List[str]] = {}
+    for bucket_name, key_name in object_pairs:
+        bucket_to_keys.setdefault(bucket_name, []).append(key_name)
+
+    for bucket_name, keys in bucket_to_keys.items():
+        for i in range(0, len(keys), 1000):
+            chunk = keys[i : i + 1000]
+            try:
+                response = s3_client.delete_objects(
+                    Bucket=bucket_name,
+                    Delete={"Objects": [{"Key": k} for k in chunk], "Quiet": False},
+                )
+                for d in response.get("Deleted", []):
+                    deleted.append({"bucket": bucket_name, "key": d.get("Key")})
+                for e in response.get("Errors", []):
+                    failed.append(
+                        {
+                            "bucket": bucket_name,
+                            "key": e.get("Key"),
+                            "code": e.get("Code"),
+                            "message": e.get("Message"),
+                        }
+                    )
+            except Exception as exc:
+                for k in chunk:
+                    failed.append(
+                        {
+                            "bucket": bucket_name,
+                            "key": k,
+                            "code": "DeleteException",
+                            "message": str(exc),
+                        }
+                    )
+
+    return deleted, failed
+
+
 @lru_cache(maxsize=6)
 def _get_s3_client_for_presign_cached(credentials_path: str = ""):
     try:
@@ -1605,7 +1680,9 @@ async def exportar_intervenciones_xlsx(
             )
 
         upid_location_map = {}
-        for unidad_doc in db.collection("unidades_proyecto").stream():
+        for unidad_doc in await asyncio.to_thread(
+            lambda: list(db.collection("unidades_proyecto").stream())
+        ):
             unidad_data = unidad_doc.to_dict() or {}
             props = (
                 unidad_data.get("properties", {})
@@ -1692,7 +1769,7 @@ async def exportar_intervenciones_xlsx(
             interv_query = interv_query.where("url_proceso", "==", url_proceso)
 
         export_rows = []
-        for interv_doc in interv_query.stream():
+        for interv_doc in await asyncio.to_thread(lambda: list(interv_query.stream())):
             interv_data = interv_doc.to_dict() or {}
             normalized_data = {
                 k: normalize_for_excel(v) for k, v in interv_data.items()
@@ -1711,11 +1788,15 @@ async def exportar_intervenciones_xlsx(
 
             export_rows.append(row)
 
-        df = pd.DataFrame(export_rows)
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            df.to_excel(writer, index=False, sheet_name="intervenciones")
-        output.seek(0)
+        def _rows_to_xlsx(rows):
+            df = pd.DataFrame(rows)
+            buf = BytesIO()
+            with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+                df.to_excel(writer, index=False, sheet_name="intervenciones")
+            buf.seek(0)
+            return buf
+
+        output = await asyncio.to_thread(_rows_to_xlsx, export_rows)
 
         filename = f"intervenciones_unidades_proyecto_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
         return StreamingResponse(
@@ -2781,15 +2862,21 @@ async def crear_solicitud_cambio_unidad_proyecto(
         try:
             from api.services.notifications_service import notificar_nueva_solicitud
 
-            actor_nombre = getattr(request.state, "user_nombre", None) or "Usuario"
-            actor_role_val = (
-                getattr(request.state, "user_role", None) or "admin_centro_gestor"
+            _cu = getattr(request.state, "current_user", None) or {}
+            _actor_email = _cu.get("email") or getattr(request.state, "user_email", None) or ""
+            _actor_nombre = _cu.get("fullname") or _cu.get("display_name") or _actor_email or "Usuario"
+            _actor_roles = _cu.get("roles") or []
+            _actor_role_val = _actor_roles[0] if _actor_roles else "admin_centro_gestor"
+            _actor_cg = (
+                _cu.get("nombre_centro_gestor")
+                or _cu.get("centro_gestor_assigned")
+                or _cu.get("centro_gestor")
             )
-            actor_cg = getattr(request.state, "user_centro_gestor", None)
             notificar_nueva_solicitud(
-                actor_nombre=actor_nombre,
-                actor_role=actor_role_val,
-                actor_centro_gestor=actor_cg,
+                actor_nombre=_actor_nombre,
+                actor_email=_actor_email,
+                actor_role=_actor_role_val,
+                actor_centro_gestor=_actor_cg,
                 modulo="unidades_proyecto",
                 tipo_registro="unidad_proyecto",
                 referencia_id=upid_value,
@@ -2891,18 +2978,22 @@ async def crear_solicitud_cambio_intervencion(
         try:
             from api.services.notifications_service import notificar_nueva_solicitud
 
-            actor_nombre = getattr(request.state, "user_nombre", None) or "Usuario"
-            actor_role_val = (
-                getattr(request.state, "user_role", None) or "admin_centro_gestor"
-            )
-            actor_cg = (
-                getattr(request.state, "user_centro_gestor", None)
+            _cu = getattr(request.state, "current_user", None) or {}
+            _actor_email = _cu.get("email") or getattr(request.state, "user_email", None) or ""
+            _actor_nombre = _cu.get("fullname") or _cu.get("display_name") or _actor_email or "Usuario"
+            _actor_roles = _cu.get("roles") or []
+            _actor_role_val = _actor_roles[0] if _actor_roles else "admin_centro_gestor"
+            _actor_cg = (
+                _cu.get("nombre_centro_gestor")
+                or _cu.get("centro_gestor_assigned")
+                or _cu.get("centro_gestor")
                 or nombre_centro_gestor
             )
             notificar_nueva_solicitud(
-                actor_nombre=actor_nombre,
-                actor_role=actor_role_val,
-                actor_centro_gestor=actor_cg,
+                actor_nombre=_actor_nombre,
+                actor_email=_actor_email,
+                actor_role=_actor_role_val,
+                actor_centro_gestor=_actor_cg,
                 modulo="intervenciones",
                 tipo_registro="intervencion",
                 referencia_id=intervencion_id or upid,
@@ -3868,6 +3959,65 @@ async def eliminar_unidad_proyecto(
                 data.get("nombre_centro_gestor"),
             )
 
+        # Initialize S3 client for cascade cleanup
+        try:
+            from api.utils.s3_document_manager import S3DocumentManager as _S3Mgr, BOTO3_AVAILABLE as _B3
+
+            if not _B3:
+                raise HTTPException(status_code=500, detail="boto3 no disponible para eliminar archivos S3 asociados")
+            _creds_path = os.getenv("AWS_CREDENTIALS_FILE_UNIDADES_PROYECTO", "credentials/aws_credentials.json")
+            _s3_client = _S3Mgr(credentials_path=_creds_path).s3_client
+            _default_bucket = os.getenv("S3_BUCKET_UNIDADES_PROYECTO", "unidades-proyecto-documents")
+        except HTTPException:
+            raise
+        except Exception as s3_err:
+            raise HTTPException(status_code=500, detail=f"No se pudo inicializar S3 para eliminación en cascada: {s3_err}")
+
+        # Collect all avances (and their S3 objects) across all interventions of this UP
+        all_s3_pairs: set = set()
+        avance_docs_to_delete = []
+        intervencion_docs_to_delete = []
+
+        intervencion_docs = list(
+            db.collection("intervenciones_unidades_proyecto")
+            .where("upid", "==", upid)
+            .stream()
+        )
+        intervencion_docs_to_delete = intervencion_docs
+
+        for intervencion_doc in intervencion_docs:
+            int_data = intervencion_doc.to_dict() or {}
+            int_id = int_data.get("intervencion_id") or intervencion_doc.id
+            avances = list(
+                db.collection("avances_unidades_proyecto")
+                .where("intervencion_id", "==", int_id)
+                .stream()
+            )
+            for avance_doc in avances:
+                avance_docs_to_delete.append(avance_doc)
+                all_s3_pairs.update(_collect_avance_s3_objects(avance_doc.to_dict() or {}, _default_bucket))
+
+        # Delete S3 objects (fail fast if any error)
+        if all_s3_pairs:
+            s3_deleted, s3_failed = _delete_s3_objects_batch(_s3_client, all_s3_pairs)
+            if s3_failed:
+                raise HTTPException(
+                    status_code=500,
+                    detail={
+                        "message": "No se pudo completar la eliminación en S3. La unidad de proyecto NO fue eliminada.",
+                        "upid": upid,
+                        "s3_deleted": len(s3_deleted),
+                        "s3_failed": len(s3_failed),
+                        "errors": s3_failed[:20],
+                    },
+                )
+
+        # Delete Firestore cascade: avances → intervenciones → unidad
+        for avance_doc in avance_docs_to_delete:
+            avance_doc.reference.delete()
+        for intervencion_doc in intervencion_docs_to_delete:
+            intervencion_doc.reference.delete()
+
         deleted_count = 0
         now_iso = datetime.now().isoformat()
         for doc in docs:
@@ -3900,6 +4050,9 @@ async def eliminar_unidad_proyecto(
                 "collection": "unidades_proyecto",
                 "upid": upid,
                 "deleted_count": deleted_count,
+                "intervenciones_deleted": len(intervencion_docs_to_delete),
+                "avances_deleted": len(avance_docs_to_delete),
+                "s3_files_deleted": len(all_s3_pairs),
             }
         )
     except HTTPException:
@@ -3955,6 +4108,49 @@ async def eliminar_intervencion(
                 data.get("nombre_centro_gestor"),
             )
 
+        # Initialize S3 client for cascade cleanup
+        try:
+            from api.utils.s3_document_manager import S3DocumentManager as _S3Mgr, BOTO3_AVAILABLE as _B3
+
+            if not _B3:
+                raise HTTPException(status_code=500, detail="boto3 no disponible para eliminar archivos S3 asociados")
+            _creds_path = os.getenv("AWS_CREDENTIALS_FILE_UNIDADES_PROYECTO", "credentials/aws_credentials.json")
+            _s3_client = _S3Mgr(credentials_path=_creds_path).s3_client
+            _default_bucket = os.getenv("S3_BUCKET_UNIDADES_PROYECTO", "unidades-proyecto-documents")
+        except HTTPException:
+            raise
+        except Exception as s3_err:
+            raise HTTPException(status_code=500, detail=f"No se pudo inicializar S3 para eliminación en cascada: {s3_err}")
+
+        # Collect S3 objects from all avances of this intervention
+        all_s3_pairs: set = set()
+        avance_docs_to_delete = list(
+            db.collection("avances_unidades_proyecto")
+            .where("intervencion_id", "==", intervencion_id)
+            .stream()
+        )
+        for avance_doc in avance_docs_to_delete:
+            all_s3_pairs.update(_collect_avance_s3_objects(avance_doc.to_dict() or {}, _default_bucket))
+
+        # Delete S3 objects first (fail fast)
+        if all_s3_pairs:
+            s3_deleted, s3_failed = _delete_s3_objects_batch(_s3_client, all_s3_pairs)
+            if s3_failed:
+                raise HTTPException(
+                    status_code=500,
+                    detail={
+                        "message": "No se pudo completar la eliminación en S3. La intervención NO fue eliminada.",
+                        "intervencion_id": intervencion_id,
+                        "s3_deleted": len(s3_deleted),
+                        "s3_failed": len(s3_failed),
+                        "errors": s3_failed[:20],
+                    },
+                )
+
+        # Delete avances in Firestore, then intervention
+        for avance_doc in avance_docs_to_delete:
+            avance_doc.reference.delete()
+
         deleted_count = 0
         now_iso = datetime.now().isoformat()
         for doc in docs:
@@ -3987,6 +4183,8 @@ async def eliminar_intervencion(
                 "collection": "intervenciones_unidades_proyecto",
                 "intervencion_id": intervencion_id,
                 "deleted_count": deleted_count,
+                "avances_deleted": len(avance_docs_to_delete),
+                "s3_files_deleted": len(all_s3_pairs),
             }
         )
     except HTTPException:
@@ -4544,7 +4742,7 @@ async def sincronizar_links_secop_intervenciones(request: Request):
     # ── 1. Cargar estado actual de la colección de links ─────────────────────
     links_col = db.collection("intervenciones_unidades_proyecto_links")
     links_existentes: Dict[str, Dict[str, Any]] = {}
-    for doc in links_col.stream():
+    for doc in await asyncio.to_thread(lambda: list(links_col.stream())):
         data = doc.to_dict() or {}
         intervencion_id_key = data.get("intervencion_id") or doc.id
         links_existentes[intervencion_id_key] = {
@@ -4556,8 +4754,8 @@ async def sincronizar_links_secop_intervenciones(request: Request):
         }
 
     # ── 2. Cargar intervenciones ──────────────────────────────────────────────
-    intervenciones_docs = list(
-        db.collection("intervenciones_unidades_proyecto").stream()
+    intervenciones_docs = await asyncio.to_thread(
+        lambda: list(db.collection("intervenciones_unidades_proyecto").stream())
     )
 
     # ── 3. Filtrar cuáles necesitan procesarse (lógica incremental) ──────────

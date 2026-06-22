@@ -281,7 +281,7 @@ def upload_files_to_s3(
 
     # Requisito funcional: reportes_contratos debe guardar TODO dentro del bucket contratos-emprestito.
     # Se mantiene separación por carpetas/prefix (fotos vs documentos), no por bucket.
-    contratos_bucket = "contratos-emprestito"
+    contratos_bucket = os.getenv("S3_BUCKET_CONTRATOS_EMPRESTITO", "contratos-emprestito")
     fotos_bucket = contratos_bucket
     docs_bucket = contratos_bucket
     fotos_prefix = os.getenv(
@@ -531,15 +531,22 @@ async def create_reporte_contrato(reporte_data: Dict[str, Any]) -> Dict[str, Any
         if not is_valid:
             raise Exception(validation_message)
 
-        archivos_subidos, diagnostico_s3 = upload_files_to_s3(
-            reporte_data["referencia_contrato"], reporte_data["archivos_evidencia"]
-        )
-
-        if diagnostico_s3.get("total_fallidos", 0) > 0:
-            failed_names = [
-                f.get("name", "archivo") for f in diagnostico_s3.get("fallidos", [])
-            ]
-            raise Exception(f"Error subiendo archivos a S3: {failed_names}")
+        archivos_subidos = []
+        diagnostico_s3 = None
+        s3_warning = None
+        try:
+            archivos_subidos, diagnostico_s3 = upload_files_to_s3(
+                reporte_data["referencia_contrato"], reporte_data["archivos_evidencia"]
+            )
+            if diagnostico_s3.get("total_fallidos", 0) > 0:
+                failed_names = [
+                    f.get("name", "archivo") for f in diagnostico_s3.get("fallidos", [])
+                ]
+                s3_warning = f"Algunos archivos no se pudieron subir a S3: {failed_names}"
+                logger.warning(f"⚠️ {s3_warning}")
+        except Exception as s3_error:
+            s3_warning = f"Archivos no almacenados (S3 no disponible): {str(s3_error)}"
+            logger.warning(f"⚠️ S3 no disponible, reporte se guardará sin archivos adjuntos. {s3_error}")
 
         # Resolver nombre_centro_gestor: usar el enviado, o auto-resolver desde empréstito
         nombre_centro_gestor = (reporte_data.get("nombre_centro_gestor") or "").strip()
@@ -571,14 +578,19 @@ async def create_reporte_contrato(reporte_data: Dict[str, Any]) -> Dict[str, Any
             "alertas": reporte_data["alertas"],
             "archivos_evidencia": archivos_subidos,
             "almacenamiento": {
-                "provider": "aws_s3",
+                "provider": "aws_s3" if diagnostico_s3 else "no_disponible",
                 "diagnostico": diagnostico_s3,
+                "warning": s3_warning,
             },
             "url_carpeta_drive": None,
-            "url_carpeta_s3": {
-                "fotos": f"s3://{diagnostico_s3['buckets']['fotos']}/{diagnostico_s3['prefixes']['fotos']}/{_sanitize_for_s3(reporte_data['referencia_contrato'], 'sin_referencia')}/",
-                "documentos": f"s3://{diagnostico_s3['buckets']['documentos']}/{diagnostico_s3['prefixes']['documentos']}/{_sanitize_for_s3(reporte_data['referencia_contrato'], 'sin_referencia')}/",
-            },
+            "url_carpeta_s3": (
+                {
+                    "fotos": f"s3://{diagnostico_s3['buckets']['fotos']}/{diagnostico_s3['prefixes']['fotos']}/{_sanitize_for_s3(reporte_data['referencia_contrato'], 'sin_referencia')}/",
+                    "documentos": f"s3://{diagnostico_s3['buckets']['documentos']}/{diagnostico_s3['prefixes']['documentos']}/{_sanitize_for_s3(reporte_data['referencia_contrato'], 'sin_referencia')}/",
+                }
+                if diagnostico_s3
+                else None
+            ),
             "imagenes_urls": [
                 a.get("url_publica")
                 for a in archivos_subidos
@@ -599,9 +611,15 @@ async def create_reporte_contrato(reporte_data: Dict[str, Any]) -> Dict[str, Any
 
         logger.info(f"✅ Reporte creado: {doc_id}")
 
+        message = (
+            "Reporte creado exitosamente con archivos en S3"
+            if archivos_subidos
+            else "Reporte creado exitosamente (sin archivos adjuntos — S3 no disponible)"
+        )
         return {
             "success": True,
-            "message": "Reporte creado exitosamente con archivos en S3",
+            "message": message,
+            "warning": s3_warning,
             "doc_id": doc_id,
             "url_carpeta_drive": None,
             "url_carpeta_s3": doc_data.get("url_carpeta_s3"),

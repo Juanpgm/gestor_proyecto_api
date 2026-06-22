@@ -3,6 +3,7 @@ Scripts simples para manejo de Unidades de Proyecto - VERSIÓN SIMPLIFICADA
 Sistema de cache simplificado y optimizado
 """
 
+import ast
 import logging
 import os
 import time
@@ -1041,10 +1042,13 @@ async def get_unidades_proyecto_geometry(
                             try:
                                 intervenciones_parsed.append(json.loads(interv))
                             except json.JSONDecodeError:
-                                # Si falla el parsing, intentar eval (fallback)
+                                # Si falla el parsing JSON, intentar literal_eval
+                                # (fallback seguro, no ejecuta código arbitrario)
                                 try:
-                                    intervenciones_parsed.append(eval(interv))
-                                except:
+                                    intervenciones_parsed.append(
+                                        ast.literal_eval(interv)
+                                    )
+                                except (ValueError, SyntaxError):
                                     logger.warning(
                                         f"No se pudo parsear intervencion: {interv[:100]}"
                                     )
@@ -1406,10 +1410,13 @@ async def get_unidades_proyecto_attributes(
                         try:
                             intervenciones_parsed.append(json.loads(interv))
                         except json.JSONDecodeError:
-                            # Si falla el parsing, intentar eval (fallback)
+                            # Si falla el parsing JSON, intentar literal_eval
+                            # (fallback seguro, no ejecuta código arbitrario)
                             try:
-                                intervenciones_parsed.append(eval(interv))
-                            except:
+                                intervenciones_parsed.append(
+                                    ast.literal_eval(interv)
+                                )
+                            except (ValueError, SyntaxError):
                                 pass  # Ignorar intervenciones no parseables
                     elif isinstance(interv, dict):
                         # Ya es diccionario

@@ -9,7 +9,7 @@ solicitudes de cambio, reportes, flujo de caja, proyecciones, SECOP.
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
@@ -32,6 +32,8 @@ from api.core.responses import clean_firebase_data, create_utf8_response
 from api.core.security import optional_rate_limit
 
 logger = logging.getLogger(__name__)
+
+_BOGOTA_TZ = timezone(timedelta(hours=-5))
 
 router = APIRouter(tags=["Gestión de Empréstito"])
 
@@ -4450,11 +4452,11 @@ async def aprobar_solicitud_cambio_emprestito(
             )
 
         # Aplicar al documento original
-        update_data["updated_at"] = datetime.now().isoformat()
+        update_data["updated_at"] = datetime.now(tz=_BOGOTA_TZ).isoformat()
         target_ref.update(update_data)
 
         # Actualizar solicitud
-        now_iso = datetime.now().isoformat()
+        now_iso = datetime.now(tz=_BOGOTA_TZ).isoformat()
         sol_ref.update(
             {
                 "estado": "aprobada",
@@ -4470,11 +4472,13 @@ async def aprobar_solicitud_cambio_emprestito(
         try:
             from api.services.notifications_service import notificar_solicitud_resuelta
 
+            _actor_email = getattr(request.state, "user_email", None) or ""
             nombre_cg = sol_data.get("nombre_centro_gestor") or referencia_id or ""
             notificar_solicitud_resuelta(
                 tipo="solicitud_aprobada",
                 nombre_centro_gestor_solicitante=nombre_cg,
                 actor_nombre=actor_nombre or "Administrador",
+                actor_email=_actor_email,
                 actor_role=actor_role or "admin_general",
                 actor_centro_gestor=actor_centro_gestor,
                 modulo="emprestito",
@@ -4563,7 +4567,7 @@ async def rechazar_solicitud_cambio_emprestito(
         if not motivo_rechazo or not motivo_rechazo.strip():
             raise HTTPException(status_code=400, detail="motivo_rechazo es obligatorio")
 
-        now_iso = datetime.now().isoformat()
+        now_iso = datetime.now(tz=_BOGOTA_TZ).isoformat()
         sol_ref.update(
             {
                 "estado": "rechazada",
@@ -4580,6 +4584,7 @@ async def rechazar_solicitud_cambio_emprestito(
         try:
             from api.services.notifications_service import notificar_solicitud_resuelta
 
+            _actor_email = getattr(request.state, "user_email", None) or ""
             nombre_cg = (
                 sol_data.get("nombre_centro_gestor")
                 or sol_data.get("referencia_id")
@@ -4589,6 +4594,7 @@ async def rechazar_solicitud_cambio_emprestito(
                 tipo="solicitud_rechazada",
                 nombre_centro_gestor_solicitante=nombre_cg,
                 actor_nombre=actor_nombre or "Administrador",
+                actor_email=_actor_email,
                 actor_role=actor_role or "admin_general",
                 actor_centro_gestor=actor_centro_gestor,
                 modulo="emprestito",
@@ -4644,8 +4650,10 @@ async def resumen_emprestito_centro_gestor(request: Request):
                 status_code=503, detail="No se pudo conectar a Firestore"
             )
 
-        # Cargar contratos
-        contratos_docs = list(db.collection("contratos_emprestito").stream())
+        # Cargar contratos (run_in_executor: firebase-admin client es síncrono)
+        contratos_docs = await asyncio.to_thread(
+            lambda: list(db.collection("contratos_emprestito").stream())
+        )
         contratos_by_centro: Dict[str, list] = {}
 
         for doc in contratos_docs:
@@ -4661,7 +4669,9 @@ async def resumen_emprestito_centro_gestor(request: Request):
             contratos_by_centro.setdefault(centro, []).append(data)
 
         # Cargar reportes de contratos (últimos avances)
-        reportes_docs = list(db.collection("reportes_contratos").stream())
+        reportes_docs = await asyncio.to_thread(
+            lambda: list(db.collection("reportes_contratos").stream())
+        )
         reportes_by_referencia: Dict[str, list] = {}
 
         for doc in reportes_docs:
@@ -4776,7 +4786,91 @@ async def eliminar_contrato_emprestito(
             )
 
         doc = docs[0]
-        doc_data = doc.to_dict() or {}
+
+        # Initialize S3 client for cascade S3 cleanup
+        try:
+            if not BOTO3_AVAILABLE or S3DocumentManager is None:
+                raise HTTPException(status_code=500, detail="boto3 no disponible para eliminar archivos S3 asociados")
+            _s3_mgr = S3DocumentManager()
+            _s3_client = _s3_mgr.s3_client
+            _default_bucket = _s3_mgr.bucket_name
+        except HTTPException:
+            raise
+        except Exception as s3_err:
+            raise HTTPException(status_code=500, detail=f"No se pudo inicializar S3 para eliminación en cascada: {s3_err}")
+
+        # Collect S3 objects from RPCs and pagos linked to this contrato
+        s3_pairs: set = set()
+
+        rpc_docs = list(
+            db.collection("rpc_contratos_emprestito")
+            .where("referencia_contrato", "==", referencia)
+            .stream()
+        )
+        pago_docs = list(
+            db.collection("pagos_emprestito")
+            .where("referencia_contrato", "==", referencia)
+            .stream()
+        )
+
+        def _register_emprestito_s3(doc_data: dict) -> None:
+            for item in doc_data.get("documentos_s3") or []:
+                if not isinstance(item, dict):
+                    continue
+                s3_key = (item.get("s3_key") or "").strip()
+                bucket = (item.get("bucket") or _default_bucket).strip()
+                if not s3_key:
+                    # Fallback: extract from URL
+                    url = str(item.get("s3_url") or item.get("url") or "")
+                    parsed_bucket, parsed_key = _extract_s3_bucket_key_from_url(url)
+                    bucket = parsed_bucket or bucket
+                    s3_key = parsed_key or ""
+                if s3_key:
+                    s3_pairs.add((bucket or _default_bucket, s3_key))
+
+        for rpc_doc in rpc_docs:
+            _register_emprestito_s3(rpc_doc.to_dict() or {})
+        for pago_doc in pago_docs:
+            _register_emprestito_s3(pago_doc.to_dict() or {})
+
+        # Delete S3 objects before touching Firestore
+        if s3_pairs:
+            bucket_to_keys: Dict[str, List[str]] = {}
+            for b, k in s3_pairs:
+                bucket_to_keys.setdefault(b, []).append(k)
+
+            s3_deleted: list = []
+            s3_failed: list = []
+            for b_name, keys in bucket_to_keys.items():
+                for i in range(0, len(keys), 1000):
+                    chunk = keys[i : i + 1000]
+                    try:
+                        resp = _s3_client.delete_objects(
+                            Bucket=b_name,
+                            Delete={"Objects": [{"Key": k} for k in chunk], "Quiet": False},
+                        )
+                        s3_deleted.extend({"bucket": b_name, "key": d.get("Key")} for d in resp.get("Deleted", []))
+                        s3_failed.extend({"bucket": b_name, "key": e.get("Key"), "code": e.get("Code")} for e in resp.get("Errors", []))
+                    except Exception as exc:
+                        s3_failed.extend({"bucket": b_name, "key": k, "code": "DeleteException", "message": str(exc)} for k in chunk)
+
+            if s3_failed:
+                raise HTTPException(
+                    status_code=500,
+                    detail={
+                        "message": "No se pudo completar la eliminación en S3. El contrato NO fue eliminado.",
+                        "referencia_contrato": referencia,
+                        "s3_deleted": len(s3_deleted),
+                        "s3_failed": len(s3_failed),
+                        "errors": s3_failed[:20],
+                    },
+                )
+
+        # Delete Firestore cascade: RPCs → pagos → contrato
+        for rpc_doc in rpc_docs:
+            rpc_doc.reference.delete()
+        for pago_doc in pago_docs:
+            pago_doc.reference.delete()
         db.collection("contratos_emprestito").document(doc.id).delete()
 
         return create_utf8_response(
@@ -4785,6 +4879,9 @@ async def eliminar_contrato_emprestito(
                 "message": f"Contrato eliminado: {referencia}",
                 "doc_id": doc.id,
                 "referencia_contrato": referencia,
+                "rpcs_deleted": len(rpc_docs),
+                "pagos_deleted": len(pago_docs),
+                "s3_files_deleted": len(s3_pairs),
             }
         )
     except HTTPException:
@@ -5723,8 +5820,12 @@ async def obtener_procesos_bp():
                 status_code=503, detail="No se pudo conectar a Firestore"
             )
 
-        collection_ref = db.collection("procesos_emprestito")
-        docs = collection_ref.stream()
+        collection_ref = db.collection("procesos_emprestito").select([
+            "bp", "nombre_banco", "nombre_centro_gestor",
+            "nombre_resumido_proceso", "tipo_contrato",
+            "urlproceso", "valor_publicacion",
+        ])
+        docs = await asyncio.to_thread(lambda: list(collection_ref.stream()))
         procesos_data = []
 
         for doc in docs:

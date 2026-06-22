@@ -887,14 +887,14 @@ async def procesar_proceso_individual(db_client, proceso_data, referencia_proces
         NIT_ENTIDAD_CALI = "890399011"
         where_clause = f"proceso_de_compra LIKE '%{proceso_contractual}%' AND nit_entidad = '{NIT_ENTIDAD_CALI}'"
 
-        with Socrata("www.datos.gov.co", SOCRATA_APP_TOKEN) as client:
+        with Socrata("www.datos.gov.co", SOCRATA_APP_TOKEN, timeout=30) as client:
             contratos_secop = client.get("jbjy-vk9h", limit=100, where=where_clause)
-        
+
         # Si no se encuentran contratos con el NIT de Cali, buscar sin restricción de NIT
         if not contratos_secop:
             logger.warning(f"⚠️ No se encontraron contratos para {proceso_contractual} con NIT {NIT_ENTIDAD_CALI}, buscando sin restricción de NIT...")
             where_clause = f"proceso_de_compra LIKE '%{proceso_contractual}%'"
-            with Socrata("www.datos.gov.co", SOCRATA_APP_TOKEN) as client:
+            with Socrata("www.datos.gov.co", SOCRATA_APP_TOKEN, timeout=30) as client:
                 contratos_secop = client.get("jbjy-vk9h", limit=100, where=where_clause)
 
         # Filtrar contratos excluyendo estados "Borrador" y "Cancelado"
