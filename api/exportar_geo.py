@@ -22,6 +22,7 @@ El módulo es PURO (no toca Firestore): recibe listas de dicts y devuelve bytes.
 
 from __future__ import annotations
 
+import csv
 import io
 import json
 import zipfile
@@ -383,6 +384,19 @@ def _write_one_shapefile(category: str, items: List[Any]):
     return {"shp": shp.getvalue(), "shx": shx.getvalue(), "dbf": dbf.getvalue()}
 
 
+def _write_attributes_csv(features: List[Dict[str, Any]]) -> bytes:
+    """CSV con nombres de columna completos — compañero del shapefile (DBF limita a 10 chars)."""
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=EXPORT_COLUMNS, extrasaction="ignore")
+    writer.writeheader()
+    for f in features:
+        props = f.get("properties", {})
+        writer.writerow(
+            {col: ("" if props.get(col) is None else str(props.get(col))) for col in EXPORT_COLUMNS}
+        )
+    return buf.getvalue().encode("utf-8-sig")  # BOM para compatibilidad con Excel
+
+
 def to_shapefile_zip(features: List[Dict[str, Any]], base_name: str = "unidades_proyecto") -> bytes:
     """Agrupa por tipo de geometría y devuelve un .zip con un shapefile por tipo.
 
@@ -406,6 +420,7 @@ def to_shapefile_zip(features: List[Dict[str, Any]], base_name: str = "unidades_
             zf.writestr(f"{stem}.dbf", parts["dbf"])
             zf.writestr(f"{stem}.prj", _WGS84_PRJ.encode("utf-8"))
             zf.writestr(f"{stem}.cpg", b"UTF-8")
+        zf.writestr(f"{base_name}_atributos.csv", _write_attributes_csv(features))
     return buf.getvalue()
 
 
