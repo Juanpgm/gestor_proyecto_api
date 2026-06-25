@@ -5527,22 +5527,42 @@ _INTERVENCION_EXTRA_ALIASES: Dict[str, List[str]] = {
 
 
 def _auto_suggest_mapping(columns: List[str]) -> Dict[str, str]:
-    """Sugiere automáticamente el mapping columna_origen → campo_destino."""
+    """Sugiere automáticamente el mapping columna_origen → campo_destino.
+
+    Priority order:
+    1. DBF round-trip aliases (truncated names from our own shapefile export).
+    2. Manual aliases in _UP_FIELD_ALIASES / _INTERVENCION_EXTRA_ALIASES.
+    3. Exact case-insensitive match against the target field name.
+    """
+    try:
+        from api.exportar_geo import EXPORT_DBF_ALIASES
+    except ImportError:
+        EXPORT_DBF_ALIASES = {}
+
     all_aliases = {**_UP_FIELD_ALIASES, **_INTERVENCION_EXTRA_ALIASES}
     mapping: Dict[str, str] = {}
     upper_cols = {c.upper(): c for c in columns}
+
+    # 1. DBF round-trip: truncated shapefile column → full Firestore field name
+    for truncated, full_field in EXPORT_DBF_ALIASES.items():
+        original_col = upper_cols.get(truncated.upper())
+        if original_col and original_col not in mapping:
+            mapping[original_col] = full_field
+
+    # 2. Manual aliases
     for target_field, aliases in all_aliases.items():
         for alias in aliases:
-            if alias.upper() in upper_cols:
-                original_col = upper_cols[alias.upper()]
-                if original_col not in mapping:
-                    mapping[original_col] = target_field
-                break
-        # También intentar coincidencia exacta case-insensitive con el nombre del campo
-        if target_field.upper() in upper_cols:
-            original_col = upper_cols[target_field.upper()]
-            if original_col not in mapping:
+            original_col = upper_cols.get(alias.upper())
+            if original_col and original_col not in mapping:
                 mapping[original_col] = target_field
+                break
+
+    # 3. Exact case-insensitive match
+    for target_field in all_aliases:
+        original_col = upper_cols.get(target_field.upper())
+        if original_col and original_col not in mapping:
+            mapping[original_col] = target_field
+
     return mapping
 
 
@@ -5894,6 +5914,37 @@ async def importar_up_ejecutar(
 
     # Cache de max intervencion por upid para batch eficiente
     intervencion_counters: Dict[str, int] = {}
+    # Cache de claves de dedup para intervenciones existentes por upid
+    _existing_int_keys_cache: Dict[str, set] = {}
+
+    def _norm_str(v: Any) -> str:
+        return str(v).strip().lower() if v is not None else ""
+
+    def _round_budget(v: Any) -> str:
+        try:
+            return str(round(float(v), -3))  # redondear a miles para tolerar diferencias menores
+        except (TypeError, ValueError):
+            return ""
+
+    def _intervencion_dedup_key(data: Dict[str, Any]) -> tuple:
+        """Clave natural de unicidad para una intervención."""
+        ref = _norm_str(data.get("referencia_contrato"))
+        tipo = _norm_str(data.get("tipo_intervencion"))
+        if ref:
+            return (tipo, ref)
+        return (tipo, _round_budget(data.get("presupuesto_base")), _norm_str(data.get("fecha_inicio")))
+
+    def _get_existing_int_keys(upid_val: str) -> set:
+        """Carga las claves de dedup de las intervenciones existentes para un UP."""
+        if upid_val in _existing_int_keys_cache:
+            return _existing_int_keys_cache[upid_val]
+        keys: set = set()
+        for coll in ["intervenciones_unidades_proyecto", "unidades_proyecto_intervenciones"]:
+            for doc in db.collection(coll).where("upid", "==", upid_val).stream():
+                d = doc.to_dict() or {}
+                keys.add(_intervencion_dedup_key(d))
+        _existing_int_keys_cache[upid_val] = keys
+        return keys
 
     def _get_max_intervencion(upid_val: str) -> int:
         if upid_val in intervencion_counters:
@@ -5950,6 +6001,7 @@ async def importar_up_ejecutar(
     if body.entity_type == "combinado":
         created_up_ids: List[str] = []
         created_int_ids: List[str] = []
+        skipped_duplicate_count: int = 0
 
         # 1) Mapear todas las filas (+ centro gestor global + RBAC)
         mapped_rows: List[Dict[str, Any]] = []
@@ -6030,14 +6082,22 @@ async def importar_up_ejecutar(
                     created_ids.append(target_upid)
                     _audit_import(target_upid, up_payload, "unidad_proyecto", rep_idx)
 
-                # Crear una intervención por cada fila del grupo
+                # Crear una intervención por cada fila del grupo (solo si no existe ya)
                 for idx in indices:
                     int_mapped = mapped_rows[idx]
+                    int_payload = _intervencion_payload_fields(int_mapped)
+
+                    # Dedup: skip si ya existe una intervención con la misma clave natural
+                    incoming_key = _intervencion_dedup_key(int_payload)
+                    existing_keys = _get_existing_int_keys(target_upid)
+                    if incoming_key in existing_keys:
+                        skipped_duplicate_count += 1
+                        continue
+
                     new_int_num = _get_max_intervencion(target_upid) + 1
                     int_id = f"{target_upid}-INT-{new_int_num}"
                     intervencion_counters[target_upid] = new_int_num
 
-                    int_payload = _intervencion_payload_fields(int_mapped)
                     int_payload["upid"] = target_upid
                     int_payload["intervencion_id"] = int_id
                     int_payload["created_at"] = now_iso
@@ -6046,6 +6106,7 @@ async def importar_up_ejecutar(
                     int_payload["importado"] = True
 
                     db.collection("intervenciones_unidades_proyecto").document(int_id).set(int_payload)
+                    existing_keys.add(incoming_key)  # evita duplicados dentro del mismo import
                     created_int_ids.append(int_id)
                     created_ids.append(int_id)
                     _audit_import(target_upid, int_payload, "intervencion", idx)
@@ -6066,6 +6127,7 @@ async def importar_up_ejecutar(
             "created_count": len(created_ids),
             "created_up_count": len(created_up_ids),
             "created_intervencion_count": len(created_int_ids),
+            "skipped_duplicate_count": skipped_duplicate_count,
             "error_count": len(errors_by_feature),
             "created_ids": created_ids,
             "created_up_ids": created_up_ids,

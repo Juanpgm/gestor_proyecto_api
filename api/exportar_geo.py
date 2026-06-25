@@ -601,6 +601,18 @@ def to_geopackage(features: List[Dict[str, Any]], base_name: str = "unidades_pro
     return data
 
 
+# ─── Round-trip compatibility alias map ──────────────────────────────────────
+
+# Inverse of the DBF 10-char truncation: maps each shortened name back to its
+# full Firestore field name. Only entries where truncation changed the name are
+# included. Import auto-suggest uses this so a shapefile exported from here can
+# be re-imported without manual column remapping.
+EXPORT_DBF_ALIASES: Dict[str, str] = {
+    v: k
+    for k, v in _dbf_field_names(EXPORT_COLUMNS).items()
+    if v != k
+}
+
 # ─── Dispatcher ───────────────────────────────────────────────────────────────
 
 # formato -> (media_type, extensión de archivo)
