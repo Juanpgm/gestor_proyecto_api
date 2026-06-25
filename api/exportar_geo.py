@@ -89,6 +89,26 @@ _WGS84_PRJ = (
 )
 
 
+def _coerce_geometry(geom: Any) -> Optional[Dict[str, Any]]:
+    """Devuelve una geometría GeoJSON con ``coordinates`` como array real.
+
+    En Firestore las coordenadas a veces se guardan como STRING JSON
+    (p.ej. ``"[[-76.5,3.4],...]"``); hay que parsearlas o ni GeoJSON ni KML ni
+    shapefile saldrían con geometría. Devuelve None si es inusable.
+    """
+    if not isinstance(geom, dict) or not geom.get("type"):
+        return None
+    coords = geom.get("coordinates")
+    if isinstance(coords, str):
+        try:
+            coords = json.loads(coords)
+        except (json.JSONDecodeError, ValueError):
+            return None
+    if coords is None:
+        return None
+    return {"type": geom.get("type"), "coordinates": coords}
+
+
 def build_flat_features(
     ups: List[Dict[str, Any]],
     intervenciones_by_upid: Dict[str, List[Dict[str, Any]]],
@@ -101,7 +121,7 @@ def build_flat_features(
     features: List[Dict[str, Any]] = []
     for up in ups:
         upid = up.get("upid")
-        geom = up.get("geometry")
+        geom = _coerce_geometry(up.get("geometry"))
         base = {col: up.get(col) for col in EXPORT_COLUMNS}
         base["upid"] = upid
         base["intervencion_id"] = None
@@ -246,6 +266,11 @@ def _normalize_geometry(geom: Optional[Dict[str, Any]]):
         return None
     gtype = geom.get("type")
     coords = geom.get("coordinates")
+    if isinstance(coords, str):  # coords a veces vienen como string JSON
+        try:
+            coords = json.loads(coords)
+        except (json.JSONDecodeError, ValueError):
+            return None
     if coords is None:
         return None
     if gtype == "Point":
