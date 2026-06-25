@@ -25,6 +25,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import struct
 import zipfile
 from typing import Any, Dict, List, Optional
 from xml.sax.saxutils import escape
@@ -424,6 +425,182 @@ def to_shapefile_zip(features: List[Dict[str, Any]], base_name: str = "unidades_
     return buf.getvalue()
 
 
+# ─── GeoPackage ───────────────────────────────────────────────────────────────
+
+def _geojson_to_wkb(geom: Optional[Dict[str, Any]]) -> Optional[bytes]:
+    """Converts a GeoJSON geometry dict to WKB (little-endian). Returns None if unusable."""
+    if not isinstance(geom, dict):
+        return None
+    gtype = geom.get("type")
+    coords = geom.get("coordinates")
+    if isinstance(coords, str):
+        try:
+            coords = json.loads(coords)
+        except (json.JSONDecodeError, ValueError):
+            return None
+    if not gtype or coords is None:
+        return None
+
+    LE = b"\x01"
+
+    def xy(c: Any) -> bytes:
+        return struct.pack("<dd", float(c[0]), float(c[1]))
+
+    def pack_ring(seq: Any) -> bytes:
+        pts = _norm_points(seq)
+        return struct.pack("<I", len(pts)) + b"".join(xy(p) for p in pts)
+
+    def poly_body(ring_list: Any) -> Optional[bytes]:
+        rings = [_norm_points(r) for r in (ring_list or [])]
+        rings = [r for r in rings if len(r) >= 3]
+        if not rings:
+            return None
+        return struct.pack("<I", len(rings)) + b"".join(
+            struct.pack("<I", len(r)) + b"".join(xy(p) for p in r) for r in rings
+        )
+
+    try:
+        if gtype == "Point":
+            if not isinstance(coords, (list, tuple)) or len(coords) < 2:
+                return None
+            return LE + struct.pack("<I", 1) + xy(coords)
+
+        if gtype == "LineString":
+            pts = _norm_points(coords)
+            if len(pts) < 2:
+                return None
+            return LE + struct.pack("<I", 2) + struct.pack("<I", len(pts)) + b"".join(xy(p) for p in pts)
+
+        if gtype == "Polygon":
+            body = poly_body(coords)
+            return (LE + struct.pack("<I", 3) + body) if body else None
+
+        if gtype == "MultiPoint":
+            pts = _norm_points(coords)
+            if not pts:
+                return None
+            parts = b"".join(LE + struct.pack("<I", 1) + xy(p) for p in pts)
+            return LE + struct.pack("<I", 4) + struct.pack("<I", len(pts)) + parts
+
+        if gtype == "MultiLineString":
+            lines = [_norm_points(ln) for ln in (coords or [])]
+            lines = [ln for ln in lines if len(ln) >= 2]
+            if not lines:
+                return None
+            parts = b"".join(
+                LE + struct.pack("<I", 2) + struct.pack("<I", len(ln)) + b"".join(xy(p) for p in ln)
+                for ln in lines
+            )
+            return LE + struct.pack("<I", 5) + struct.pack("<I", len(lines)) + parts
+
+        if gtype == "MultiPolygon":
+            bodies = [poly_body(pc) for pc in (coords or [])]
+            bodies = [b for b in bodies if b]
+            if not bodies:
+                return None
+            parts = b"".join(LE + struct.pack("<I", 3) + b for b in bodies)
+            return LE + struct.pack("<I", 6) + struct.pack("<I", len(bodies)) + parts
+
+    except (TypeError, ValueError):
+        return None
+
+    return None
+
+
+def _gpkg_geom(wkb: Optional[bytes]) -> bytes:
+    """Wraps WKB in GeoPackage Standard Binary header (GPKG spec §2.1.3)."""
+    if wkb is None:
+        return b"GP\x00\x11" + struct.pack("<i", 4326)  # empty flag
+    return b"GP\x00\x01" + struct.pack("<i", 4326) + wkb  # little-endian, no envelope
+
+
+_GPKG_WGS84 = (
+    'GEOGCS["WGS 84",DATUM["WGS_1984",'
+    'SPHEROID["WGS 84",6378137,298.257223563]],'
+    'PRIMEM["Greenwich",0],'
+    'UNIT["degree",0.0174532925199433],'
+    'AUTHORITY["EPSG","4326"]]'
+)
+
+
+def to_geopackage(features: List[Dict[str, Any]], base_name: str = "unidades_proyecto") -> bytes:
+    """Serialize features to GeoPackage (.gpkg) — full-length field names, OGC standard.
+
+    Uses Python 3.12+ ``sqlite3.Connection.serialize()`` to produce the file in memory.
+    QGIS, ArcGIS, GDAL, and most GIS tools read .gpkg natively.
+    """
+    import sqlite3
+
+    con = sqlite3.connect(":memory:")
+    con.execute("PRAGMA application_id = 1196444487")  # 0x47504B47 = 'GPKG'
+    con.execute("PRAGMA user_version = 10300")          # GeoPackage 1.3.0
+
+    con.executescript("""
+        CREATE TABLE gpkg_spatial_ref_sys (
+            srs_name TEXT NOT NULL,
+            srs_id INTEGER NOT NULL PRIMARY KEY,
+            organization TEXT NOT NULL,
+            organization_coordsys_id INTEGER NOT NULL,
+            definition TEXT NOT NULL,
+            description TEXT
+        );
+        CREATE TABLE gpkg_contents (
+            table_name TEXT NOT NULL PRIMARY KEY,
+            data_type TEXT NOT NULL,
+            identifier TEXT,
+            description TEXT DEFAULT '',
+            last_change DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+            min_x REAL, min_y REAL, max_x REAL, max_y REAL,
+            srs_id INTEGER
+        );
+        CREATE TABLE gpkg_geometry_columns (
+            table_name TEXT NOT NULL,
+            column_name TEXT NOT NULL,
+            geometry_type_name TEXT NOT NULL,
+            srs_id INTEGER NOT NULL,
+            z TINYINT NOT NULL,
+            m TINYINT NOT NULL,
+            PRIMARY KEY (table_name, column_name)
+        );
+    """)
+
+    con.executemany("INSERT INTO gpkg_spatial_ref_sys VALUES (?,?,?,?,?,?)", [
+        ("Undefined Cartesian SRS", -1, "NONE", -1, "undefined", None),
+        ("Undefined Geographic SRS",  0, "NONE",  0, "undefined", None),
+        ("WGS 84 geodetic", 4326, "EPSG", 4326, _GPKG_WGS84, "longitude/latitude on WGS 84"),
+    ])
+
+    col_defs = ", ".join(f'"{c}" TEXT' for c in EXPORT_COLUMNS)
+    con.execute(f'CREATE TABLE "{base_name}" (fid INTEGER PRIMARY KEY AUTOINCREMENT, geom BLOB, {col_defs})')
+
+    con.execute(
+        "INSERT INTO gpkg_contents (table_name, data_type, identifier, srs_id) VALUES (?,?,?,?)",
+        (base_name, "features", base_name, 4326),
+    )
+    con.execute(
+        "INSERT INTO gpkg_geometry_columns VALUES (?,?,?,?,?,?)",
+        (base_name, "geom", "GEOMETRY", 4326, 0, 0),
+    )
+
+    cols_quoted = ", ".join(f'"{c}"' for c in EXPORT_COLUMNS)
+    placeholders = ", ".join("?" for _ in EXPORT_COLUMNS)
+    sql = f'INSERT INTO "{base_name}" (geom, {cols_quoted}) VALUES (?, {placeholders})'
+
+    for f in features:
+        geom = _coerce_geometry(f.get("geometry"))
+        wkb = _geojson_to_wkb(geom)
+        props = f.get("properties", {})
+        row = [_gpkg_geom(wkb)] + [
+            ("" if props.get(c) is None else str(props.get(c))) for c in EXPORT_COLUMNS
+        ]
+        con.execute(sql, row)
+
+    con.commit()
+    data = con.serialize()  # Python 3.12+ — SQLite in-memory → bytes
+    con.close()
+    return data
+
+
 # ─── Dispatcher ───────────────────────────────────────────────────────────────
 
 # formato -> (media_type, extensión de archivo)
@@ -432,6 +609,7 @@ FORMAT_SPEC = {
     "kml": ("application/vnd.google-earth.kml+xml", "kml"),
     "kmz": ("application/vnd.google-earth.kmz", "kmz"),
     "shp": ("application/zip", "zip"),
+    "gpkg": ("application/geopackage+sqlite3", "gpkg"),
 }
 
 
@@ -444,4 +622,6 @@ def export_features(features: List[Dict[str, Any]], formato: str, base_name: str
         return to_kmz(features, base_name)
     if formato == "shp":
         return to_shapefile_zip(features, base_name)
+    if formato == "gpkg":
+        return to_geopackage(features, base_name)
     raise ValueError(f"Formato no soportado: {formato}")
