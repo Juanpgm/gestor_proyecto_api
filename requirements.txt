@@ -47,6 +47,9 @@ pandas==2.2.3
 # Excel processing
 openpyxl==3.1.5
 
+# Geo export (shapefile/KMZ/KML/GeoJSON) - pyshp es pure-python, liviano
+pyshp==2.3.1
+
 # Geometría espacial para cruce con capas GeoJSON
 shapely==2.1.1
 

@@ -37,7 +37,7 @@ from fastapi import (
     UploadFile,
 )
 from pydantic import BaseModel, Field
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, Response
 
 from api.core.cache import (
     get_cache_key,
@@ -6171,3 +6171,99 @@ async def importar_up_ejecutar(
         "created_ids": created_ids,
         "errors": errors_by_feature,
     })
+
+
+@router.get(
+    "/unidades-proyecto/exportar",
+    tags=["Unidades de Proyecto"],
+    summary="GET | Exportar UP + intervenciones (tabla única) a GeoJSON/KML/KMZ/Shapefile",
+    dependencies=[Depends(require_unidades("read"))],
+)
+@optional_rate_limit("10/minute")
+async def exportar_unidades_proyecto(
+    request: Request,
+    formato: str = Query("geojson", description="Formato de salida: geojson | kml | kmz | shp"),
+    nombre_centro_gestor: Optional[str] = Query(
+        None,
+        description=(
+            "Filtro de centro gestor. Para admin_general/super_admin es opcional "
+            "(vacío = todos). Para admin_centro_gestor se fuerza el suyo de sesión."
+        ),
+    ),
+):
+    """
+    Exporta la tabla única (UP + intervenciones, vinculadas por ``upid``, con todas
+    las variables y la geometría de la UP) en el formato pedido, lista para que los
+    usuarios la trabajen y eventualmente la vuelvan a cargar.
+
+    Scoping por rol (vía ``enforce_unidades_access``):
+    - ``admin_general`` / ``super_admin``: pueden filtrar por ``nombre_centro_gestor``
+      o exportar todo si no lo envían.
+    - ``admin_centro_gestor``: se fuerza su propio centro de la sesión (ignora el filtro).
+    """
+    from api.exportar_geo import FORMAT_SPEC, build_flat_features, export_features
+
+    if formato not in FORMAT_SPEC:
+        raise HTTPException(
+            status_code=400,
+            detail=f"formato inválido: usa uno de {', '.join(FORMAT_SPEC)}",
+        )
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase not available")
+
+    current_user = getattr(request.state, "current_user", None)
+    if current_user is None:
+        raise HTTPException(status_code=401, detail="No autenticado")
+
+    # RBAC + scoping por centro (única fuente de verdad en backend)
+    effective_centro = enforce_unidades_access(
+        current_user, "read:unidades", nombre_centro_gestor
+    )
+    if effective_centro:
+        effective_centro = canonicalize_centro(effective_centro) or effective_centro
+
+    db = get_firestore_client()
+    if db is None:
+        raise HTTPException(status_code=503, detail="No se pudo conectar a Firestore")
+
+    def _iso(d: Dict[str, Any]) -> Dict[str, Any]:
+        if FIREBASE_TYPES_AVAILABLE:
+            for k, v in list(d.items()):
+                if isinstance(v, FIREBASE_DATETIME_TYPES):
+                    d[k] = v.isoformat()
+        return d
+
+    # UPs (filtradas por centro si aplica) + defensa en profundidad
+    up_query = db.collection("unidades_proyecto")
+    if effective_centro:
+        up_query = up_query.where("nombre_centro_gestor", "==", effective_centro)
+    ups = [_iso(doc.to_dict() or {}) for doc in up_query.stream()]
+    if effective_centro:
+        ups = scope_records_by_centro(ups, effective_centro, log_label="exportar_up")
+
+    upid_set = {str(u.get("upid")) for u in ups if u.get("upid") is not None}
+
+    # Intervenciones agrupadas por upid (solo de las UP en alcance)
+    intervenciones_by_upid: Dict[str, List[Dict[str, Any]]] = {}
+    for doc in db.collection("intervenciones_unidades_proyecto").stream():
+        it = _iso(doc.to_dict() or {})
+        up_ref = str(it.get("upid"))
+        if up_ref in upid_set:
+            intervenciones_by_upid.setdefault(up_ref, []).append(it)
+
+    features = build_flat_features(ups, intervenciones_by_upid)
+
+    media_type, ext = FORMAT_SPEC[formato]
+    safe_centro = (
+        re.sub(r"[^A-Za-z0-9]+", "_", effective_centro).strip("_")
+        if effective_centro
+        else "todos"
+    )
+    base_name = f"unidades_proyecto_{safe_centro}"
+    content = export_features(features, formato, base_name)
+
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{base_name}.{ext}"'},
+    )
