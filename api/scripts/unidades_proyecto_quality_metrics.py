@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from api.scripts.unidades_proyecto import _convert_to_float
 from database.firebase_config import get_firestore_client
+from auth_system.centro_scoping import same_centro
 
 
 QUALITY_REPORTS_COLLECTION = "unidades_proyecto_quality_reports"
@@ -922,8 +923,7 @@ def _record_matches_filters(
     if has_issues is not None and bool(record.get("has_issues")) != has_issues:
         return False
     if nombre_centro_gestor:
-        center = _normalize_str(record.get("nombre_centro_gestor"))
-        if center is None or center.lower() != nombre_centro_gestor.lower():
+        if not same_centro(record.get("nombre_centro_gestor"), nombre_centro_gestor):
             return False
     return True
 
@@ -1047,8 +1047,7 @@ async def get_unidades_proyecto_quality_issues_paginated(
         if field and (row.get("field") or "").lower() != field.lower():
             continue
         if nombre_centro_gestor:
-            center = _normalize_str(row.get("nombre_centro_gestor"))
-            if center is None or center.lower() != _normalize_str(nombre_centro_gestor).lower():
+            if not same_centro(row.get("nombre_centro_gestor"), nombre_centro_gestor):
                 continue
         rows.append(row)
 

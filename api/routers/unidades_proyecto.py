@@ -48,6 +48,8 @@ from api.core.cache import (
 from api.core.responses import clean_firebase_data, create_utf8_response
 from api.core.security import optional_rate_limit
 from auth_system.decorators import require_unidades, enforce_unidades_access
+from auth_system.centros_catalog import canonicalize_centro
+from auth_system.centro_scoping import scope_records_by_centro
 
 logger = logging.getLogger(__name__)
 
@@ -448,6 +450,14 @@ async def consultar_unidades_proyecto(
             current_user, "read:unidades", nombre_centro_gestor
         )
 
+    # Canonicalizar el centro ANTES de tocar Firestore: el query es match exacto
+    # (==), así que una forma corta/sin tilde no canónica devolvería 0 resultados
+    # en silencio. Cubre también el path sin auth (current_user None).
+    if nombre_centro_gestor:
+        nombre_centro_gestor = (
+            canonicalize_centro(nombre_centro_gestor) or nombre_centro_gestor
+        )
+
     try:
         from database.firebase_config import get_firestore_client
         import google.cloud.firestore
@@ -567,6 +577,14 @@ async def consultar_unidades_proyecto(
                 logger.info(f" Procesados {doc_count} documentos...")
 
         logger.info(f"[OK] Query completada: {doc_count} documentos obtenidos")
+
+        # Defense-in-depth: post-filtro normalizado por centro (red de seguridad
+        # ante datos residuales no canónicos en Firestore). No-op para usuarios
+        # globales (nombre_centro_gestor None).
+        if nombre_centro_gestor:
+            data = scope_records_by_centro(
+                data, nombre_centro_gestor, log_label="unidades_proyecto"
+            )
 
         # Calcular tiempo de procesamiento
         elapsed_time = time.time() - start_time
@@ -5468,3 +5486,442 @@ async def get_filters_unidades_proyecto(
         raise HTTPException(
             status_code=500, detail=f"Error obteniendo opciones de filtros: {str(e)}"
         )
+
+
+# ============================================================================
+# IMPORTACIÓN GEOESPACIAL — Unidades de Proyecto e Intervenciones
+# Los archivos se parsean en el frontend (GeoJSON nativo); el backend solo
+# valida el mapping y, si se confirma, crea los registros en Firestore.
+# ============================================================================
+
+_UP_FIELD_ALIASES: Dict[str, List[str]] = {
+    "nombre_up": ["NOMBRE", "NOM", "NAME", "NOMBRE_UP", "NOM_UP", "PROYECTO"],
+    "nombre_up_detalle": ["DETALLE", "DESCRIPCION", "DESCRIPCIÓN", "DESC", "NOM_DET"],
+    "tipo_equipamiento": ["TIPO_EQ", "EQUIPAMIENTO", "TIPO_EQUIPAMIENTO"],
+    "clase_up": ["CLASE", "CLASE_UP", "CLASE_OBRA"],
+    "tipo_intervencion": ["TIPO_INT", "TIPO_INTERV", "TIPO_INTERVENCION", "T_INTERV"],
+    "estado": ["ESTADO", "STATUS", "ESTADO_UP"],
+    "presupuesto_base": ["PRESUPUESTO", "PRESUP", "VALOR", "COSTO", "PRESUPUESTO_BASE"],
+    "avance_obra": ["AVANCE", "AVANCE_OBRA", "PROGRESO", "PORCENTAJE"],
+    "fuente_financiacion": ["FUENTE", "FUENTE_FIN", "FINANCIACION", "FUENTE_FINANCIACION"],
+    "nombre_centro_gestor": ["CENTRO", "CENTRO_GESTOR", "SECRETARIA", "SECRETARÍA", "CG"],
+    "direccion": ["DIRECCION", "DIRECCIÓN", "ADDRESS", "DIR"],
+    "bpin": ["BPIN", "B_PIN"],
+    "identificador": ["ID", "IDENTIFICADOR", "COD", "CODIGO", "CÓDIGO", "IDENT"],
+    "ano": ["AÑO", "ANO", "YEAR", "VIGENCIA", "ANIO"],
+    "fecha_inicio": ["FECHA_INI", "FECHA_INICIO", "F_INICIO", "INICIO"],
+    "fecha_fin": ["FECHA_FIN", "F_FIN", "FIN", "FECHA_CIERRE"],
+    "referencia_contrato": ["CONTRATO", "REF_CONTRATO", "REFERENCIA_CONTRATO"],
+    "referencia_proceso": ["PROCESO", "REF_PROCESO", "REFERENCIA_PROCESO"],
+    "url_proceso": ["URL", "URL_PROCESO", "LINK", "ENLACE", "SECOP"],
+    "descripcion_intervencion": ["DESCRIPCION_INT", "DESC_INT"],
+    "cantidad": ["CANTIDAD", "CANT", "QUANTITY"],
+    "unidad": ["UNIDAD", "UNIT", "UM"],
+}
+
+_INTERVENCION_EXTRA_ALIASES: Dict[str, List[str]] = {
+    "upid": ["UPID", "UP_ID", "ID_UP", "UNIDAD_ID", "COD_UP"],
+}
+
+
+def _auto_suggest_mapping(columns: List[str]) -> Dict[str, str]:
+    """Sugiere automáticamente el mapping columna_origen → campo_destino."""
+    all_aliases = {**_UP_FIELD_ALIASES, **_INTERVENCION_EXTRA_ALIASES}
+    mapping: Dict[str, str] = {}
+    upper_cols = {c.upper(): c for c in columns}
+    for target_field, aliases in all_aliases.items():
+        for alias in aliases:
+            if alias.upper() in upper_cols:
+                original_col = upper_cols[alias.upper()]
+                if original_col not in mapping:
+                    mapping[original_col] = target_field
+                break
+        # También intentar coincidencia exacta case-insensitive con el nombre del campo
+        if target_field.upper() in upper_cols:
+            original_col = upper_cols[target_field.upper()]
+            if original_col not in mapping:
+                mapping[original_col] = target_field
+    return mapping
+
+
+def _apply_mapping_to_properties(
+    props: Dict[str, Any],
+    column_mapping: Dict[str, str],
+) -> Dict[str, Any]:
+    """Aplica el column_mapping a las propiedades de un feature."""
+    mapped: Dict[str, Any] = {}
+    for src_col, target_field in column_mapping.items():
+        if src_col in props and props[src_col] is not None:
+            mapped[target_field] = props[src_col]
+    return mapped
+
+
+class ImportarFeatureItem(BaseModel):
+    geometry: Optional[Dict[str, Any]] = None
+    properties: Dict[str, Any] = {}
+
+
+class ImportarGeoRequest(BaseModel):
+    entity_type: str = Field(
+        ..., description="'unidad_proyecto' o 'intervencion'"
+    )
+    column_mapping: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Mapa columna_origen → campo_destino",
+    )
+    features: List[ImportarFeatureItem] = Field(
+        ..., description="Lista de features GeoJSON parseados en el frontend"
+    )
+    nombre_centro_gestor_global: Optional[str] = Field(
+        None, description="Centro gestor que se aplica a todos los features si no tienen el campo mapeado"
+    )
+
+    class Config:
+        extra = "allow"
+
+
+def _validate_up_feature(mapped: Dict[str, Any], idx: int) -> List[str]:
+    errors: List[str] = []
+    if not mapped.get("nombre_up") and not mapped.get("nombre_up_detalle"):
+        errors.append(f"Feature {idx + 1}: Se requiere al menos nombre_up o nombre_up_detalle")
+    presupuesto = mapped.get("presupuesto_base")
+    if presupuesto is not None:
+        try:
+            v = float(presupuesto)
+            if v < 0:
+                errors.append(f"Feature {idx + 1}: presupuesto_base no puede ser negativo")
+        except (ValueError, TypeError):
+            errors.append(f"Feature {idx + 1}: presupuesto_base debe ser un número")
+    avance = mapped.get("avance_obra")
+    if avance is not None:
+        try:
+            v = float(avance)
+            if not (0 <= v <= 100):
+                errors.append(f"Feature {idx + 1}: avance_obra debe estar entre 0 y 100")
+        except (ValueError, TypeError):
+            errors.append(f"Feature {idx + 1}: avance_obra debe ser un número")
+    return errors
+
+
+def _validate_intervencion_feature(mapped: Dict[str, Any], idx: int) -> List[str]:
+    errors: List[str] = []
+    if not mapped.get("upid"):
+        errors.append(f"Feature {idx + 1}: upid es obligatorio para Intervenciones")
+    return errors + _validate_up_feature(mapped, idx)
+
+
+@router.post(
+    "/unidades-proyecto/importar/sugerir-mapping",
+    tags=["Unidades de Proyecto"],
+    summary="POST | Sugerir mapping de columnas para importación geoespacial",
+    dependencies=[Depends(require_unidades("read"))],
+)
+@optional_rate_limit("60/minute")
+async def importar_sugerir_mapping(
+    request: Request,
+    columns: List[str] = Body(..., description="Lista de columnas del archivo cargado"),
+):
+    """
+    Recibe la lista de columnas del archivo y devuelve un mapping sugerido.
+    No accede a Firestore.
+    """
+    suggestion = _auto_suggest_mapping(columns)
+    return create_utf8_response({
+        "success": True,
+        "suggested_mapping": suggestion,
+        "up_target_fields": list(_UP_FIELD_ALIASES.keys()),
+        "intervencion_extra_fields": list(_INTERVENCION_EXTRA_ALIASES.keys()),
+    })
+
+
+@router.post(
+    "/unidades-proyecto/importar/validar",
+    tags=["Unidades de Proyecto"],
+    summary="POST | Validar features geoespaciales sin escribir en Firestore",
+    dependencies=[Depends(require_unidades("write"))],
+)
+@optional_rate_limit("20/minute")
+async def importar_up_validar(
+    request: Request,
+    body: ImportarGeoRequest,
+):
+    """
+    Valida los features parseados del archivo geoespacial aplicando el column_mapping.
+    No realiza ninguna escritura en Firestore.
+    Devuelve errores por feature y un preview de los primeros 10.
+    """
+    current_user = getattr(request.state, "current_user", None)
+    if current_user is None:
+        raise HTTPException(status_code=401, detail="No autenticado")
+
+    if body.entity_type not in ("unidad_proyecto", "intervencion"):
+        raise HTTPException(status_code=400, detail="entity_type debe ser 'unidad_proyecto' o 'intervencion'")
+
+    errors_by_feature: List[Dict[str, Any]] = []
+    preview_rows: List[Dict[str, Any]] = []
+    valid_count = 0
+
+    for idx, feat in enumerate(body.features):
+        mapped = _apply_mapping_to_properties(feat.properties, body.column_mapping)
+
+        # Aplicar centro gestor global si no viene en el feature
+        if not mapped.get("nombre_centro_gestor") and body.nombre_centro_gestor_global:
+            mapped["nombre_centro_gestor"] = body.nombre_centro_gestor_global
+
+        if body.entity_type == "unidad_proyecto":
+            feat_errors = _validate_up_feature(mapped, idx)
+        else:
+            feat_errors = _validate_intervencion_feature(mapped, idx)
+
+        if feat_errors:
+            errors_by_feature.append({"feature_index": idx, "errors": feat_errors})
+        else:
+            valid_count += 1
+
+        if idx < 10:
+            preview_rows.append({
+                "feature_index": idx,
+                "mapped_fields": mapped,
+                "has_geometry": feat.geometry is not None,
+                "geometry_type": feat.geometry.get("type") if feat.geometry else None,
+                "errors": feat_errors,
+            })
+
+    return create_utf8_response({
+        "success": True,
+        "entity_type": body.entity_type,
+        "total_features": len(body.features),
+        "valid_count": valid_count,
+        "error_count": len(errors_by_feature),
+        "errors": errors_by_feature,
+        "preview": preview_rows,
+    })
+
+
+@router.post(
+    "/unidades-proyecto/importar/ejecutar",
+    tags=["Unidades de Proyecto"],
+    summary="POST | Importar features geoespaciales a Firestore",
+    dependencies=[Depends(require_unidades("write"))],
+)
+@optional_rate_limit("5/minute")
+async def importar_up_ejecutar(
+    request: Request,
+    body: ImportarGeoRequest,
+):
+    """
+    Importa features geoespaciales ya validados a Firestore.
+    Reutiliza la misma lógica de auto-generación de IDs, detección de
+    comuna/barrio/proyectos estratégicos que los endpoints de creación individuales.
+    """
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase not available")
+
+    current_user = getattr(request.state, "current_user", None)
+    if current_user is None:
+        raise HTTPException(status_code=401, detail="No autenticado")
+
+    if body.entity_type not in ("unidad_proyecto", "intervencion"):
+        raise HTTPException(status_code=400, detail="entity_type debe ser 'unidad_proyecto' o 'intervencion'")
+
+    db = get_firestore_client()
+    if db is None:
+        raise HTTPException(status_code=503, detail="No se pudo conectar a Firestore")
+
+    created_ids: List[str] = []
+    errors_by_feature: List[Dict[str, Any]] = []
+    now_iso = datetime.now().isoformat()
+
+    # Pre-cargar el max upid actual una sola vez (para batch eficiente)
+    def _get_max_upid() -> int:
+        max_n = 0
+        for doc in db.collection("unidades_proyecto").select(["upid"]).stream():
+            data = doc.to_dict() or {}
+            m = re.match(r"^UNP-(\d+)$", str(data.get("upid", "")).strip(), re.IGNORECASE)
+            if m:
+                max_n = max(max_n, int(m.group(1)))
+        return max_n
+
+    upid_counter = _get_max_upid() if body.entity_type == "unidad_proyecto" else 0
+
+    # Cache de max intervencion por upid para batch eficiente
+    intervencion_counters: Dict[str, int] = {}
+
+    def _get_max_intervencion(upid_val: str) -> int:
+        if upid_val in intervencion_counters:
+            return intervencion_counters[upid_val]
+        max_n = 0
+        for coll in ["intervenciones_unidades_proyecto", "unidades_proyecto_intervenciones"]:
+            for doc in db.collection(coll).where("upid", "==", upid_val).stream():
+                data = doc.to_dict() or {}
+                iid = data.get("intervencion_id", doc.id)
+                m = re.match(rf"^{re.escape(upid_val)}-INT-(\d+)$", str(iid), re.IGNORECASE)
+                if m:
+                    max_n = max(max_n, int(m.group(1)))
+        intervencion_counters[upid_val] = max_n
+        return max_n
+
+    for idx, feat in enumerate(body.features):
+        try:
+            mapped = _apply_mapping_to_properties(feat.properties, body.column_mapping)
+
+            if not mapped.get("nombre_centro_gestor") and body.nombre_centro_gestor_global:
+                mapped["nombre_centro_gestor"] = body.nombre_centro_gestor_global
+
+            # Forzar centro gestor según permisos del usuario
+            effective_centro = enforce_unidades_access(
+                current_user, "write:unidades", mapped.get("nombre_centro_gestor")
+            )
+            if effective_centro:
+                mapped["nombre_centro_gestor"] = effective_centro
+
+            if body.entity_type == "unidad_proyecto":
+                feat_errors = _validate_up_feature(mapped, idx)
+            else:
+                feat_errors = _validate_intervencion_feature(mapped, idx)
+
+            if feat_errors:
+                errors_by_feature.append({"feature_index": idx, "errors": feat_errors})
+                continue
+
+            geometry = feat.geometry
+            comarca_corr = None
+            barrio_vrd = None
+            proy_estrat: List[str] = []
+
+            if geometry and geometry.get("type") and geometry.get("coordinates"):
+                try:
+                    _validate_crs_coords(_normalizar_geometry(geometry))
+                    comarca_corr = _buscar_en_geojson(
+                        os.path.join(BASEMAPS_DIR, "comunas_corregimientos.geojson"),
+                        "comuna_corregimiento",
+                        geometry,
+                    )
+                    barrio_vrd = _buscar_en_geojson(
+                        os.path.join(BASEMAPS_DIR, "barrios_veredas.geojson"),
+                        "barrio_vereda",
+                        geometry,
+                    )
+                    proy_estrat = _buscar_proyectos_estrategicos(geometry)
+                except Exception as geo_err:
+                    logger.warning("importar: error geo feature %d: %s", idx, geo_err)
+
+            if body.entity_type == "unidad_proyecto":
+                upid_counter += 1
+                new_id = f"UNP-{upid_counter}"
+                payload: Dict[str, Any] = {
+                    k: v for k, v in {
+                        "nombre_up": mapped.get("nombre_up"),
+                        "nombre_up_detalle": mapped.get("nombre_up_detalle"),
+                        "tipo_equipamiento": mapped.get("tipo_equipamiento"),
+                        "clase_up": mapped.get("clase_up"),
+                        "tipo_intervencion": mapped.get("tipo_intervencion"),
+                        "estado": mapped.get("estado"),
+                        "presupuesto_base": float(mapped["presupuesto_base"]) if mapped.get("presupuesto_base") is not None else None,
+                        "avance_obra": float(mapped["avance_obra"]) if mapped.get("avance_obra") is not None else None,
+                        "fuente_financiacion": mapped.get("fuente_financiacion"),
+                        "nombre_centro_gestor": mapped.get("nombre_centro_gestor"),
+                        "direccion": mapped.get("direccion"),
+                        "bpin": mapped.get("bpin"),
+                        "identificador": mapped.get("identificador"),
+                        "ano": str(mapped["ano"]) if mapped.get("ano") is not None else None,
+                        "fecha_inicio": mapped.get("fecha_inicio"),
+                        "fecha_fin": mapped.get("fecha_fin"),
+                        "referencia_contrato": mapped.get("referencia_contrato"),
+                        "referencia_proceso": mapped.get("referencia_proceso"),
+                        "url_proceso": mapped.get("url_proceso"),
+                        "descripcion_intervencion": mapped.get("descripcion_intervencion"),
+                        "cantidad": int(mapped["cantidad"]) if mapped.get("cantidad") is not None else None,
+                        "unidad": mapped.get("unidad"),
+                        "comuna_corregimiento": comarca_corr,
+                        "barrio_vereda": barrio_vrd,
+                        "geometry": geometry,
+                    }.items() if v is not None
+                }
+                payload["upid"] = new_id
+                payload["proyectos_estrategicos"] = proy_estrat
+                payload["created_at"] = now_iso
+                payload["updated_at"] = now_iso
+                payload["created_by"] = current_user.get("uid")
+                payload["importado"] = True
+
+                db.collection("unidades_proyecto").document(new_id).set(payload)
+
+            else:  # intervencion
+                upid_val = str(mapped.get("upid", "")).strip()
+                upid_docs = list(
+                    db.collection("unidades_proyecto").where("upid", "==", upid_val).limit(1).stream()
+                )
+                if not upid_docs:
+                    errors_by_feature.append({
+                        "feature_index": idx,
+                        "errors": [f"Feature {idx + 1}: upid {upid_val} no existe en unidades_proyecto"],
+                    })
+                    continue
+
+                max_int = _get_max_intervencion(upid_val)
+                new_int_num = max_int + 1
+                new_id = f"{upid_val}-INT-{new_int_num}"
+                intervencion_counters[upid_val] = new_int_num
+
+                payload = {
+                    k: v for k, v in {
+                        "upid": upid_val,
+                        "bpin": int(mapped["bpin"]) if mapped.get("bpin") is not None else None,
+                        "cantidad": int(mapped["cantidad"]) if mapped.get("cantidad") is not None else None,
+                        "clase_up": mapped.get("clase_up"),
+                        "fecha_fin": mapped.get("fecha_fin"),
+                        "fecha_inicio": mapped.get("fecha_inicio"),
+                        "fuente_financiacion": mapped.get("fuente_financiacion"),
+                        "identificador": mapped.get("identificador"),
+                        "nombre_centro_gestor": mapped.get("nombre_centro_gestor"),
+                        "presupuesto_base": float(mapped["presupuesto_base"]) if mapped.get("presupuesto_base") is not None else None,
+                        "referencia_contrato": mapped.get("referencia_contrato"),
+                        "referencia_proceso": mapped.get("referencia_proceso"),
+                        "tipo_intervencion": mapped.get("tipo_intervencion"),
+                        "unidad": mapped.get("unidad"),
+                        "url_proceso": mapped.get("url_proceso"),
+                        "descripcion_intervencion": mapped.get("descripcion_intervencion"),
+                    }.items() if v is not None
+                }
+                payload["intervencion_id"] = new_id
+                payload["created_at"] = now_iso
+                payload["updated_at"] = now_iso
+                payload["created_by"] = current_user.get("uid")
+                payload["importado"] = True
+
+                db.collection("intervenciones_unidades_proyecto").document(new_id).set(payload)
+
+            # Auditoría
+            try:
+                db.collection("cambios_implementados_unidades_proyecto").add({
+                    "upid": new_id if body.entity_type == "unidad_proyecto" else mapped.get("upid"),
+                    "accion": "importar",
+                    "entity_type": body.entity_type,
+                    "uid": current_user.get("uid"),
+                    "email": current_user.get("email"),
+                    "payload": payload,
+                    "timestamp": now_iso,
+                })
+            except Exception as audit_err:
+                logger.warning("importar: fallo auditoría feature %d: %s", idx, audit_err)
+
+            created_ids.append(new_id)
+
+        except Exception as feat_err:
+            logger.error("importar: error procesando feature %d: %s", idx, feat_err)
+            errors_by_feature.append({
+                "feature_index": idx,
+                "errors": [f"Error procesando feature {idx + 1}: {str(feat_err)}"],
+            })
+
+    _invalidate_unidades_cache()
+
+    return create_utf8_response({
+        "success": True,
+        "entity_type": body.entity_type,
+        "created_count": len(created_ids),
+        "error_count": len(errors_by_feature),
+        "created_ids": created_ids,
+        "errors": errors_by_feature,
+    })

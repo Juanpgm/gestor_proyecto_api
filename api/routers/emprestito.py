@@ -29,23 +29,15 @@ from fastapi import (
 from pydantic import BaseModel, Field
 from fastapi.responses import JSONResponse
 from auth_system.decorators import require_resource, enforce_resource_access
-from auth_system.centros_catalog import normalize_centro
+from auth_system.centro_scoping import scope_records_by_centro
 
 
 def _scope_records_by_centro(data, centro):
-    """Filtra una lista de dicts al centro gestor efectivo (None = global, sin filtro)."""
-    if not centro or not isinstance(data, list):
-        return data
-    target = normalize_centro(centro)
-    out = []
-    for row in data:
-        if not isinstance(row, dict):
-            out.append(row)
-            continue
-        row_centro = row.get("nombre_centro_gestor") or row.get("centro_gestor")
-        if normalize_centro(row_centro) == target:
-            out.append(row)
-    return out
+    """Filtra una lista de dicts al centro gestor efectivo (None = global, sin filtro).
+
+    Alias back-compat: delega en la primitiva única ``scope_records_by_centro``.
+    """
+    return scope_records_by_centro(data, centro, log_label="emprestito")
 
 
 def _scope_result(current_user, result):

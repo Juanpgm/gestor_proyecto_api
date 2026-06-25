@@ -722,8 +722,12 @@ async def list_users(
             if filter_by_role and user_role != filter_by_role:
                 continue
             
-            if filter_by_centro_gestor and firestore_data.get('nombre_centro_gestor') != filter_by_centro_gestor:
-                continue
+            if filter_by_centro_gestor:
+                from auth_system.centros_catalog import normalize_centro, canonicalize_centro
+                requested = canonicalize_centro(filter_by_centro_gestor) or filter_by_centro_gestor
+                stored = firestore_data.get('nombre_centro_gestor')
+                if normalize_centro(stored) != normalize_centro(requested):
+                    continue
             
             # Manejar timestamps de forma segura
             try:

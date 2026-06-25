@@ -18,6 +18,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from database.firebase_config import get_firestore_client
+from auth_system.centro_scoping import same_centro
 
 logger = logging.getLogger(__name__)
 
@@ -610,7 +611,7 @@ async def get_emprestito_quality_records(
         # Filtros
         if tipo_registro and data.get("record_type") != tipo_registro:
             continue
-        if centro_gestor and (data.get("nombre_centro_gestor") or "").lower() != centro_gestor.lower():
+        if centro_gestor and not same_centro(data.get("nombre_centro_gestor"), centro_gestor):
             continue
         all_records.append(data)
 

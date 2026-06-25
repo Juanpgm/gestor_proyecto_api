@@ -14,6 +14,7 @@ from .permissions import (
     has_role as check_has_role,
 )
 from .constants import FIREBASE_COLLECTIONS
+from .centros_catalog import canonicalize_centro, normalize_centro
 
 import logging
 
@@ -288,7 +289,11 @@ async def get_user_with_permissions(request: Request) -> dict:
 
 
 def _user_centro_gestor(user_data: dict) -> Optional[str]:
-    """Devuelve el centro_gestor del usuario, aceptando ambas convenciones."""
+    """Devuelve el centro_gestor CANÓNICO del usuario, aceptando ambas convenciones.
+
+    Canonicaliza el valor (acepta forma corta / sin tildes / alias) para que el
+    centro efectivo propagado al filtrado de datos sea siempre el del catálogo.
+    """
     cg = (
         user_data.get("centro_gestor_assigned")
         or user_data.get("nombre_centro_gestor")
@@ -296,7 +301,9 @@ def _user_centro_gestor(user_data: dict) -> Optional[str]:
     )
     if isinstance(cg, str):
         cg = cg.strip()
-    return cg or None
+    if not cg:
+        return None
+    return canonicalize_centro(cg) or cg
 
 
 def _has_permission(perms: List[str], required: str) -> Tuple[bool, bool]:
@@ -361,14 +368,31 @@ def enforce_resource_access(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Usuario sin centro_gestor asignado",
             )
-        if requested_cg and requested_cg != user_cg:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="No puede acceder a un centro_gestor distinto al asignado",
-            )
+        # Comparación CANÓNICA (no cruda): tilde/case/forma corta/alias del mismo
+        # centro NO deben producir 403. Se canonicaliza el requested y se compara
+        # contra el user_cg (ya canónico). Si el requested no es reconocible, se
+        # cae a su forma normalizada para igual rechazar centros ajenos.
+        if requested_cg:
+            requested_effective = canonicalize_centro(requested_cg) or requested_cg
+            if normalize_centro(requested_effective) != normalize_centro(user_cg):
+                logger.warning(
+                    "Acceso denegado por centro_gestor: requested=%r (canon=%r) != "
+                    "user=%r",
+                    requested_cg,
+                    requested_effective,
+                    user_cg,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="No puede acceder a un centro_gestor distinto al asignado",
+                )
         return user_cg
 
-    return requested_cg
+    # Usuario global: si filtró por un centro, devolverlo canónico para que el
+    # filtrado downstream use la misma forma que los datos canónicos.
+    if requested_cg:
+        return canonicalize_centro(requested_cg) or requested_cg
+    return None
 
 
 # Alias de compatibilidad (firma idéntica). El recurso lo lleva permission_required.

@@ -41,14 +41,21 @@ if BACK_DIR not in sys.path:
 from database.firebase_config import get_firestore_client  # noqa: E402
 from auth_system.centros_catalog import canonicalize_centro  # noqa: E402
 
-# Colecciones de dominio que llevan `nombre_centro_gestor` usado para filtrar.
+# Colecciones de dominio que llevan un campo de centro usado para filtrar.
 # Extender según el modelo real (subcolecciones de empréstito, etc.).
 RECORD_COLLECTIONS: List[str] = [
     "unidades_proyecto",
     "intervenciones_unidades_proyecto",
     "contratos_emprestito",
     "ejecucion_presupuestal",
+    # Dominio empréstito / flujo de caja: también scopeados por centro.
+    "reportes_contratos",
+    "montos_emprestito_asignados_centro_gestor",
 ]
+
+# Campos donde un record de dominio puede llevar su centro gestor (ambas
+# convenciones). El script audita/normaliza cualquiera que esté presente.
+RECORD_CENTRO_FIELDS = ("nombre_centro_gestor", "centro_gestor")
 
 USER_CENTRO_FIELDS = ("nombre_centro_gestor", "centro_gestor_assigned", "centro_gestor")
 
@@ -72,14 +79,23 @@ def _norm_roles(raw) -> List[str]:
     return [str(raw).strip().lower()]
 
 
-def audit_collection(db, collection: str, field: str = "nombre_centro_gestor") -> Dict:
+def _record_centro_value(data: Dict):
+    """Primer valor de centro presente en el record (cualquier campo candidato)."""
+    for f in RECORD_CENTRO_FIELDS:
+        v = _norm(data.get(f))
+        if v:
+            return v
+    return None
+
+
+def audit_collection(db, collection: str) -> Dict:
     """Cuenta valores del campo de centro y su mapeo al catálogo (read-only)."""
     raw_counter: Counter = Counter()
     unmapped: Counter = Counter()
     total = 0
     for doc in db.collection(collection).stream():
         data = doc.to_dict() or {}
-        value = _norm(data.get(field))
+        value = _record_centro_value(data)
         total += 1
         if value is None:
             raw_counter["<vacío>"] += 1
@@ -122,22 +138,30 @@ def audit_users(db) -> Tuple[Dict, List[str]]:
     return {"total": total, "unmapped": unmapped}, blocked
 
 
-def normalize_collection(db, collection: str, apply: bool, field: str = "nombre_centro_gestor") -> Dict:
+def normalize_collection(db, collection: str, apply: bool) -> Dict:
     changed = 0
     skipped_unmapped = 0
     for doc in db.collection(collection).stream():
         data = doc.to_dict() or {}
-        value = _norm(data.get(field))
-        if value is None:
-            continue
-        canonical = canonicalize_centro(value)
-        if canonical is None:
-            skipped_unmapped += 1
-            continue
-        if canonical != value:
+        # Normalizar cualquier campo de centro presente al canónico.
+        update: Dict[str, str] = {}
+        any_unmapped = False
+        for field in RECORD_CENTRO_FIELDS:
+            value = _norm(data.get(field))
+            if value is None:
+                continue
+            canonical = canonicalize_centro(value)
+            if canonical is None:
+                any_unmapped = True
+                continue
+            if canonical != value:
+                update[field] = canonical
+        if update:
             changed += 1
             if apply:
-                doc.reference.update({field: canonical})
+                doc.reference.update(update)
+        elif any_unmapped:
+            skipped_unmapped += 1
     return {"collection": collection, "changed": changed, "skipped_unmapped": skipped_unmapped}
 
 

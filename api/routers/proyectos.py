@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from api.core.responses import create_utf8_response
 from api.core.security import optional_rate_limit
 from auth_system.decorators import require_resource, enforce_resource_access
-from auth_system.centros_catalog import normalize_centro
+from auth_system.centro_scoping import scope_records_by_centro
 
 logger = logging.getLogger(__name__)
 
@@ -80,17 +80,11 @@ def _build_pagination(limit: int, offset: int, count: int) -> Dict[str, Any]:
 def _filter_records_by_centro(
     data: List[Dict[str, Any]], centro: Optional[str]
 ) -> List[Dict[str, Any]]:
-    """Filtra registros al centro gestor efectivo (None = sin filtro / global)."""
-    if not centro:
-        return data
-    target = normalize_centro(centro)
-    return [
-        row
-        for row in data
-        if isinstance(row, dict)
-        and normalize_centro(row.get("nombre_centro_gestor") or row.get("centro_gestor"))
-        == target
-    ]
+    """Filtra registros al centro gestor efectivo (None = sin filtro / global).
+
+    Delega en la primitiva única ``scope_records_by_centro``.
+    """
+    return scope_records_by_centro(data, centro, log_label="proyectos")
 
 
 # ---------------------------------------------------------------------------

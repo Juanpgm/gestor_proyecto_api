@@ -17,6 +17,8 @@ _BOGOTA_TZ = timezone(timedelta(hours=-5))
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
+from auth_system.centro_scoping import same_centro
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Notificaciones"])
@@ -108,7 +110,7 @@ async def get_notificaciones(
             # Filtrar por centro gestor para admin_centro_gestor
             if role.strip().lower() == "admin_centro_gestor" and centro_gestor:
                 dest_cg = data.get("destinatario_centro_gestor") or ""
-                if dest_cg.lower() != centro_gestor.strip().lower():
+                if not same_centro(dest_cg, centro_gestor):
                     continue
 
             # Excluir expiradas
@@ -175,7 +177,7 @@ async def count_notificaciones(
             data = _serialize(doc.to_dict() or {})
             if role.strip().lower() == "admin_centro_gestor" and centro_gestor:
                 dest_cg = data.get("destinatario_centro_gestor") or ""
-                if dest_cg.lower() != centro_gestor.strip().lower():
+                if not same_centro(dest_cg, centro_gestor):
                     continue
             if not _is_expired(data):
                 count += 1
@@ -302,7 +304,7 @@ async def marcar_todas_leidas(
             data = doc.to_dict() or {}
             if role.strip().lower() == "admin_centro_gestor" and centro_gestor:
                 dest_cg = data.get("destinatario_centro_gestor") or ""
-                if dest_cg.lower() != centro_gestor.strip().lower():
+                if not same_centro(dest_cg, centro_gestor):
                     continue
             pending.append(doc.id)
             count += 1

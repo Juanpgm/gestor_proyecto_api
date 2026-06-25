@@ -101,6 +101,22 @@ _ALIASES_RAW: Dict[str, str] = {
     "departamento administrativo de gestion del riesgo de emergencias y desastres": "Secretaría de Gestión del Riesgo de Emergencias y Desastres",
     # DATIC (acrónimo de Tecnologías de la Información y las Comunicaciones)
     "datic": "Departamento Administrativo de Tecnologías de la Información y las Comunicaciones",
+    # Deporte y Recreación (forma corta legacy presente en datos de flujo de caja)
+    "deportes": "Secretaría del Deporte y la Recreación",
+    "deporte": "Secretaría del Deporte y la Recreación",
+    "secretaria de deporte y recreacion": "Secretaría del Deporte y la Recreación",
+    # Formas cortas legacy detectadas en flujo_caja.json (Excel exportado).
+    "bienestar social": "Secretaría de Bienestar Social",
+    "cultura": "Secretaría de Cultura",
+    "desarrollo economico": "Secretaría de Desarrollo Económico",
+    "desarrollo territorial": "Secretaría de Desarrollo Territorial y Participación Ciudadana",
+    "desarrollo terriotiral": "Secretaría de Desarrollo Territorial y Participación Ciudadana",  # typo en datos
+    "educacion": "Secretaría de Educación",
+    "infraestructura": "Secretaría de Infraestructura",
+    "riesgos": "Secretaría de Gestión del Riesgo de Emergencias y Desastres",
+    "salud": "Secretaría de Salud Pública",
+    "vivienda": "Secretaría de Vivienda Social y Hábitat",
+    "bienes": "Unidad Administrativa Especial de Gestión de Bienes y Servicios",
 }
 
 _ALIASES: Dict[str, str] = {
