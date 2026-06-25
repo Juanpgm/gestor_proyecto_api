@@ -28,7 +28,7 @@ prometheus-client==0.21.0
 slowapi==0.1.9
 
 # Redis para caché (opcional)
-redis==5.2.0
+redis==8.0.0
 hiredis==3.0.0
 
 # Utilidades
