@@ -216,14 +216,70 @@ def to_kmz(features: List[Dict[str, Any]], doc_name: str = "Unidades de Proyecto
 
 # ─── Shapefile ────────────────────────────────────────────────────────────────
 
-_GEOM_CATEGORY = {
-    "Point": "point",
-    "MultiPoint": "point",
-    "LineString": "line",
-    "MultiLineString": "line",
-    "Polygon": "polygon",
-    "MultiPolygon": "polygon",
-}
+def _norm_points(seq: Any) -> List[List[float]]:
+    """Filtra una secuencia a puntos válidos ``[x, y]``.
+
+    Descarta coordenadas malformadas que aparecen en datos reales (puntos con un
+    solo valor, no numéricos, etc.) y que harían fallar a pyshp al calcular el bbox.
+    """
+    out: List[List[float]] = []
+    if not isinstance(seq, (list, tuple)):
+        return out
+    for p in seq:
+        if (
+            isinstance(p, (list, tuple))
+            and len(p) >= 2
+            and isinstance(p[0], (int, float))
+            and isinstance(p[1], (int, float))
+        ):
+            out.append([float(p[0]), float(p[1])])
+    return out
+
+
+def _normalize_geometry(geom: Optional[Dict[str, Any]]):
+    """Normaliza una geometría GeoJSON a ``(categoria, gtype, coords_limpias)``.
+
+    Devuelve ``None`` si es inusable (sin tipo, vacía o malformada) para que el
+    shapefile la escriba como shape NULA en vez de romper toda la exportación.
+    """
+    if not isinstance(geom, dict):
+        return None
+    gtype = geom.get("type")
+    coords = geom.get("coordinates")
+    if coords is None:
+        return None
+    if gtype == "Point":
+        if (
+            isinstance(coords, (list, tuple))
+            and len(coords) >= 2
+            and isinstance(coords[0], (int, float))
+            and isinstance(coords[1], (int, float))
+        ):
+            return ("point", "Point", [float(coords[0]), float(coords[1])])
+        return None
+    if gtype == "MultiPoint":
+        pts = _norm_points(coords)
+        return ("point", "MultiPoint", pts) if pts else None
+    if gtype == "LineString":
+        pts = _norm_points(coords)
+        return ("line", "LineString", pts) if len(pts) >= 2 else None
+    if gtype == "MultiLineString":
+        seq = coords if isinstance(coords, (list, tuple)) else []
+        parts = [p for p in (_norm_points(line) for line in seq) if len(p) >= 2]
+        return ("line", "MultiLineString", parts) if parts else None
+    if gtype == "Polygon":
+        seq = coords if isinstance(coords, (list, tuple)) else []
+        rings = [r for r in (_norm_points(ring) for ring in seq) if len(r) >= 3]
+        return ("polygon", "Polygon", rings) if rings else None
+    if gtype == "MultiPolygon":
+        polys = []
+        for poly in coords if isinstance(coords, (list, tuple)) else []:
+            seq = poly if isinstance(poly, (list, tuple)) else []
+            rings = [r for r in (_norm_points(ring) for ring in seq) if len(r) >= 3]
+            if rings:
+                polys.append(rings)
+        return ("polygon", "MultiPolygon", polys) if polys else None
+    return None
 
 
 def _dbf_field_names(columns: List[str]) -> Dict[str, str]:
@@ -243,8 +299,34 @@ def _dbf_field_names(columns: List[str]) -> Dict[str, str]:
     return mapping
 
 
-def _write_one_shapefile(category: str, feats: List[Dict[str, Any]]):
-    """Devuelve dict {ext: bytes} para una categoría de geometría homogénea."""
+def _write_geometry(w, norm) -> None:
+    """Escribe la geometría normalizada en el writer pyshp (o NULA si no hay)."""
+    if norm is None:
+        w.null()
+        return
+    _, gtype, coords = norm
+    if gtype == "Point":
+        w.point(coords[0], coords[1])
+    elif gtype == "MultiPoint":
+        w.multipoint(coords)
+    elif gtype == "LineString":
+        w.line([coords])
+    elif gtype == "MultiLineString":
+        w.line(coords)
+    elif gtype == "Polygon":
+        w.poly(coords)
+    elif gtype == "MultiPolygon":
+        w.poly([ring for poly in coords for ring in poly])
+    else:
+        w.null()
+
+
+def _write_one_shapefile(category: str, items: List[Any]):
+    """Escribe un shapefile para una categoría homogénea.
+
+    ``items`` es una lista de ``(norm, properties)`` donde ``norm`` es la geometría
+    ya normalizada (o ``None``). Devuelve ``{ext: bytes}``.
+    """
     import shapefile  # pyshp
 
     shape_type = {
@@ -263,32 +345,17 @@ def _write_one_shapefile(category: str, feats: List[Dict[str, Any]]):
     sizes: Dict[str, int] = {}
     for col in EXPORT_COLUMNS:
         maxlen = 1
-        for f in feats:
-            v = f["properties"].get(col)
+        for _norm, props in items:
+            v = props.get(col)
             if v is not None:
                 maxlen = max(maxlen, len(str(v).encode("utf-8")))
         sizes[col] = min(254, maxlen)
     for col in EXPORT_COLUMNS:
         w.field(names[col], "C", size=sizes[col])
 
-    for f in feats:
-        geom = f.get("geometry") or {}
-        gtype = geom.get("type")
-        coords = geom.get("coordinates")
-        if category == "point" and coords is not None:
-            if gtype == "Point":
-                w.point(coords[0], coords[1])
-            else:  # MultiPoint
-                w.multipoint(coords)
-        elif category == "line" and coords is not None:
-            lines = coords if gtype == "MultiLineString" else [coords]
-            w.line(lines)
-        elif category == "polygon" and coords is not None:
-            parts = [ring for poly in coords for ring in poly] if gtype == "MultiPolygon" else coords
-            w.poly(parts)
-        else:
-            w.null()
-        rec = ["" if f["properties"].get(c) is None else str(f["properties"].get(c)) for c in EXPORT_COLUMNS]
+    for norm, props in items:
+        _write_geometry(w, norm)
+        rec = ["" if props.get(c) is None else str(props.get(c)) for c in EXPORT_COLUMNS]
         w.record(*rec)
 
     w.close()
@@ -296,12 +363,16 @@ def _write_one_shapefile(category: str, feats: List[Dict[str, Any]]):
 
 
 def to_shapefile_zip(features: List[Dict[str, Any]], base_name: str = "unidades_proyecto") -> bytes:
-    """Agrupa por tipo de geometría y devuelve un .zip con un shapefile por tipo."""
-    groups: Dict[str, List[Dict[str, Any]]] = {}
+    """Agrupa por tipo de geometría y devuelve un .zip con un shapefile por tipo.
+
+    Normaliza cada geometría primero; las inusables/malformadas se exportan como
+    shape NULA (no rompen la descarga).
+    """
+    groups: Dict[str, List[Any]] = {}
     for f in features:
-        gtype = (f.get("geometry") or {}).get("type")
-        cat = _GEOM_CATEGORY.get(gtype, "none")
-        groups.setdefault(cat, []).append(f)
+        norm = _normalize_geometry(f.get("geometry"))
+        cat = norm[0] if norm else "none"
+        groups.setdefault(cat, []).append((norm, f.get("properties", {})))
 
     multi = len(groups) > 1
     buf = io.BytesIO()
