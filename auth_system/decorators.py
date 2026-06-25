@@ -3,6 +3,7 @@ Decoradores para Control de Acceso
 Decoradores y dependencias de FastAPI para proteger endpoints
 """
 
+import os
 from functools import wraps
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -17,6 +18,21 @@ from .constants import FIREBASE_COLLECTIONS
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _centro_scoping_disabled() -> bool:
+    """Kill-switch de operaciones para el rollout del scoping por centro_gestor.
+
+    Si ``CENTRO_SCOPING_DISABLED`` está en {1,true,yes,on}, el scoping ``:own_centro``
+    no se fuerza (los endpoints se comportan como globales). Pensado como break-glass
+    si la normalización de datos deja usuarios sin ver su propio centro.
+    """
+    return os.getenv("CENTRO_SCOPING_DISABLED", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 # Security scheme para Bearer token
 security = HTTPBearer()
@@ -305,20 +321,24 @@ def _has_permission(perms: List[str], required: str) -> Tuple[bool, bool]:
     return (False, False)
 
 
-def enforce_unidades_access(
+def enforce_resource_access(
     user_data: dict,
     permission_required: str,
     requested_centro: Optional[str] = None,
 ) -> Optional[str]:
-    """Valida acceso a recursos de unidades_proyecto y aplica scoping por centro_gestor.
+    """Valida acceso a un recurso y aplica scoping por centro_gestor (genérico).
 
-    - Verifica que el usuario tenga ``permission_required`` (en cualquiera de sus variantes).
+    - Verifica que el usuario tenga ``permission_required`` (en cualquiera de sus
+      variantes: global, ``:own_centro``, ``:basic``, ``:public``).
     - Si su único permiso es ``:own_centro`` / ``:basic``, fuerza/valida que
-      ``requested_centro`` coincida con su ``centro_gestor_assigned``.
+      ``requested_centro`` coincida con su centro_gestor.
 
     Devuelve el ``centro_gestor`` efectivo que debe usarse para filtrar (o
     ``None`` si el usuario es global y no filtró).
     Lanza HTTPException(403) si no tiene permisos.
+
+    ``permission_required`` tiene la forma ``action:resource`` (ej. ``read:unidades``,
+    ``read:contratos``, ``read:emprestito``).
     """
     perms = user_data.get("permissions", []) or []
     has_any, only_own = _has_permission(perms, permission_required)
@@ -330,6 +350,10 @@ def enforce_unidades_access(
 
     user_cg = _user_centro_gestor(user_data)
     requested_cg = (requested_centro or "").strip() or None
+
+    # Break-glass: no forzar scoping durante el rollout si ops lo desactiva.
+    if only_own and _centro_scoping_disabled():
+        only_own = False
 
     if only_own:
         if not user_cg:
@@ -347,16 +371,21 @@ def enforce_unidades_access(
     return requested_cg
 
 
-def require_unidades(action: str):
-    """Factory de ``Depends`` para validar permisos sobre el recurso ``unidades``.
+# Alias de compatibilidad (firma idéntica). El recurso lo lleva permission_required.
+enforce_unidades_access = enforce_resource_access
 
-    ``action`` debe ser uno de: ``read``, ``write``, ``delete``.
 
-    Carga el usuario, valida que tenga la familia del permiso (global,
-    own_centro o basic) y guarda el usuario en ``request.state.current_user``
-    para que el handler pueda aplicar scoping con ``enforce_unidades_access``.
+def require_resource(resource: str, action: str):
+    """Factory de ``Depends`` para validar permisos sobre ``resource``.
+
+    ``resource``: ``unidades``, ``proyectos``, ``contratos``, ``emprestito``, ...
+    ``action``: ``read``, ``write``, ``delete``, ...
+
+    Carga el usuario, valida que tenga la familia del permiso (global, own_centro,
+    basic o public) y guarda el usuario en ``request.state.current_user`` para que
+    el handler pueda aplicar scoping con ``enforce_resource_access``.
     """
-    permission_required = f"{action}:unidades"
+    permission_required = f"{action}:{resource}"
 
     async def _dep(request: Request) -> dict:
         user = await get_user_with_permissions(request)
@@ -374,3 +403,8 @@ def require_unidades(action: str):
         return user
 
     return _dep
+
+
+def require_unidades(action: str):
+    """Compatibilidad: equivale a ``require_resource('unidades', action)``."""
+    return require_resource("unidades", action)

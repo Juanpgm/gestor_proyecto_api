@@ -1,0 +1,27 @@
+﻿#,nombre_canonico,origen,aliases_conocidos
+1,Secretaría de Gobierno,ejecucion+registro,-
+2,Departamento Administrativo de Gestión Jurídica Pública,ejecucion+registro,-
+3,Departamento Administrativo de Control Interno,ejecucion+registro,-
+4,Departamento Administrativo de Control Disciplinario Interno,ejecucion+registro,departamento administrativo de control disciplinario interno de instruccion
+5,Departamento Administrativo de Hacienda,ejecucion+registro,-
+6,Departamento Administrativo de Planeación Municipal,ejecucion+registro,departamento administrativo de planeacion | departamento administrativo de planeacion municipal
+7,Departamento Administrativo de Gestión del Medio Ambiente - DAGMA,ejecucion+registro,dagma | departamento administrativo de gestion del medio ambiente
+8,Secretaría de Salud Pública,ejecucion+registro,-
+9,Secretaría de Cultura,ejecucion+registro,-
+10,Secretaría de Seguridad y Justicia,ejecucion+registro,-
+11,Secretaría de Bienestar Social,ejecucion+registro,-
+12,Departamento Administrativo de Desarrollo e Innovación Institucional,ejecucion+registro,-
+13,Secretaría de Desarrollo Económico,ejecucion+registro,-
+14,Unidad Administrativa Especial de Servicios Públicos,ejecucion+registro,-
+15,Secretaría del Deporte y la Recreación,ejecucion+registro,-
+16,Secretaría de Infraestructura,ejecucion+registro,-
+17,Secretaría de Desarrollo Territorial y Participación Ciudadana,ejecucion+registro,-
+18,Secretaría de Educación,ejecucion+registro,-
+19,Secretaría de Gestión del Riesgo de Emergencias y Desastres,ejecucion+registro,dagrd | dagrd - departamento administrativo de gestion del riesgo | departamento administrativo de gestion del riesgo | departamento administrativo de gestion del riesgo de emergencias y desastres
+20,Departamento Administrativo de Tecnologías de la Información y las Comunicaciones,solo_registro,datic
+21,Departamento Administrativo de Contratación Pública,solo_registro,-
+22,Secretaría de Vivienda Social y Hábitat,solo_registro,-
+23,Secretaría de Movilidad,solo_registro,-
+24,Secretaría de Paz y Cultura Ciudadana,solo_registro,-
+25,Secretaría de Turismo,solo_registro,-
+26,Unidad Administrativa Especial de Gestión de Bienes y Servicios,solo_registro,-

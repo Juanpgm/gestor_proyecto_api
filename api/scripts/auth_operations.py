@@ -63,6 +63,22 @@ def _resolve_roles(
     return roles, role_source
 
 
+# Roles con visibilidad global (ven todos los centros gestores). Política A.
+GLOBAL_VIEW_ROLES = frozenset({"super_admin", "admin_general"})
+
+
+def _resolve_centro_gestor(firestore_data: Dict[str, Any]) -> Optional[str]:
+    """Devuelve el centro_gestor del usuario aceptando las tres convenciones legacy."""
+    raw = (
+        firestore_data.get("centro_gestor_assigned")
+        or firestore_data.get("nombre_centro_gestor")
+        or firestore_data.get("centro_gestor")
+    )
+    if isinstance(raw, str):
+        raw = raw.strip()
+    return raw or None
+
+
 def _build_user_payload(user_record, firestore_data: Dict[str, Any]) -> Dict[str, Any]:
     custom_claims = user_record.custom_claims or {}
     roles, role_source = _resolve_roles(firestore_data, custom_claims)
@@ -72,10 +88,25 @@ def _build_user_payload(user_record, firestore_data: Dict[str, Any]) -> Dict[str
     hydrated_firestore_data["primary_role"] = roles[0]
 
     fullname = hydrated_firestore_data.get("fullname") or user_record.display_name
-    centro_gestor = hydrated_firestore_data.get("nombre_centro_gestor")
+    centro_gestor = _resolve_centro_gestor(hydrated_firestore_data)
     cellphone = hydrated_firestore_data.get("cellphone") or user_record.phone_number
 
     profile_complete = bool(fullname and centro_gestor and cellphone)
+
+    # Scope autoritativo: el backend decide, el frontend CONSUME (fuente única).
+    can_view_all = any(role in GLOBAL_VIEW_ROLES for role in roles)
+    try:
+        from auth_system.centros_catalog import (
+            canonicalize_centro,
+            is_global_view_centro,
+        )
+
+        effective_centro_gestor = canonicalize_centro(centro_gestor) or centro_gestor
+        # Centro interno especial (p.ej. Calitrack): visibilidad global por centro.
+        if is_global_view_centro(centro_gestor):
+            can_view_all = True
+    except Exception:
+        effective_centro_gestor = centro_gestor
 
     # Derivar permisos desde los roles resueltos (sin consulta Firestore extra)
     try:
@@ -98,6 +129,8 @@ def _build_user_payload(user_record, firestore_data: Dict[str, Any]) -> Dict[str
         "display_name": user_record.display_name,
         "fullname": fullname,
         "nombre_centro_gestor": centro_gestor,
+        "effective_centro_gestor": effective_centro_gestor,
+        "can_view_all": can_view_all,
         "cellphone": cellphone,
         "email_verified": user_record.email_verified,
         "phone_number": user_record.phone_number,

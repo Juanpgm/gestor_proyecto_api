@@ -403,28 +403,21 @@ async def delete_recomendacion(registro_id: str):
 
 @router.get("/centros-gestores/nombres-unicos")
 async def get_all_nombres_centros_gestores_unique():
-    """Retorna lista ordenada de nombres unicos de centros gestores."""
-    if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Firebase o scripts no disponibles")
+    """Retorna el catálogo oficial (canónico) de centros gestores.
 
-    cache_key = get_cache_key("centros_gestores_unique")
-    cached, valid = get_from_cache(cache_key, 600)
-    if valid:
-        return cached
+    Fuente única: ``auth_system.centros_catalog``. Antes se derivaba de los
+    DISTINCT de ``ejecucion_presupuestal``, lo que re-sembraba typos/variantes.
+    """
+    from auth_system.centros_catalog import CENTROS_GESTORES
 
-    try:
-        result = await get_unique_nombres_centros_gestores()
-        if not result.get("success"):
-            raise HTTPException(
-                status_code=500,
-                detail=result.get("error", "Error obteniendo centros gestores"),
-            )
-        set_in_cache(cache_key, result)
-        return result
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Error: {exc!s}")
+    nombres = sorted(CENTROS_GESTORES)
+    return {
+        "success": True,
+        "data": nombres,
+        "count": len(nombres),
+        "field": "nombre_centro_gestor",
+        "source": "catalog",
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 from fastapi import (
     APIRouter,
     Body,
+    Depends,
     File,
     Form,
     HTTPException,
@@ -27,6 +28,42 @@ from fastapi import (
 )
 from pydantic import BaseModel, Field
 from fastapi.responses import JSONResponse
+from auth_system.decorators import require_resource, enforce_resource_access
+from auth_system.centros_catalog import normalize_centro
+
+
+def _scope_records_by_centro(data, centro):
+    """Filtra una lista de dicts al centro gestor efectivo (None = global, sin filtro)."""
+    if not centro or not isinstance(data, list):
+        return data
+    target = normalize_centro(centro)
+    out = []
+    for row in data:
+        if not isinstance(row, dict):
+            out.append(row)
+            continue
+        row_centro = row.get("nombre_centro_gestor") or row.get("centro_gestor")
+        if normalize_centro(row_centro) == target:
+            out.append(row)
+    return out
+
+
+def _scope_result(current_user, result):
+    """Filtra in-place ``result['data']`` al centro gestor efectivo del usuario.
+
+    No-op para roles globales (super_admin/admin_general → centro efectivo None).
+    Para roles ``:own_centro`` recorta la lista a su centro y recalcula ``count``.
+    """
+    try:
+        centro = enforce_resource_access(current_user, "read:contratos", None)
+    except Exception:
+        return result
+    if centro and isinstance(result, dict) and isinstance(result.get("data"), list):
+        result["data"] = _scope_records_by_centro(result["data"], centro)
+        if "count" in result:
+            result["count"] = len(result["data"])
+    return result
+
 
 from api.core.responses import clean_firebase_data, create_utf8_response
 from api.core.security import optional_rate_limit
@@ -296,6 +333,7 @@ async def cargar_proceso_emprestito(
     valor_proyectado: Optional[float] = Form(
         None, description="Valor proyectado (opcional)"
     ),
+    current_user: dict = Depends(require_resource("contratos", "write")),
 ):
     """
     ##  POST |  Carga de Datos | Cargar Proceso de Empréstito
@@ -498,6 +536,7 @@ async def cargar_orden_compra_emprestito(
     ),
     valor_proyectado: float = Form(..., description="Valor proyectado (obligatorio)"),
     bp: Optional[str] = Form(None, description="Código BP (opcional)"),
+    current_user: dict = Depends(require_resource("contratos", "write")),
 ):
     """
     ##  POST |  Carga de Datos | Cargar Orden de Compra de Empréstito
@@ -690,6 +729,7 @@ async def cargar_convenio_transferencia_emprestito(
     nombre_resumido_proceso: str = Form(
         ..., description="Nombre resumido del proceso (obligatorio)"
     ),
+    current_user: dict = Depends(require_resource("contratos", "write")),
 ):
     """
     ##  POST |  Carga de Datos | Cargar Convenio de Transferencia de Empréstito
@@ -879,7 +919,8 @@ async def cargar_convenio_transferencia_emprestito(
     summary=" Eliminar Orden de Compra",
 )
 async def eliminar_orden_compra_emprestito(
-    numero_orden: str = Path(..., description="Número de orden a eliminar")
+    numero_orden: str = Path(..., description="Número de orden a eliminar"),
+    current_user: dict = Depends(require_resource("contratos", "delete")),
 ):
     """
     ##  DELETE |  Gestión de Datos | Eliminar Orden de Compra de Empréstito
@@ -955,7 +996,8 @@ async def eliminar_orden_compra_emprestito(
 async def eliminar_convenio_transferencia_emprestito(
     referencia_contrato: str = Path(
         ..., description="Referencia de contrato del convenio a eliminar"
-    )
+    ),
+    current_user: dict = Depends(require_resource("contratos", "delete")),
 ):
     """
     ##  DELETE |  Gestión de Datos | Eliminar Convenio de Transferencia de Empréstito
@@ -1073,6 +1115,7 @@ async def modificar_convenio_transferencia_emprestito(
     nombre_resumido_proceso: Optional[str] = Form(
         None, description="Nombre resumido del proceso (opcional)"
     ),
+    current_user: dict = Depends(require_resource("contratos", "write")),
 ):
     """
     ##  PUT |  Actualización | Modificar Convenio de Transferencia de Empréstito
@@ -1284,6 +1327,7 @@ async def cargar_rpc_emprestito_endpoint(
         ...,
         description="Documentos del RPC (PDF, DOC, DOCX, XLS, XLSX, JPG, PNG) - OBLIGATORIO",
     ),
+    current_user: dict = Depends(require_resource("contratos", "write")),
 ):
     """
     ##  POST |  Carga de Datos | Cargar RPC (Registro Presupuestal de Compromiso) de Empréstito
@@ -1645,6 +1689,7 @@ async def cargar_pago_emprestito_endpoint(
         None,
         description="Documentos del pago (PDF, DOC, DOCX, XLS, XLSX, JPG, PNG) - OPCIONAL",
     ),
+    current_user: dict = Depends(require_resource("contratos", "write")),
 ):
     """
     ##  POST |  Carga de Datos | Cargar Pago de Empréstito
@@ -1874,7 +1919,9 @@ async def cargar_pago_emprestito_endpoint(
     tags=["Gestión de Empréstito"],
     summary=" Obtener Todos los Pagos",
 )
-async def get_all_pagos_emprestito():
+async def get_all_pagos_emprestito(
+    current_user: dict = Depends(require_resource("contratos", "read")),
+):
     """
     ##  GET |  Consultas | Obtener Todos los Pagos de Empréstito
 
@@ -1998,6 +2045,7 @@ async def get_all_pagos_emprestito():
 
         # Obtener todos los pagos
         resultado = await get_pagos_emprestito_all()
+        resultado = _scope_result(current_user, resultado)
 
         if not resultado.get("success"):
             raise HTTPException(
@@ -2041,7 +2089,9 @@ async def get_all_pagos_emprestito():
 @router.get(
     "/rpc_all", tags=["Gestión de Empréstito"], summary=" Obtener Todos los RPCs"
 )
-async def get_all_rpc_contratos_emprestito():
+async def get_all_rpc_contratos_emprestito(
+    current_user: dict = Depends(require_resource("contratos", "read")),
+):
     """
     ##  GET |  Consultas | Obtener Todos los RPCs de Empréstito
 
@@ -2143,6 +2193,7 @@ async def get_all_rpc_contratos_emprestito():
 
         # Obtener todos los RPCs
         result = await get_rpc_contratos_emprestito_all()
+        result = _scope_result(current_user, result)
 
         if not result["success"]:
             raise HTTPException(
@@ -2260,7 +2311,11 @@ async def get_all_rpc_contratos_emprestito():
     tags=["Gestión de Empréstito"],
     summary=" Obtener Enlaces Temporales de Documentos de RPC",
 )
-async def get_rpc_documentos_temporales(numero_rpc: str, expiration: int = 3600):
+async def get_rpc_documentos_temporales(
+    numero_rpc: str,
+    expiration: int = 3600,
+    current_user: dict = Depends(require_resource("contratos", "read")),
+):
     """
     ##  GET |  Documentos | Obtener Enlaces Temporales de Documentos de RPC
 
@@ -2527,7 +2582,9 @@ async def get_rpc_documentos_temporales(numero_rpc: str, expiration: int = 3600)
     tags=["Gestión de Empréstito"],
     summary=" Obtener Todos los Convenios de Transferencia",
 )
-async def get_all_convenios_transferencia_emprestito():
+async def get_all_convenios_transferencia_emprestito(
+    current_user: dict = Depends(require_resource("contratos", "read")),
+):
     """
     ##  GET |  Consultas | Obtener Todos los Convenios de Transferencia
 
@@ -2617,6 +2674,7 @@ async def get_all_convenios_transferencia_emprestito():
 
         # Obtener todos los convenios de transferencia
         result = await get_convenios_transferencia_emprestito_all()
+        result = _scope_result(current_user, result)
 
         if not result["success"]:
             raise HTTPException(
@@ -2664,7 +2722,9 @@ async def get_all_convenios_transferencia_emprestito():
     tags=["Gestión de Empréstito"],
     summary=" Obtener Todos los Pagos de Empréstito",
 )
-async def get_all_pagos_emprestito():
+async def get_all_pagos_emprestito(
+    current_user: dict = Depends(require_resource("contratos", "read")),
+):
     """
     ##  GET |  Consultas | Obtener Todos los Pagos de Empréstito
 
@@ -2696,6 +2756,7 @@ async def get_all_pagos_emprestito():
         check_emprestito_availability()
 
         result = await get_pagos_emprestito_all()
+        result = _scope_result(current_user, result)
 
         if not result["success"]:
             raise HTTPException(
@@ -2736,7 +2797,9 @@ async def get_all_pagos_emprestito():
     tags=["Gestión de Empréstito"],
     summary=" Obtener Todos los RPCs de Empréstito",
 )
-async def get_all_rpc_contratos_emprestito():
+async def get_all_rpc_contratos_emprestito(
+    current_user: dict = Depends(require_resource("contratos", "read")),
+):
     """
     ##  GET |  Consultas | Obtener Todos los RPCs de Empréstito
 
@@ -2784,6 +2847,7 @@ async def get_all_rpc_contratos_emprestito():
         check_emprestito_availability()
 
         result = await get_rpc_contratos_emprestito_all()
+        result = _scope_result(current_user, result)
 
         if not result["success"]:
             raise HTTPException(
@@ -2905,6 +2969,7 @@ async def actualizar_rpc_endpoint(
     datos_actualizacion: str = Form(
         ..., description="JSON con los campos a actualizar"
     ),
+    current_user: dict = Depends(require_resource("contratos", "write")),
 ):
     """
     ##  PUT |  Actualización | Modificar RPC (Registro Presupuestal de Compromiso)
@@ -3088,7 +3153,10 @@ async def actualizar_rpc_endpoint(
     tags=["Gestión de Empréstito"],
     summary=" Verificar Proceso Existente",
 )
-async def verificar_proceso_existente_endpoint(referencia_proceso: str):
+async def verificar_proceso_existente_endpoint(
+    referencia_proceso: str,
+    current_user: dict = Depends(require_resource("contratos", "read")),
+):
     """
     ##  GET |  Consultas | Verificar Proceso Existente
 
@@ -3155,7 +3223,10 @@ async def verificar_proceso_existente_endpoint(referencia_proceso: str):
     tags=["Gestión de Empréstito"],
     summary=" Eliminar Proceso",
 )
-async def eliminar_proceso_emprestito_endpoint(referencia_proceso: str):
+async def eliminar_proceso_emprestito_endpoint(
+    referencia_proceso: str,
+    current_user: dict = Depends(require_resource("contratos", "delete")),
+):
     """
     ##  DELETE |  Eliminación | Eliminar Proceso de Empréstito
 
@@ -3274,6 +3345,7 @@ async def actualizar_valor_proceso_secop_endpoint(
     change_support_file: UploadFile = File(
         ..., description="Documento soporte (obligatorio, PDF, XLSX, DOCX, etc.)"
     ),
+    current_user: dict = Depends(require_resource("contratos", "write")),
 ):
     """
     ##  PUT |  Actualización | Modificar Valor de Publicación de Proceso SECOP
@@ -3458,6 +3530,7 @@ async def actualizar_orden_compra_endpoint(
     change_support_file: UploadFile = File(
         ..., description="Documento soporte (obligatorio, PDF, XLSX, DOCX, etc.)"
     ),
+    current_user: dict = Depends(require_resource("contratos", "write")),
 ):
     """
     ##  PUT |  Actualización | Actualizar Orden de Compra de Empréstito por Número de Orden
@@ -3633,6 +3706,7 @@ async def actualizar_valor_convenio_endpoint(
     change_support_file: UploadFile = File(
         ..., description="Documento soporte (obligatorio, PDF, XLSX, DOCX, etc.)"
     ),
+    current_user: dict = Depends(require_resource("contratos", "write")),
 ):
     """
     ##  PUT |  Actualización | Modificar Valor de Convenio de Transferencia
@@ -3800,6 +3874,7 @@ async def actualizar_contrato_secop_endpoint(
     change_support_file: UploadFile = File(
         ..., description="Documento soporte (obligatorio, PDF, XLSX, DOCX, etc.)"
     ),
+    current_user: dict = Depends(require_resource("contratos", "write")),
 ):
     """
     ##  PUT |  Actualización | Actualizar Valor de Contrato SECOP
@@ -3966,6 +4041,7 @@ async def obtener_historial_cambios_endpoint(
     limite: int = Query(
         50, ge=1, le=200, description="Número máximo de registros (1-200)"
     ),
+    current_user: dict = Depends(require_resource("contratos", "read")),
 ):
     """
     ##  GET | Consulta | Obtener Historial de Cambios en Valores de Empréstito
@@ -4111,6 +4187,7 @@ async def crear_solicitud_cambio_emprestito(
     payload: SolicitudCambioEmprestitoRequest = Body(
         ..., description="Datos de la solicitud de cambio"
     ),
+    current_user: dict = Depends(require_resource("contratos", "write")),
 ):
     """
     ##  POST | Crear solicitud de cambio para registros de empréstito
@@ -4249,6 +4326,7 @@ async def consultar_solicitudes_cambios_emprestito(
     centro_gestor: Optional[str] = Query(None, description="Filtrar por centro gestor"),
     limit: int = Query(100, ge=1, le=500, description="Máximo de registros"),
     offset: int = Query(0, ge=0, description="Offset para paginación"),
+    current_user: dict = Depends(require_resource("contratos", "read")),
 ):
     """
     ##  GET | Consultar solicitudes de cambio de empréstito
@@ -4341,6 +4419,7 @@ async def aprobar_solicitud_cambio_emprestito(
     actor_centro_gestor: Optional[str] = Body(
         None, embed=True, description="Centro gestor del usuario que aprueba"
     ),
+    current_user: dict = Depends(require_resource("contratos", "write")),
 ):
     """
     ## [OK] PUT | Aprobar solicitud de cambio de empréstito
@@ -4529,6 +4608,7 @@ async def rechazar_solicitud_cambio_emprestito(
     actor_centro_gestor: Optional[str] = Body(
         None, embed=True, description="Centro gestor del usuario que rechaza"
     ),
+    current_user: dict = Depends(require_resource("contratos", "write")),
 ):
     """
     ## [ERROR] PUT | Rechazar solicitud de cambio de empréstito
@@ -4633,7 +4713,10 @@ async def rechazar_solicitud_cambio_emprestito(
     summary=" Resumen de empréstito por centro gestor",
 )
 @optional_rate_limit("30/minute")
-async def resumen_emprestito_centro_gestor(request: Request):
+async def resumen_emprestito_centro_gestor(
+    request: Request,
+    current_user: dict = Depends(require_resource("contratos", "read")),
+):
     """
     ##  GET | Resumen de empréstito agrupado por centro gestor
 
@@ -4756,6 +4839,7 @@ async def resumen_emprestito_centro_gestor(request: Request):
 async def eliminar_contrato_emprestito(
     request: Request,
     referencia: str = Path(..., description="Referencia del contrato a eliminar"),
+    current_user: dict = Depends(require_resource("contratos", "delete")),
 ):
     """
     ##  DELETE | Eliminar contrato de empréstito por referencia_contrato
@@ -4904,6 +4988,7 @@ async def eliminar_orden_compra_emprestito_endpoint(
     numero_orden: str = Path(
         ..., description="Número de la orden de compra a eliminar"
     ),
+    current_user: dict = Depends(require_resource("contratos", "delete")),
 ):
     """
     ##  DELETE | Eliminar orden de compra de empréstito
@@ -4946,6 +5031,7 @@ async def eliminar_orden_compra_emprestito_endpoint(
 async def eliminar_convenio_emprestito_endpoint(
     request: Request,
     referencia: str = Path(..., description="Referencia del convenio a eliminar"),
+    current_user: dict = Depends(require_resource("contratos", "delete")),
 ):
     """
     ##  DELETE | Eliminar convenio de transferencia de empréstito
@@ -4992,7 +5078,11 @@ async def eliminar_convenio_emprestito_endpoint(
     tags=["Gestión de Empréstito"],
     summary=" Obtener Contratos SECOP - SIN LIMITACIONES",
 )
-async def obtener_contratos_secop_endpoint(offset: int = 0, limit: int = None):
+async def obtener_contratos_secop_endpoint(
+    offset: int = 0,
+    limit: int = None,
+    current_user: dict = Depends(require_resource("contratos", "write")),
+):
     """
     ##  POST |  Procesamiento por Lotes | Obtener Contratos de SECOP desde Procesos
 
@@ -5171,7 +5261,10 @@ async def obtener_contratos_secop_endpoint(offset: int = 0, limit: int = None):
     summary=" Todos los Contratos Empréstito",
 )
 @optional_rate_limit("50/minute")  # Máximo 50 requests por minuto
-async def obtener_todos_contratos_emprestito(request: Request):
+async def obtener_todos_contratos_emprestito(
+    request: Request,
+    current_user: dict = Depends(require_resource("contratos", "read")),
+):
     """
     ##  GET |  Listados | Obtener Todos los Contratos de Empréstito
 
@@ -5230,6 +5323,7 @@ async def obtener_todos_contratos_emprestito(request: Request):
 
     try:
         result = await get_contratos_emprestito_all()
+        result = _scope_result(current_user, result)
 
         if not result["success"]:
             raise HTTPException(
@@ -5266,7 +5360,10 @@ async def obtener_todos_contratos_emprestito(request: Request):
     tags=["Gestión de Empréstito"],
     summary=" Contratos por Referencia",
 )
-async def obtener_contratos_por_referencia(referencia_contrato: str):
+async def obtener_contratos_por_referencia(
+    referencia_contrato: str,
+    current_user: dict = Depends(require_resource("contratos", "read")),
+):
     """
     ##  GET |  Consultas | Obtener Contratos por Referencia
 
@@ -5344,7 +5441,10 @@ async def obtener_contratos_por_referencia(referencia_contrato: str):
     "/contratos_emprestito/centro-gestor/{nombre_centro_gestor}",
     tags=["Gestión de Empréstito"],
 )
-async def obtener_contratos_por_centro_gestor(nombre_centro_gestor: str):
+async def obtener_contratos_por_centro_gestor(
+    nombre_centro_gestor: str,
+    current_user: dict = Depends(require_resource("contratos", "read")),
+):
     """
     ##  Obtener Contratos de Empréstito por Centro Gestor
 
@@ -5393,6 +5493,9 @@ async def obtener_contratos_por_centro_gestor(nombre_centro_gestor: str):
     if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
         raise HTTPException(status_code=503, detail="Firebase or scripts not available")
 
+    # own_centro: valida que el usuario no pida un centro distinto al asignado (403).
+    enforce_resource_access(current_user, "read:contratos", nombre_centro_gestor)
+
     try:
         result = await get_contratos_emprestito_by_centro_gestor(nombre_centro_gestor)
 
@@ -5425,7 +5528,9 @@ async def obtener_contratos_por_centro_gestor(nombre_centro_gestor: str):
 
 
 @router.get("/emprestito/ordenes-compra", tags=["Gestión de Empréstito"])
-async def get_ordenes_compra_todas():
+async def get_ordenes_compra_todas(
+    current_user: dict = Depends(require_resource("contratos", "read")),
+):
     """
     ##  Consultar Todas las Órdenes de Compra Existentes
 
@@ -5443,7 +5548,7 @@ async def get_ordenes_compra_todas():
         )
 
         resultado = await get_ordenes_compra_emprestito_all()
-        return resultado
+        return _scope_result(current_user, resultado)
 
     except Exception as e:
         logger.error(f"[ERROR] Error consultando órdenes: {str(e)}")
@@ -5456,7 +5561,8 @@ async def get_ordenes_compra_todas():
 async def obtener_ordenes_compra_tvec_endpoint(
     numero_orden: Optional[str] = Query(
         None, description="Filtrar ejecución a una única orden de compra"
-    )
+    ),
+    current_user: dict = Depends(require_resource("contratos", "write")),
 ):
     """
     ##  Obtener y Enriquecer Órdenes de Compra con Datos de TVEC
@@ -5661,7 +5767,9 @@ async def obtener_ordenes_compra_tvec_endpoint(
 
 
 @router.get("/procesos_emprestito_all", tags=["Gestión de Empréstito"])
-async def get_all_procesos_emprestito():
+async def get_all_procesos_emprestito(
+    current_user: dict = Depends(require_resource("contratos", "read")),
+):
     """
     ## Obtener Todos los Procesos de Empréstito
 
@@ -5733,6 +5841,7 @@ async def get_all_procesos_emprestito():
 
     try:
         result = await get_procesos_emprestito_all()
+        result = _scope_result(current_user, result)
 
         if not result["success"]:
             raise HTTPException(
@@ -5773,7 +5882,9 @@ async def get_all_procesos_emprestito():
     tags=["Gestión de Empréstito"],
     summary=" Obtener Procesos BP",
 )
-async def obtener_procesos_bp():
+async def obtener_procesos_bp(
+    current_user: dict = Depends(require_resource("contratos", "read")),
+):
     """
     ## Obtener Procesos de Empréstito - Campos Básicos BP
 
@@ -5879,7 +5990,9 @@ async def obtener_procesos_bp():
     tags=["Gestión de Empréstito"],
     summary=" Obtener Contratos BP",
 )
-async def obtener_contratos_bp():
+async def obtener_contratos_bp(
+    current_user: dict = Depends(require_resource("contratos", "read")),
+):
     """
     ## Obtener Contratos de Empréstito - Campos Básicos BP
 
@@ -6060,7 +6173,10 @@ async def obtener_contratos_bp():
 @router.get(
     "/ordenes_compra_emprestito/numero/{numero_orden}", tags=["Gestión de Empréstito"]
 )
-async def obtener_ordenes_por_numero(numero_orden: str):
+async def obtener_ordenes_por_numero(
+    numero_orden: str,
+    current_user: dict = Depends(require_resource("contratos", "read")),
+):
     """
     ##  Obtener Órdenes de Compra por Número de Orden
 
@@ -6135,7 +6251,10 @@ async def obtener_ordenes_por_numero(numero_orden: str):
     "/ordenes_compra_emprestito/centro-gestor/{nombre_centro_gestor}",
     tags=["Gestión de Empréstito"],
 )
-async def obtener_ordenes_por_centro_gestor(nombre_centro_gestor: str):
+async def obtener_ordenes_por_centro_gestor(
+    nombre_centro_gestor: str,
+    current_user: dict = Depends(require_resource("contratos", "read")),
+):
     """
     ##  Obtener Órdenes de Compra por Centro Gestor
 
@@ -6173,6 +6292,9 @@ async def obtener_ordenes_por_centro_gestor(nombre_centro_gestor: str):
     if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
         raise HTTPException(status_code=503, detail="Firebase or scripts not available")
 
+    # own_centro: valida que el usuario no pida un centro distinto al asignado (403).
+    enforce_resource_access(current_user, "read:contratos", nombre_centro_gestor)
+
     try:
         result = await get_ordenes_compra_emprestito_by_centro_gestor(
             nombre_centro_gestor
@@ -6207,7 +6329,9 @@ async def obtener_ordenes_por_centro_gestor(nombre_centro_gestor: str):
 
 
 @router.post("/emprestito/obtener-procesos-secop", tags=["Gestión de Empréstito"])
-async def obtener_procesos_secop_completo_endpoint():
+async def obtener_procesos_secop_completo_endpoint(
+    current_user: dict = Depends(require_resource("contratos", "write")),
+):
     """
     ##  Obtener y Actualizar Datos Completos de SECOP para Todos los Procesos
 
@@ -6356,7 +6480,9 @@ async def obtener_procesos_secop_completo_endpoint():
     tags=["Gestión de Empréstito"],
     summary=" Obtener Asignaciones Banco-Centro Gestor",
 )
-async def get_all_asignaciones_emprestito_banco_centro_gestor():
+async def get_all_asignaciones_emprestito_banco_centro_gestor(
+    current_user: dict = Depends(require_resource("contratos", "read")),
+):
     """
     ##  GET |  Consultas | Obtener Todas las Asignaciones de Empréstito Banco-Centro Gestor
 
@@ -6412,6 +6538,7 @@ async def get_all_asignaciones_emprestito_banco_centro_gestor():
         check_emprestito_availability()
 
         result = await get_asignaciones_emprestito_banco_centro_gestor_all()
+        result = _scope_result(current_user, result)
 
         if not result["success"]:
             raise HTTPException(
@@ -6466,6 +6593,7 @@ async def cargar_flujo_caja_excel(
     update_mode: str = Form(
         default="merge", description="Modo de actualización: merge, replace, append"
     ),
+    current_user: dict = Depends(require_resource("contratos", "write")),
 ):
     """
     ##  POST |  Carga de Archivos | Cargar Flujos de Caja desde Excel
@@ -6597,6 +6725,7 @@ async def get_flujos_caja_all(
     limit: Optional[int] = Query(
         None, ge=1, le=1000, description="Límite de registros"
     ),
+    current_user: dict = Depends(require_resource("contratos", "read")),
 ):
     """
     ##  GET |  Consultas con Filtros | Obtener Todos los Flujos de Caja
@@ -6708,7 +6837,9 @@ async def get_flujos_caja_all(
     tags=["Gestión de Empréstito"],
     summary=" Crear Tabla Proyecciones",
 )
-async def crear_tabla_proyecciones_endpoint():
+async def crear_tabla_proyecciones_endpoint(
+    current_user: dict = Depends(require_resource("contratos", "write")),
+):
     """
     ##  POST |  Integración Externa | Crear Tabla de Proyecciones desde Google Sheets
 
@@ -6848,6 +6979,7 @@ async def leer_tabla_proyecciones_endpoint(
         False,
         description="Si es True y se proporciona sheet_url, devuelve solo registros que NO están en procesos_emprestito pero tienen Nro de Proceso válido",
     ),
+    current_user: dict = Depends(require_resource("contratos", "read")),
 ):
     """
     ##  GET |  Listados | Leer Tabla de Proyecciones de Empréstito
@@ -7012,7 +7144,9 @@ async def leer_tabla_proyecciones_endpoint(
 
 
 @router.get("/emprestito/proyecciones-sin-proceso", tags=["Gestión de Empréstito"])
-async def endpoint_proyecciones_sin_proceso():
+async def endpoint_proyecciones_sin_proceso(
+    current_user: dict = Depends(require_resource("contratos", "read")),
+):
     """Devuelve proyecciones cuya 'referencia_proceso' no exista en 'procesos_emprestito'."""
     if not FIREBASE_AVAILABLE or not SCRIPTS_AVAILABLE:
         raise HTTPException(status_code=503, detail="Firebase o scripts no disponibles")
@@ -7142,6 +7276,7 @@ async def modificar_orden_compra(
     datos_json: Optional[str] = Query(
         None, description="[Opcional] JSON con campos adicionales a actualizar"
     ),
+    current_user: dict = Depends(require_resource("contratos", "write")),
 ):
     """
     ##  PUT |  Modificar | Modificar Orden de Compra en Firebase
@@ -7478,6 +7613,7 @@ async def modificar_proceso(
     datos_json: Optional[str] = Query(
         None, description="[Opcional] JSON con campos adicionales a actualizar"
     ),
+    current_user: dict = Depends(require_resource("contratos", "write")),
 ):
     """
     ##  PUT |  Modificar | Modificar Proceso de Empréstito en Firebase
@@ -7811,6 +7947,7 @@ async def modificar_contrato(
     datos_json: Optional[str] = Query(
         None, description="[Opcional] JSON con campos adicionales a actualizar"
     ),
+    current_user: dict = Depends(require_resource("contratos", "write")),
 ):
     """
     ##  PUT |  Modificar | Modificar Contrato de Empréstito en Firebase

@@ -125,18 +125,18 @@ ROLES = {
     "editor_datos": {
         "name": "Editor de Datos",
         "level": 3,
-        "description": "Edición de datos sin capacidad de eliminación",
+        "description": "Edición de datos de su centro gestor, sin eliminación",
         "permissions": [
-            # Proyectos (lectura y escritura, sin eliminación)
-            "read:proyectos",
-            "write:proyectos",
-            "upload:proyectos",
-            # Unidades (lectura y escritura, sin eliminación)
-            "read:unidades",
-            "write:unidades",
-            "upload:unidades",
-            # Contratos (lectura)
-            "read:contratos",
+            # Proyectos (lectura y escritura sobre su centro gestor)
+            "read:proyectos:own_centro",
+            "write:proyectos:own_centro",
+            "upload:proyectos:own_centro",
+            # Unidades (lectura y escritura sobre su centro gestor)
+            "read:unidades:own_centro",
+            "write:unidades:own_centro",
+            "upload:unidades:own_centro",
+            # Contratos (lectura de su centro gestor)
+            "read:contratos:own_centro",
             # GeoJSON
             "download:geojson",
             "upload:geojson",
@@ -145,40 +145,40 @@ ROLES = {
     "gestor_contratos": {
         "name": "Gestor de Contratos",
         "level": 3,
-        "description": "Gestión exclusiva de contratos de empréstito",
+        "description": "Gestión de contratos de empréstito de su centro gestor",
         "permissions": [
-            # Proyectos (solo lectura)
-            "read:proyectos",
-            # Contratos (gestión completa)
-            "read:contratos",
-            "write:contratos",
-            "delete:contratos",
-            "export:contratos",
-            # Reportes de contratos
-            "read:reportes_contratos",
-            "write:reportes_contratos",
-            "export:reportes_contratos",
-            # Empréstito
-            "read:emprestito",
-            "write:emprestito",
-            "process:emprestito",
+            # Proyectos (solo lectura de su centro gestor)
+            "read:proyectos:own_centro",
+            # Contratos (gestión completa sobre su centro gestor)
+            "read:contratos:own_centro",
+            "write:contratos:own_centro",
+            "delete:contratos:own_centro",
+            "export:contratos:own_centro",
+            # Reportes de contratos (su centro gestor)
+            "read:reportes_contratos:own_centro",
+            "write:reportes_contratos:own_centro",
+            "export:reportes_contratos:own_centro",
+            # Empréstito (su centro gestor)
+            "read:emprestito:own_centro",
+            "write:emprestito:own_centro",
+            "process:emprestito:own_centro",
         ],
     },
     "analista": {
         "name": "Analista",
         "level": 4,
-        "description": "Análisis y exportación de datos",
+        "description": "Análisis y exportación de datos de su centro gestor",
         "permissions": [
-            # Proyectos (lectura y exportación)
-            "read:proyectos",
-            "export:proyectos",
-            # Unidades (lectura)
-            "read:unidades",
-            # Contratos (lectura)
-            "read:contratos",
-            "export:contratos",
-            # Reportes (lectura)
-            "read:reportes_contratos",
+            # Proyectos (lectura y exportación de su centro gestor)
+            "read:proyectos:own_centro",
+            "export:proyectos:own_centro",
+            # Unidades (lectura de su centro gestor)
+            "read:unidades:own_centro",
+            # Contratos (lectura de su centro gestor)
+            "read:contratos:own_centro",
+            "export:contratos:own_centro",
+            # Reportes (lectura de su centro gestor)
+            "read:reportes_contratos:own_centro",
             # GeoJSON (descarga)
             "download:geojson",
             # Dashboard

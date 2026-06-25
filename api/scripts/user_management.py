@@ -314,9 +314,22 @@ async def create_user_account(
         if not phone_validation["valid"]:
             return phone_validation
         
-        # Normalizar nombre_centro_gestor (NFC para caracteres especiales como ñ, á, é, í, ó, ú)
-        nombre_centro_gestor_normalizado = unicodedata.normalize('NFC', nombre_centro_gestor.strip())
-        
+        # Validar nombre_centro_gestor contra el catálogo oficial y canonicalizar.
+        # Evita typos/variantes que rompen el filtrado por centro (match exacto).
+        from auth_system.centros_catalog import canonicalize_centro
+
+        canonical_centro = canonicalize_centro(nombre_centro_gestor)
+        if not canonical_centro:
+            return {
+                "success": False,
+                "error": (
+                    "El centro gestor seleccionado no es válido. "
+                    "Elija uno del listado oficial."
+                ),
+                "code": "INVALID_CENTRO_GESTOR",
+            }
+        nombre_centro_gestor_normalizado = canonical_centro
+
         auth_client = get_auth_client()
         firestore_client = get_firestore_client()
         normalized_email = email_validation["email"]
