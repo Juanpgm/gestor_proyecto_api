@@ -39,6 +39,7 @@ if BACK_DIR not in sys.path:
     sys.path.insert(0, BACK_DIR)
 
 from database.firebase_config import get_firestore_client  # noqa: E402
+from auth_system.centros_catalog import canonicalize_centro  # noqa: E402
 
 
 def _norm(value) -> Optional[str]:
@@ -184,7 +185,8 @@ def main():
     pending = 0
     written = 0
     for ref, _upid, centro, _actual, _counts in to_update:
-        batch.update(ref, {"nombre_centro_gestor": centro})
+        canonical = canonicalize_centro(centro) or centro
+        batch.update(ref, {"nombre_centro_gestor": canonical})
         pending += 1
         if pending >= 400:
             batch.commit()

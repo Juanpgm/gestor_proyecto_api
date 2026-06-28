@@ -45,11 +45,15 @@ def _scope_result(current_user, result):
 
     No-op para roles globales (super_admin/admin_general → centro efectivo None).
     Para roles ``:own_centro`` recorta la lista a su centro y recalcula ``count``.
+    Propaga HTTPException (403/401) para que el caller la maneje correctamente.
     """
     try:
         centro = enforce_resource_access(current_user, "read:contratos", None)
-    except Exception:
-        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("_scope_result: unexpected error evaluating access scope: %s", e)
+        raise HTTPException(status_code=500, detail="Error evaluating access scope")
     if centro and isinstance(result, dict) and isinstance(result.get("data"), list):
         result["data"] = _scope_records_by_centro(result["data"], centro)
         if "count" in result:
@@ -5945,29 +5949,29 @@ async def obtener_procesos_bp(
             }
             procesos_data.append(proceso_filtrado)
 
-        return create_utf8_response(
-            {
-                "success": True,
-                "data": procesos_data,
-                "count": len(procesos_data),
-                "collection": "procesos_emprestito",
-                "timestamp": datetime.now().isoformat(),
-                "message": f"Se obtuvieron {len(procesos_data)} procesos exitosamente",
-                "metadata": {
-                    "fields": [
-                        "bp",
-                        "banco",
-                        "nombre_centro_gestor",
-                        "nombre_resumido_proceso",
-                        "tipo_contrato",
-                        "urlproceso",
-                        "valor_publicacion",
-                    ],
-                    "utf8_enabled": True,
-                    "spanish_support": True,
-                },
-            }
-        )
+        result = {
+            "success": True,
+            "data": procesos_data,
+            "count": len(procesos_data),
+            "collection": "procesos_emprestito",
+            "timestamp": datetime.now().isoformat(),
+            "message": f"Se obtuvieron {len(procesos_data)} procesos exitosamente",
+            "metadata": {
+                "fields": [
+                    "bp",
+                    "banco",
+                    "nombre_centro_gestor",
+                    "nombre_resumido_proceso",
+                    "tipo_contrato",
+                    "urlproceso",
+                    "valor_publicacion",
+                ],
+                "utf8_enabled": True,
+                "spanish_support": True,
+            },
+        }
+        result = _scope_result(current_user, result)
+        return create_utf8_response(result)
 
     except HTTPException:
         raise

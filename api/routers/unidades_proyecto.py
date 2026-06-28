@@ -534,8 +534,10 @@ async def consultar_unidades_proyecto(
 
         logger.info(f" Filtros aplicados: {filters_applied}")
 
-        # Aplicar límite (max 10000, default 100 para velocidad)
-        query_limit = min(limit or 100, 10000)
+        # Aplicar límite (max 10000, default 500). Default era 100 pero causaba
+        # truncamiento silencioso en colecciones grandes: registros recientes no
+        # aparecían porque Firestore devuelve en orden interno, no cronológico.
+        query_limit = min(limit or 500, 10000)
         query = query.limit(query_limit)
 
         # Aplicar offset si existe
@@ -594,6 +596,7 @@ async def consultar_unidades_proyecto(
             "success": True,
             "data": data,
             "count": len(data),
+            "has_more": len(data) == query_limit,
             "collection": "unidades_proyecto",
             "filters": {
                 "applied": filters_applied,
@@ -3294,9 +3297,8 @@ async def crear_unidad_proyecto(
     )
     # Si el usuario solo tiene own_centro o no envió valor, forzamos su centro.
     if not effective_centro:
-        effective_centro = current_user.get(
-            "centro_gestor_assigned"
-        ) or current_user.get("nombre_centro_gestor")
+        raw_cg = current_user.get("centro_gestor_assigned") or current_user.get("nombre_centro_gestor")
+        effective_centro = canonicalize_centro(raw_cg) or raw_cg if raw_cg else None
 
     try:
         db = get_firestore_client()
