@@ -7830,6 +7830,13 @@ async def modificar_proceso(
         campos_actualizados = list(datos_actualizados.keys())
         coleccion.document(doc_id).update(datos_actualizados)
 
+        # Issue #29: invalidar cache para que el cambio se refleje de inmediato
+        try:
+            from api.scripts.emprestito_cache import invalidate_all_emprestito_cache
+            await invalidate_all_emprestito_cache()
+        except Exception as _cache_err:  # pragma: no cover
+            logger.warning(f"No se pudo invalidar cache tras modificar proceso: {_cache_err}")
+
         return create_utf8_response(
             {
                 "success": True,
