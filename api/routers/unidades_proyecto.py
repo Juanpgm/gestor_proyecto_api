@@ -461,6 +461,11 @@ async def consultar_unidades_proyecto(
     try:
         from database.firebase_config import get_firestore_client
         import google.cloud.firestore
+        from api.scripts.unidades_proyecto import (
+            _calcular_estado,
+            _enriquecer_intervencion,
+            _normalizar_estado,
+        )
 
         logger.info(f" Consulta unidades_proyecto iniciada")
 
@@ -490,7 +495,9 @@ async def consultar_unidades_proyecto(
             filters_applied += 1
             active_filters["nombre_centro_gestor"] = nombre_centro_gestor
         if estado:
-            query = query.where("estado", "==", estado)
+            # El estado es efímero (se deriva de avance_obra), por lo que NO se
+            # puede filtrar en Firestore sobre el valor crudo almacenado. Se aplica
+            # client-side tras recalcular el estado (ver más abajo).
             filters_applied += 1
             active_filters["estado"] = estado
         if tipo_intervencion:
@@ -572,6 +579,22 @@ async def consultar_unidades_proyecto(
             elif not isinstance(pe, list):
                 doc_dict["proyectos_estrategicos"] = []
 
+            # Recalcular estado (efímero) desde avance_obra — fuente única de verdad,
+            # tanto a nivel raíz de la UP como en sus intervenciones anidadas.
+            unidad_props = {
+                "clase_up": doc_dict.get("clase_up"),
+                "tipo_equipamiento": doc_dict.get("tipo_equipamiento"),
+            }
+            intervenciones = doc_dict.get("intervenciones")
+            if isinstance(intervenciones, list):
+                doc_dict["intervenciones"] = [
+                    _enriquecer_intervencion(interv, unidad_props)
+                    if isinstance(interv, dict)
+                    else interv
+                    for interv in intervenciones
+                ]
+            doc_dict["estado"] = _calcular_estado(doc_dict)
+
             data.append(doc_dict)
 
             # Log progreso cada 50 docs
@@ -579,6 +602,23 @@ async def consultar_unidades_proyecto(
                 logger.info(f" Procesados {doc_count} documentos...")
 
         logger.info(f"[OK] Query completada: {doc_count} documentos obtenidos")
+
+        # Filtro por estado client-side (sobre el estado ya recalculado), case/
+        # acento-insensible, considerando la raíz de la UP y sus intervenciones.
+        if estado:
+            estado_norm = _normalizar_estado(str(estado))
+
+            def _coincide_estado(item):
+                if _normalizar_estado(str(item.get("estado") or "")) == estado_norm:
+                    return True
+                intervs = item.get("intervenciones") or []
+                return isinstance(intervs, list) and any(
+                    _normalizar_estado(str(i.get("estado") or "")) == estado_norm
+                    for i in intervs
+                    if isinstance(i, dict)
+                )
+
+            data = [item for item in data if _coincide_estado(item)]
 
         # Defense-in-depth: post-filtro normalizado por centro (red de seguridad
         # ante datos residuales no canónicos en Firestore). No-op para usuarios
@@ -1238,6 +1278,8 @@ async def get_unidades_proyecto_init_360(
             "direccion",
         ]
 
+        from api.scripts.unidades_proyecto import _calcular_estado
+
         # Consultar colección con filtro opcional por centro gestor (F2 + F20).
         query = db.collection("unidades_proyecto")
         if nombre_centro_gestor:
@@ -1282,6 +1324,9 @@ async def get_unidades_proyecto_init_360(
             for campo in campos_requeridos:
                 valor = get_field_value(campo)
                 registro[campo] = valor
+
+            # Recalcular estado (efímero) desde avance_obra — fuente única de verdad.
+            registro["estado"] = _calcular_estado(registro)
 
             registros_filtrados.append(registro)
 
@@ -1748,8 +1793,8 @@ async def exportar_intervenciones_xlsx(
             interv_query = interv_query.where("cantidad", "==", cantidad)
         if clase_up:
             interv_query = interv_query.where("clase_up", "==", clase_up)
-        if estado:
-            interv_query = interv_query.where("estado", "==", estado)
+        # El estado es efímero (se deriva de avance_obra): no se filtra en Firestore
+        # sobre el valor crudo; se aplica client-side tras recalcular (ver loop).
         if fecha_fin:
             interv_query = interv_query.where("fecha_fin", "==", fecha_fin)
         if fecha_inicio:
@@ -1789,9 +1834,25 @@ async def exportar_intervenciones_xlsx(
         if url_proceso:
             interv_query = interv_query.where("url_proceso", "==", url_proceso)
 
+        from api.scripts.unidades_proyecto import (
+            _calcular_estado,
+            _normalizar_estado,
+        )
+
+        estado_norm = _normalizar_estado(str(estado)) if estado else None
+
         export_rows = []
         for interv_doc in await asyncio.to_thread(lambda: list(interv_query.stream())):
             interv_data = interv_doc.to_dict() or {}
+
+            # Recalcular estado (efímero) desde avance_obra antes de proyectar el row
+            # (avance_obra se excluye del export, por eso debe hacerse aquí).
+            interv_data["estado"] = _calcular_estado(interv_data)
+            if estado_norm is not None and (
+                _normalizar_estado(str(interv_data.get("estado") or "")) != estado_norm
+            ):
+                continue
+
             normalized_data = {
                 k: normalize_for_excel(v) for k, v in interv_data.items()
             }

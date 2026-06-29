@@ -7,11 +7,31 @@ import ast
 import logging
 import os
 import time
+import unicodedata
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Union
 from database.firebase_config import get_firestore_client
 
 logger = logging.getLogger(__name__)
+
+# ── Derivación del estado de UP/intervención (efímero, desde avance_obra) ──────
+# Contrato único compartido con el frontend (front/src/utils/estadoUP.ts).
+# Avance (%) por debajo del cual la intervención se considera "En alistamiento".
+AVANCE_MIN_EN_EJECUCION = 0.5
+# Avance (%) en o por encima del cual la intervención se considera "Terminado".
+AVANCE_MAX_EN_EJECUCION = 99.5
+# Estados manuales (imputados por el usuario) respetados tal cual, normalizados.
+ESTADOS_MANUALES_NORM = {"suspendido", "inaugurado"}
+
+
+def _normalizar_estado(texto: str) -> str:
+    """Normaliza un estado: sin acentos, sin espacios extremos y en minúsculas."""
+    sin_acentos = "".join(
+        c
+        for c in unicodedata.normalize("NFD", texto)
+        if unicodedata.category(c) != "Mn"
+    )
+    return sin_acentos.strip().lower()
 
 # PROGRAMACION FUNCIONAL: Sin cache global que cause problemas de estado
 # Sin variables mutables globales que persistan datos entre requests
@@ -1446,6 +1466,10 @@ async def get_unidades_proyecto_attributes(
                         f"Transformado clase_obra -> clase_up para {attributes_record.get('upid', 'unknown')}"
                     )
 
+            # Recalcular estado raíz (efímero) desde avance_obra — coherente con las
+            # intervenciones anidadas ya enriquecidas y con el contrato del frontend.
+            attributes_record["estado"] = _calcular_estado(attributes_record)
+
             attributes_data.append(attributes_record)
             doc_count += 1
 
@@ -2305,27 +2329,27 @@ def _calcular_estado(intervencion: Dict[str, Any]) -> str:
     """
     Calcular el estado de una intervención a partir de avance_obra.
 
-    Reglas:
-    - avance_obra == 0 (o None) → "En alistamiento"
-    - 0 < avance_obra < 100 → "En ejecución"
-    - avance_obra == 100 → "Terminado"
-    - Si el estado existente es un valor especial imputado por el usuario
-      ("Suspendido", "Inaugurado"), se respeta tal cual.
+    Contrato (debe coincidir con front/src/utils/estadoUP.ts):
+    - avance_obra < 0.5 (o None/no numérico) → "En alistamiento"
+    - avance_obra >= 99.5 → "Terminado"
+    - resto → "En ejecución"
+    - Si el estado existente es un valor manual imputado por el usuario
+      ("Suspendido", "Inaugurado"), se respeta tal cual (case/acento-insensible).
     """
-    # Estados imputados por el usuario que deben ser respetados
-    estados_usuario = {"Suspendido", "Inaugurado"}
-
+    # Estados imputados por el usuario que deben ser respetados (whitelist).
     estado_actual = intervencion.get("estado")
-    if estado_actual and str(estado_actual).strip() in estados_usuario:
-        return str(estado_actual).strip()
+    if estado_actual:
+        estado_str = str(estado_actual).strip()
+        if _normalizar_estado(estado_str) in ESTADOS_MANUALES_NORM:
+            return estado_str
 
     avance_obra = _convert_to_float(intervencion.get("avance_obra"))
 
-    if avance_obra is None or avance_obra == 0:
+    if avance_obra is None or avance_obra < AVANCE_MIN_EN_EJECUCION:
         return "En alistamiento"
-    elif avance_obra >= 100:
+    elif avance_obra >= AVANCE_MAX_EN_EJECUCION:
         return "Terminado"
-    else:  # 0 < avance_obra < 100
+    else:  # AVANCE_MIN_EN_EJECUCION <= avance < AVANCE_MAX_EN_EJECUCION
         return "En ejecución"
 
 
