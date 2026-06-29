@@ -6093,7 +6093,13 @@ async def importar_up_ejecutar(
                     if barrio_vrd is not None:
                         up_payload["barrio_vereda"] = barrio_vrd
                     if geometry is not None:
-                        up_payload["geometry"] = geometry
+                        geo_to_store = dict(geometry)
+                        coords = geo_to_store.get("coordinates")
+                        if isinstance(coords, list):
+                            geo_to_store["coordinates"] = json.dumps(
+                                coords, separators=(",", ":")
+                            )
+                        up_payload["geometry"] = geo_to_store
                     up_payload["upid"] = target_upid
                     up_payload["proyectos_estrategicos"] = proy_estrat
                     up_payload["created_at"] = now_iso
