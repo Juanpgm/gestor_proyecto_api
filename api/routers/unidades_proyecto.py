@@ -5568,6 +5568,19 @@ def _auto_suggest_mapping(columns: List[str]) -> Dict[str, str]:
     return mapping
 
 
+def _safe_int(v: Any) -> Optional[int]:
+    """Convert to int, handling float strings like '4.0' from shapefile DBF fields."""
+    if v is None:
+        return None
+    try:
+        return int(v)
+    except (ValueError, TypeError):
+        try:
+            return int(float(str(v)))
+        except (ValueError, TypeError):
+            return None
+
+
 def _apply_mapping_to_properties(
     props: Dict[str, Any],
     column_mapping: Dict[str, str],
@@ -5703,7 +5716,7 @@ def _up_payload_fields(mapped: Dict[str, Any]) -> Dict[str, Any]:
             "referencia_proceso": mapped.get("referencia_proceso"),
             "url_proceso": mapped.get("url_proceso"),
             "descripcion_intervencion": mapped.get("descripcion_intervencion"),
-            "cantidad": int(mapped["cantidad"]) if mapped.get("cantidad") is not None else None,
+            "cantidad": _safe_int(mapped.get("cantidad")),
             "unidad": mapped.get("unidad"),
         }.items()
         if v is not None
@@ -5718,8 +5731,8 @@ def _intervencion_payload_fields(mapped: Dict[str, Any]) -> Dict[str, Any]:
     return {
         k: v
         for k, v in {
-            "bpin": int(mapped["bpin"]) if mapped.get("bpin") is not None else None,
-            "cantidad": int(mapped["cantidad"]) if mapped.get("cantidad") is not None else None,
+            "bpin": _safe_int(mapped.get("bpin")),
+            "cantidad": _safe_int(mapped.get("cantidad")),
             "clase_up": mapped.get("clase_up"),
             "fecha_fin": mapped.get("fecha_fin"),
             "fecha_inicio": mapped.get("fecha_inicio"),
