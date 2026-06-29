@@ -31,8 +31,8 @@ python-multipart==0.0.9
 Pillow==11.1.0
 
 # Autenticación y seguridad
-PyJWT==2.10.1
-cryptography==43.0.3
+PyJWT==2.13.0
+cryptography==49.0.0
 
 # Utilidades para autenticación
 phonenumbers==8.13.50
