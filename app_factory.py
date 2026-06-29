@@ -289,6 +289,8 @@ async def _timeout_middleware(request: Request, call_next):
         timeout = 600.0
     elif "/calidad-datos/" in path:
         timeout = 120.0
+    elif "/unidades-proyecto/importar/" in path:
+        timeout = 90.0
     else:
         timeout = 30.0
 

@@ -5609,6 +5609,10 @@ class ImportarGeoRequest(BaseModel):
     nombre_centro_gestor_global: Optional[str] = Field(
         None, description="Centro gestor que se aplica a todos los features si no tienen el campo mapeado"
     )
+    upid_start: Optional[int] = Field(
+        None,
+        description="Si se provee, se usa como base para el contador de UPID en lugar de escanear la colección."
+    )
 
     class Config:
         extra = "allow"
@@ -5907,12 +5911,17 @@ async def importar_up_ejecutar(
                 max_n = max(max_n, int(m.group(1)))
         return max_n
 
-    # Las UP se autogeneran en modo 'unidad_proyecto' y 'combinado' (UP nuevas)
-    upid_counter = (
-        _get_max_upid()
-        if body.entity_type in ("unidad_proyecto", "combinado")
-        else 0
-    )
+    # Las UP se autogeneran en modo 'unidad_proyecto' y 'combinado' (UP nuevas).
+    # Si el frontend provee upid_start (chunked import), se usa directamente para
+    # evitar el scan completo de la colección en cada chunk.
+    if body.entity_type in ("unidad_proyecto", "combinado"):
+        upid_counter = (
+            body.upid_start
+            if body.upid_start is not None
+            else _get_max_upid()
+        )
+    else:
+        upid_counter = 0
 
     # Cache de max intervencion por upid para batch eficiente
     intervencion_counters: Dict[str, int] = {}
@@ -6135,6 +6144,7 @@ async def importar_up_ejecutar(
             "created_up_ids": created_up_ids,
             "created_intervencion_ids": created_int_ids,
             "errors": errors_by_feature,
+            "next_upid_start": upid_counter,
         })
 
     for idx, feat in enumerate(body.features):
@@ -6234,6 +6244,7 @@ async def importar_up_ejecutar(
         "error_count": len(errors_by_feature),
         "created_ids": created_ids,
         "errors": errors_by_feature,
+        "next_upid_start": upid_counter,
     })
 
 
