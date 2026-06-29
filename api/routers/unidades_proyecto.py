@@ -5746,6 +5746,8 @@ def _intervencion_payload_fields(mapped: Dict[str, Any]) -> Dict[str, Any]:
             "unidad": mapped.get("unidad"),
             "url_proceso": mapped.get("url_proceso"),
             "descripcion_intervencion": mapped.get("descripcion_intervencion"),
+            "avance_obra": float(mapped["avance_obra"]) if mapped.get("avance_obra") is not None else None,
+            "estado": mapped.get("estado"),
         }.items()
         if v is not None
     }
