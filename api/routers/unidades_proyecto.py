@@ -80,6 +80,25 @@ except Exception as _pg_exc:  # pragma: no cover - defensive import guard
         return False
 
 
+# Dual read path (DATA_BACKEND=dual). Kept in a SEPARATE guard so a missing dual
+# stack never disables the Postgres path above. ``dual_enabled()`` falls back to
+# ``False`` when the import fails, so the live branch points degrade gracefully.
+try:
+    from ports_di import dual_enabled
+    from infrastructure.composite.unidades_read_dual import (
+        fetch_enriched_dual,
+        fetch_intervenciones_enriched_dual,
+    )
+
+    _DUAL_READ_AVAILABLE = True
+except Exception as _dual_exc:  # pragma: no cover - defensive import guard
+    logger.warning(f"Dual read path not available: {_dual_exc}")
+    _DUAL_READ_AVAILABLE = False
+
+    def dual_enabled() -> bool:
+        return False
+
+
 async def _consultar_unidades_proyecto_pg(
     *,
     nombre_centro_gestor: Optional[str],
@@ -176,6 +195,112 @@ async def _get_intervenciones_pg(
             "data": page,
             "count": len(page),
             "source": "postgres",
+            "filters": filters_payload,
+            "pagination": {
+                "limit": limit,
+                "offset": offset,
+                "returned": len(page),
+            },
+        }
+    )
+
+
+async def _consultar_unidades_proyecto_dual(
+    *,
+    nombre_centro_gestor: Optional[str],
+    upid: Optional[str],
+    estado: Optional[str],
+    tipo_intervencion: Optional[str],
+    clase_up: Optional[str],
+    tipo_equipamiento: Optional[str],
+    comuna_corregimiento: Optional[str],
+    barrio_vereda: Optional[str],
+    frente_activo: Optional[str],
+    fuente_financiacion: Optional[str],
+    ano: Optional[int],
+    limit: Optional[int],
+    offset: Optional[int],
+    start_time: float,
+):
+    """Dual-backend implementation of GET /unidades-proyecto (observe-only).
+
+    Thin wrapper over ``fetch_enriched_dual`` (which runs BOTH backends, compares
+    them and logs divergences) returning the configured ``dual_read_primary``
+    side. The SAME client-side filters and centro scoping as the Postgres path
+    are then applied, so the response envelope is identical except ``source``.
+    """
+    import time
+
+    query = UPQuery(
+        centro_gestor=nombre_centro_gestor or None,
+        only_valid_geometry=False,
+        limit=min(limit or 500, 10000),
+        offset=offset or 0,
+    )
+    data, _total = await fetch_enriched_dual(query)
+
+    data = filter_unidades(
+        data,
+        upid=upid,
+        estado=estado,
+        tipo_intervencion=tipo_intervencion,
+        clase_up=clase_up,
+        tipo_equipamiento=tipo_equipamiento,
+        comuna_corregimiento=comuna_corregimiento,
+        barrio_vereda=barrio_vereda,
+        frente_activo=frente_activo,
+        fuente_financiacion=fuente_financiacion,
+        ano=ano,
+    )
+
+    if nombre_centro_gestor:
+        data = scope_records_by_centro(
+            data, nombre_centro_gestor, log_label="unidades_proyecto[dual]"
+        )
+
+    elapsed_time = time.time() - start_time
+    return create_utf8_response(
+        {
+            "success": True,
+            "data": data,
+            "count": len(data),
+            "has_more": len(data) == query.limit,
+            "collection": "unidades_proyecto",
+            "source": "dual",
+            "performance": {"query_time_seconds": round(elapsed_time, 3)},
+            "timestamp": datetime.now().isoformat(),
+        }
+    )
+
+
+async def _get_intervenciones_dual(
+    *,
+    nombre_centro_gestor: Optional[str],
+    estado: Optional[str],
+    limit: int,
+    offset: int,
+    filters_payload: dict,
+    **exact,
+):
+    """Dual-backend implementation of GET /intervenciones (observe-only).
+
+    Thin wrapper over ``fetch_intervenciones_enriched_dual`` (runs BOTH backends,
+    compares + logs divergences) returning the configured primary side, then the
+    SAME filters and centro scoping as the Postgres path. ``source`` is ``dual``.
+    """
+    data = await fetch_intervenciones_enriched_dual()
+    data = filter_intervenciones(data, estado=estado, **exact)
+    if nombre_centro_gestor:
+        data = scope_records_by_centro(
+            data, nombre_centro_gestor, log_label="intervenciones[dual]"
+        )
+    page = data[offset : offset + limit] if offset else data[:limit]
+    return create_utf8_response(
+        {
+            "success": True,
+            "data": page,
+            "count": len(page),
+            "source": "dual",
             "filters": filters_payload,
             "pagination": {
                 "limit": limit,
@@ -590,6 +715,24 @@ async def consultar_unidades_proyecto(
 
     # v3 migration: when DATA_BACKEND=postgres|dual, serve unidades from Postgres
     # (same envelope + same RBAC scoping). Other domains stay on Firestore.
+    # DATA_BACKEND=dual runs BOTH backends (observe-only) and returns the primary.
+    if _POSTGRES_READ_AVAILABLE and _DUAL_READ_AVAILABLE and dual_enabled():
+        return await _consultar_unidades_proyecto_dual(
+            nombre_centro_gestor=nombre_centro_gestor,
+            upid=upid,
+            estado=estado,
+            tipo_intervencion=tipo_intervencion,
+            clase_up=clase_up,
+            tipo_equipamiento=tipo_equipamiento,
+            comuna_corregimiento=comuna_corregimiento,
+            barrio_vereda=barrio_vereda,
+            frente_activo=frente_activo,
+            fuente_financiacion=fuente_financiacion,
+            ano=ano,
+            limit=limit,
+            offset=offset,
+            start_time=start_time,
+        )
     if _POSTGRES_READ_AVAILABLE and postgres_enabled():
         return await _consultar_unidades_proyecto_pg(
             nombre_centro_gestor=nombre_centro_gestor,
@@ -1606,7 +1749,8 @@ async def get_intervenciones_filtradas_endpoint(
         )
 
     # v3 migration: serve intervenciones from Postgres when DATA_BACKEND=postgres|dual.
-    if _POSTGRES_READ_AVAILABLE and postgres_enabled():
+    # DATA_BACKEND=dual runs BOTH backends (observe-only) and returns the primary.
+    if _POSTGRES_READ_AVAILABLE and (dual_enabled() or postgres_enabled()):
         _filters_payload = {
             "avance_obra": avance_obra,
             "bpin": bpin,
@@ -1627,7 +1771,10 @@ async def get_intervenciones_filtradas_endpoint(
             "upid": upid,
             "url_proceso": url_proceso,
         }
-        return await _get_intervenciones_pg(
+        _intervenciones_impl = (
+            _get_intervenciones_dual if (_DUAL_READ_AVAILABLE and dual_enabled()) else _get_intervenciones_pg
+        )
+        return await _intervenciones_impl(
             nombre_centro_gestor=nombre_centro_gestor,
             estado=estado,
             limit=limit,
