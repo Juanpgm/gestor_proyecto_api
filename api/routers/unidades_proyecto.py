@@ -56,6 +56,136 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Unidades de Proyecto"])
 
 # ---------------------------------------------------------------------------
+# Postgres read path (v3 migration). Active only when DATA_BACKEND=postgres|dual.
+# Imported defensively: in production (Firestore) the import may be unused, and a
+# missing async stack must never break the router. Engine creation here is lazy
+# (asyncpg opens no connection until a query runs).
+# ---------------------------------------------------------------------------
+try:
+    from ports_di import postgres_enabled
+    from domain.geospatial.entities import UPQuery
+    from infrastructure.postgres.unidades_read import (
+        fetch_enriched,
+        fetch_intervenciones_enriched,
+        filter_intervenciones,
+        filter_unidades,
+    )
+
+    _POSTGRES_READ_AVAILABLE = True
+except Exception as _pg_exc:  # pragma: no cover - defensive import guard
+    logger.warning(f"Postgres read path not available: {_pg_exc}")
+    _POSTGRES_READ_AVAILABLE = False
+
+    def postgres_enabled() -> bool:
+        return False
+
+
+async def _consultar_unidades_proyecto_pg(
+    *,
+    nombre_centro_gestor: Optional[str],
+    upid: Optional[str],
+    estado: Optional[str],
+    tipo_intervencion: Optional[str],
+    clase_up: Optional[str],
+    tipo_equipamiento: Optional[str],
+    comuna_corregimiento: Optional[str],
+    barrio_vereda: Optional[str],
+    frente_activo: Optional[str],
+    fuente_financiacion: Optional[str],
+    ano: Optional[int],
+    limit: Optional[int],
+    offset: Optional[int],
+    start_time: float,
+):
+    """Postgres-backed implementation of GET /unidades-proyecto.
+
+    Returns the SAME envelope as the Firestore path. RBAC is preserved: the
+    caller already resolved the effective ``nombre_centro_gestor`` via
+    ``enforce_unidades_access``; it is pushed down to SQL and re-applied as a
+    normalized post-filter (defense in depth), mirroring the Firestore path.
+    """
+    import time
+
+    query = UPQuery(
+        centro_gestor=nombre_centro_gestor or None,
+        only_valid_geometry=False,
+        limit=min(limit or 500, 10000),
+        offset=offset or 0,
+    )
+    data, _total = await fetch_enriched(query)
+
+    # Remaining filters client-side (parity with Firestore path).
+    data = filter_unidades(
+        data,
+        upid=upid,
+        estado=estado,
+        tipo_intervencion=tipo_intervencion,
+        clase_up=clase_up,
+        tipo_equipamiento=tipo_equipamiento,
+        comuna_corregimiento=comuna_corregimiento,
+        barrio_vereda=barrio_vereda,
+        frente_activo=frente_activo,
+        fuente_financiacion=fuente_financiacion,
+        ano=ano,
+    )
+
+    # Defense-in-depth normalized centro scoping (no-op for global users).
+    if nombre_centro_gestor:
+        data = scope_records_by_centro(
+            data, nombre_centro_gestor, log_label="unidades_proyecto[pg]"
+        )
+
+    elapsed_time = time.time() - start_time
+    return create_utf8_response(
+        {
+            "success": True,
+            "data": data,
+            "count": len(data),
+            "has_more": len(data) == query.limit,
+            "collection": "unidades_proyecto",
+            "source": "postgres",
+            "performance": {"query_time_seconds": round(elapsed_time, 3)},
+            "timestamp": datetime.now().isoformat(),
+        }
+    )
+
+
+async def _get_intervenciones_pg(
+    *,
+    nombre_centro_gestor: Optional[str],
+    estado: Optional[str],
+    limit: int,
+    offset: int,
+    filters_payload: dict,
+    **exact,
+):
+    """Postgres-backed implementation of GET /intervenciones. Same envelope as the
+    Firestore path; RBAC centro scoping preserved (caller resolved the effective
+    centro via enforce_unidades_access; here it filters by the parent UP's centro).
+    """
+    data = await fetch_intervenciones_enriched()
+    data = filter_intervenciones(data, estado=estado, **exact)
+    if nombre_centro_gestor:
+        data = scope_records_by_centro(
+            data, nombre_centro_gestor, log_label="intervenciones[pg]"
+        )
+    page = data[offset : offset + limit] if offset else data[:limit]
+    return create_utf8_response(
+        {
+            "success": True,
+            "data": page,
+            "count": len(page),
+            "source": "postgres",
+            "filters": filters_payload,
+            "pagination": {
+                "limit": limit,
+                "offset": offset,
+                "returned": len(page),
+            },
+        }
+    )
+
+# ---------------------------------------------------------------------------
 # Rutas a basemaps (corregido: viven en back/basemaps, no en back/api/routers/basemaps)
 # ---------------------------------------------------------------------------
 _THIS_FILE = os.path.abspath(__file__)
@@ -456,6 +586,26 @@ async def consultar_unidades_proyecto(
     if nombre_centro_gestor:
         nombre_centro_gestor = (
             canonicalize_centro(nombre_centro_gestor) or nombre_centro_gestor
+        )
+
+    # v3 migration: when DATA_BACKEND=postgres|dual, serve unidades from Postgres
+    # (same envelope + same RBAC scoping). Other domains stay on Firestore.
+    if _POSTGRES_READ_AVAILABLE and postgres_enabled():
+        return await _consultar_unidades_proyecto_pg(
+            nombre_centro_gestor=nombre_centro_gestor,
+            upid=upid,
+            estado=estado,
+            tipo_intervencion=tipo_intervencion,
+            clase_up=clase_up,
+            tipo_equipamiento=tipo_equipamiento,
+            comuna_corregimiento=comuna_corregimiento,
+            barrio_vereda=barrio_vereda,
+            frente_activo=frente_activo,
+            fuente_financiacion=fuente_financiacion,
+            ano=ano,
+            limit=limit,
+            offset=offset,
+            start_time=start_time,
         )
 
     try:
@@ -1449,14 +1599,58 @@ async def get_intervenciones_filtradas_endpoint(
     - Buscar frentes activos específicos
     - Combinar múltiples filtros para búsquedas precisas
     """
-    if not FIREBASE_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Firebase not available")
-
     current_user = getattr(request.state, "current_user", None)
     if current_user is not None:
         nombre_centro_gestor = enforce_unidades_access(
             current_user, "read:unidades", nombre_centro_gestor
         )
+
+    # v3 migration: serve intervenciones from Postgres when DATA_BACKEND=postgres|dual.
+    if _POSTGRES_READ_AVAILABLE and postgres_enabled():
+        _filters_payload = {
+            "avance_obra": avance_obra,
+            "bpin": bpin,
+            "cantidad": cantidad,
+            "clase_up": clase_up,
+            "estado": estado,
+            "fecha_fin": fecha_fin,
+            "fecha_inicio": fecha_inicio,
+            "fuente_financiacion": fuente_financiacion,
+            "identificador": identificador,
+            "intervencion_id": intervencion_id,
+            "nombre_centro_gestor": nombre_centro_gestor,
+            "presupuesto_base": presupuesto_base,
+            "referencia_contrato": referencia_contrato,
+            "referencia_proceso": referencia_proceso,
+            "tipo_intervencion": tipo_intervencion,
+            "unidad": unidad,
+            "upid": upid,
+            "url_proceso": url_proceso,
+        }
+        return await _get_intervenciones_pg(
+            nombre_centro_gestor=nombre_centro_gestor,
+            estado=estado,
+            limit=limit,
+            offset=offset,
+            filters_payload=_filters_payload,
+            avance_obra=avance_obra,
+            bpin=bpin,
+            cantidad=cantidad,
+            clase_up=clase_up,
+            fuente_financiacion=fuente_financiacion,
+            identificador=identificador,
+            intervencion_id=intervencion_id,
+            presupuesto_base=presupuesto_base,
+            referencia_contrato=referencia_contrato,
+            referencia_proceso=referencia_proceso,
+            tipo_intervencion=tipo_intervencion,
+            unidad=unidad,
+            upid=upid,
+            url_proceso=url_proceso,
+        )
+
+    if not FIREBASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Firebase not available")
 
     try:
         db = get_firestore_client()
@@ -2473,6 +2667,61 @@ async def eliminar_avance_unidades_proyecto(
 
         # Eliminar documento en Firestore solo si S3 quedó limpio
         doc_ref.delete()
+
+        # Recalcular caché de avance_obra en la intervención: tras borrar el avance,
+        # el cache debe reflejar el reporte más reciente que QUEDE (o 0 si no queda
+        # ninguno). Sin esto, el cache apunta a un reporte inexistente y el estado
+        # efímero derivado de él sale obsoleto en todas las vistas que dependen del
+        # cache (mapa, tabular, export). Simétrico al update de POST /registrar_avance_up.
+        intervencion_id = doc_data.get("intervencion_id")
+        if intervencion_id:
+            try:
+                # Firestore puede devolver el doc recién borrado por consistencia
+                # eventual; lo excluimos explícitamente por id.
+                remaining = [
+                    snap
+                    for snap in db.collection("avances_unidades_proyecto")
+                    .where("intervencion_id", "==", intervencion_id)
+                    .stream()
+                    if snap.id != id
+                ]
+                latest = None
+                for snap in remaining:
+                    rec = snap.to_dict() or {}
+                    if latest is None or str(rec.get("created_at", "")) > str(
+                        latest.get("created_at", "")
+                    ):
+                        latest = rec
+                try:
+                    nuevo_avance_obra = (
+                        float(latest.get("avance_obra")) if latest else 0.0
+                    )
+                except (TypeError, ValueError):
+                    nuevo_avance_obra = 0.0
+
+                interv_docs = list(
+                    db.collection("intervenciones_unidades_proyecto")
+                    .where("intervencion_id", "==", intervencion_id)
+                    .limit(1)
+                    .stream()
+                )
+                if interv_docs:
+                    interv_docs[0].reference.update(
+                        {
+                            "avance_obra": nuevo_avance_obra,
+                            "updated_at": datetime.now().isoformat(),
+                        }
+                    )
+            except Exception as cache_error:
+                # No abortar el borrado por un fallo de recálculo de cache: el avance
+                # ya fue eliminado correctamente en S3 y Firestore.
+                logger.warning(
+                    "No se pudo recalcular avance_obra de la intervención %s tras "
+                    "eliminar el avance %s: %s",
+                    intervencion_id,
+                    id,
+                    cache_error,
+                )
 
         return create_utf8_response(
             {
